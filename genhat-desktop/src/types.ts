@@ -49,6 +49,8 @@ export interface ChatMessage {
   audioSaved?: boolean;
   /** Optional thinking/reasoning content for assistant messages (from reasoning models). */
   thinking?: string;
+  /** Optional web search sources attached to an assistant message. */
+  webSearchResult?: WebSearchResult;
 }
 
 export interface ChatContextMessage {
@@ -261,8 +263,6 @@ export interface ChatSession {
   cancelled: boolean;
   /** Latest RAG result (sources + answer) for this session. */
   ragResult: RagResult | null;
-  /** Latest web search result for this session. */
-  webSearchResult: WebSearchResult | null;
   /** Media assets keyed by message index. */
   mediaAssets: Record<number, MediaAsset[]>;
   /** Unix timestamp when this session was created (ms). */

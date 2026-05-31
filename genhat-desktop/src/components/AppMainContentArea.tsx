@@ -169,7 +169,6 @@ export default function AppMainContentArea({
           onToggleWebEnabled={onToggleWebEnabled}
           webDepth={webDepth}
           onWebDepthChange={onWebDepthChange}
-          webSearchResult={activeSession?.webSearchResult ?? null}
           showRagControls={chatMode === "text" || chatMode === "mindmap"}
           docPanelOpen={docPanelOpen}
           modeOptions={modeOptions}

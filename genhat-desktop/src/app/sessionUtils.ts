@@ -11,7 +11,6 @@ export function createEmptySession(): ChatSession {
     audioOutputs: [],
     cancelled: false,
     ragResult: null,
-    webSearchResult: null,
     mediaAssets: {},
     createdAt: Date.now(),
   };
@@ -44,7 +43,6 @@ export function normalizeSession(raw: Partial<ChatSession>): ChatSession {
       : (typeof raw.audioOutput === "string" && raw.audioOutput ? [raw.audioOutput] : []),
     cancelled: false,
     ragResult: raw.ragResult ?? null,
-    webSearchResult: raw.webSearchResult ?? null,
     mediaAssets: raw.mediaAssets ?? {},
     createdAt: typeof raw.createdAt === "number" ? raw.createdAt : Date.now(),
   };

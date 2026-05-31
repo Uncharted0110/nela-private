@@ -5,7 +5,7 @@ import AudioPlayer from "./AudioPlayer";
 import VoiceInputButton from "./VoiceInputButton";
 import SpeakButton from "./SpeakButton";
 import { Api } from "../api";
-import type { ChatMessage, MediaAsset, IngestionStatus, ChatMode, ChatSession } from "../types";
+import type { ChatMessage, MediaAsset, IngestionStatus, ChatMode, ChatSession, WebSearchResult } from "../types";
 
 const MODE_ICON_MAP: Record<ChatMode, React.ElementType> = {
   text: MessageSquare,
@@ -104,7 +104,6 @@ interface ChatWindowProps {
   onToggleWebEnabled?: (enabled: boolean) => void;
   webDepth?: "snippets" | "full";
   onWebDepthChange?: (depth: "snippets" | "full") => void;
-  webSearchResult?: import("../types").WebSearchResult | null;
   onIngestFile?: () => void;
   onIngestDir?: () => void;
   onAttachDirectDocuments?: () => void;
@@ -236,44 +235,6 @@ const VisionMessageImage: React.FC<{
   );
 };
 
-/** Collapsible panel showing web search sources used for the last response. */
-const WebSourcesPanel: React.FC<{
-  webSearchResult: import("../types").WebSearchResult;
-}> = ({ webSearchResult }) => {
-  const [open, setOpen] = useState(false);
-
-  return (
-    <div className="px-6 py-2 border-t border-glass-border bg-void-900/60">
-      <button
-        className="inline-flex items-center gap-1.5 text-[0.72rem] text-txt-secondary hover:text-neon transition-colors"
-        onClick={() => setOpen((v) => !v)}
-      >
-        <span>{open ? "▾" : "▸"}</span>
-        <span>Web sources ({webSearchResult.results.length})</span>
-      </button>
-      {open && (
-        <ul className="mt-1.5 space-y-1.5 max-h-48 overflow-y-auto">
-          {webSearchResult.results.map((hit, i) => (
-            <li key={i} className="text-[0.7rem] leading-snug">
-              <a
-                href={hit.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-neon hover:underline font-medium block truncate"
-                title={hit.url}
-              >
-                {hit.title || hit.url}
-              </a>
-              {hit.snippet && (
-                <p className="text-txt-muted mt-0.5 line-clamp-2">{hit.snippet}</p>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-};
 
 const ChatWindow: React.FC<ChatWindowProps> = memo(({
   messages,
@@ -299,7 +260,6 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
   onToggleWebEnabled,
   webDepth = "snippets",
   onWebDepthChange,
-  webSearchResult = null,
   onIngestFile,
   onIngestDir,
   onAttachDirectDocuments,
@@ -388,6 +348,32 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
   const visionFileName = visionImagePath ? visionImagePath.split(/[/\\]/).pop() ?? "image" : "image";
   const currentModeLabel = modeOptions.find((option) => option.mode === currentMode)?.label ?? "Mode";
   const CurrentModeIcon = MODE_ICON_MAP[currentMode] ?? MessageSquare;
+  const renderInlineWebSources = (result?: WebSearchResult | null) => {
+    if (!result || result.results.length === 0) return null;
+    return (
+      <div className="mt-3 pt-2.5 border-t border-glass-border">
+        <div className="text-[0.72rem] text-txt-muted mb-2">Web sources</div>
+        <ul className="space-y-1.5 max-h-48 overflow-y-auto">
+          {result.results.map((hit, i) => (
+            <li key={`${hit.url}-${i}`} className="text-[0.7rem] leading-snug">
+              <a
+                href={hit.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-neon hover:underline font-medium block truncate"
+                title={hit.url}
+              >
+                {hit.title || hit.url}
+              </a>
+              {hit.snippet && (
+                <p className="text-txt-muted mt-0.5 line-clamp-2">{hit.snippet}</p>
+              )}
+            </li>
+          ))}
+        </ul>
+      </div>
+    );
+  };
 
   const canToggleThinking = Boolean(onToggleThinking);
   const canToggleRag = chatMode === "text" && Boolean(onToggleRagEnabled);
@@ -916,6 +902,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
                       <div className="text-[0.9rem] leading-relaxed text-txt glass rounded-2xl rounded-tl-sm py-3 px-4 shadow-[0_4px_20px_rgba(0,0,0,0.2),inset_0_1px_0_rgba(255,255,255,0.03)]">
                         {msg.thinking && <ThinkingBox thinking={msg.thinking} />}
                         <MarkdownRenderer content={msg.content} />
+                        {renderInlineWebSources(msg.webSearchResult)}
                         {mediaAssets[idx] && <MediaGallery assets={mediaAssets[idx]} />}
                         <div className="flex items-center gap-1 mt-2 pt-1.5">
                           <CopyMsgButton text={msg.content} />
@@ -1027,11 +1014,6 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
 
         <div ref={endRef} />
       </div>
-
-      {/* ── Web Sources Panel ── */}
-      {webSearchResult && webSearchResult.results.length > 0 && (
-        <WebSourcesPanel webSearchResult={webSearchResult} />
-      )}
 
       {/* ── Input Area ── */}
       <div className="px-6 py-3 shrink-0 border-t border-glass-border bg-void-900">

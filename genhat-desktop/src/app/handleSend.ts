@@ -722,7 +722,6 @@ export async function executeHandleSend(
         const result = await Api.webSearch(text.slice(0, 150), maxResults, fetchContent);
         if (result.results.length > 0) {
           webSearchResult = result;
-          ctx.updateSession(sid, { webSearchResult: result });
         }
       } catch (e) {
         console.warn("[web_search] Failed, continuing without web context:", e);
@@ -822,6 +821,7 @@ export async function executeHandleSend(
                 role: "assistant" as const,
                 content: fullResponse,
                 thinking: fullThinking || undefined,
+                webSearchResult: webSearchResult ?? undefined,
                 generateTime: totalTime,
                 firstTokenTime:
                   timeToFirstToken !== null ? timeToFirstToken : undefined,
