@@ -123,7 +123,7 @@ export const VoiceInputButton: React.FC<VoiceInputButtonProps> = ({
         disabled={disabled || isTranscribing}
         data-tour="mic-button"
         className={`
-          glass-btn flex items-center justify-center w-9 h-9 
+          glass-btn flex items-center justify-center w-10 h-10 
           bg-glass-bg border border-glass-border 
           cursor-pointer rounded-lg transition-all duration-200 backdrop-blur-sm
           ${isRecording 

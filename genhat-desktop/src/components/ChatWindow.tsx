@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, memo } from "react";
-import { MessageSquare, Eye, Volume2, Mic, FileText, Share2, Workflow, X } from "lucide-react";
+import { MessageSquare, Eye, Volume2, Mic, FileText, Share2, Workflow, X, Wrench } from "lucide-react";
 import MarkdownRenderer from "./MarkdownRenderer";
 import AudioPlayer from "./AudioPlayer";
 import VoiceInputButton from "./VoiceInputButton";
@@ -325,9 +325,11 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
   const [inputObj, setInputObj] = useState("");
   const [showAttachMenu, setShowAttachMenu] = useState(false);
   const [showModeMenu, setShowModeMenu] = useState(false);
+  const [showToolsMenu, setShowToolsMenu] = useState(false);
   const [previewModal, setPreviewModal] = useState<{ src: string; title: string } | null>(null);
   const attachMenuRef = useRef<HTMLDivElement>(null);
   const modeMenuRef = useRef<HTMLDivElement>(null);
+  const toolsMenuRef = useRef<HTMLDivElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
 
   /** Tracks the number of messages that have already been rendered and animated.
@@ -352,6 +354,9 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
       if (modeMenuRef.current && !modeMenuRef.current.contains(e.target as Node)) {
         setShowModeMenu(false);
       }
+      if (toolsMenuRef.current && !toolsMenuRef.current.contains(e.target as Node)) {
+        setShowToolsMenu(false);
+      }
     };
     if (showAttachMenu) {
       document.addEventListener("mousedown", handleClickOutside);
@@ -359,8 +364,11 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
     if (showModeMenu) {
       document.addEventListener("mousedown", handleClickOutside);
     }
+    if (showToolsMenu) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
     return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [showAttachMenu, showModeMenu]);
+  }, [showAttachMenu, showModeMenu, showToolsMenu]);
 
   const handleSend = () => {
     if (!inputObj.trim() || isLoading) return;
@@ -380,6 +388,127 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
   const visionFileName = visionImagePath ? visionImagePath.split(/[/\\]/).pop() ?? "image" : "image";
   const currentModeLabel = modeOptions.find((option) => option.mode === currentMode)?.label ?? "Mode";
   const CurrentModeIcon = MODE_ICON_MAP[currentMode] ?? MessageSquare;
+
+  const canToggleThinking = Boolean(onToggleThinking);
+  const canToggleRag = chatMode === "text" && Boolean(onToggleRagEnabled);
+  const canToggleWeb = chatMode === "text" && Boolean(onToggleWebEnabled);
+
+  const renderToolsMenu = () => {
+    return (
+      <div className="animate-attach-menu absolute bottom-full right-0 mb-2 w-[220px] rounded-xl bg-void-700/90 backdrop-blur-xl border border-glass-border shadow-[0_8px_32px_rgba(0,0,0,0.5)] p-2 z-50">
+        <div className="flex flex-col gap-2">
+          <button
+            className={`w-full flex items-center justify-between gap-2 py-2 px-2.5 rounded-lg text-sm transition-all duration-150 ${
+              ragEnabled
+                ? "bg-neon-subtle text-neon"
+                : "text-txt-secondary hover:bg-glass-hover hover:text-txt"
+            } ${canToggleRag ? "" : "opacity-50 cursor-not-allowed"}`}
+            onClick={() => {
+              if (!canToggleRag) return;
+              onToggleRagEnabled?.(!ragEnabled);
+            }}
+            title={canToggleRag ? "Toggle RAG retrieval" : "RAG is available in Chat mode"}
+            disabled={!canToggleRag}
+          >
+            <span className="text-[0.78rem] font-medium">RAG</span>
+            <span
+              className={`relative inline-flex h-4 w-8 rounded-full transition-colors ${
+                ragEnabled ? "bg-neon" : "bg-void-700"
+              }`}
+            >
+              <span
+                className={`absolute top-0.5 h-3 w-3 rounded-full bg-white transition-transform ${
+                  ragEnabled ? "translate-x-4" : "translate-x-0.5"
+                }`}
+              />
+            </span>
+          </button>
+
+          <div className={`w-full rounded-lg ${canToggleWeb ? "" : "opacity-50 cursor-not-allowed"}`}>
+            <button
+              className={`w-full flex items-center justify-between gap-2 py-2 px-2.5 rounded-lg text-sm transition-all duration-150 ${
+                webEnabled
+                  ? "bg-neon-subtle text-neon"
+                  : "text-txt-secondary hover:bg-glass-hover hover:text-txt"
+              } ${canToggleWeb ? "" : "opacity-50 cursor-not-allowed"}`}
+              onClick={() => {
+                if (!canToggleWeb) return;
+                onToggleWebEnabled?.(!webEnabled);
+              }}
+              title={canToggleWeb ? "Toggle web search" : "Web search is available in Chat mode"}
+              disabled={!canToggleWeb}
+            >
+              <span className="text-[0.78rem] font-medium">Web search</span>
+              <span
+                className={`relative inline-flex h-4 w-8 rounded-full transition-colors ${
+                  webEnabled ? "bg-neon" : "bg-void-700"
+                }`}
+              >
+                <span
+                  className={`absolute top-0.5 h-3 w-3 rounded-full bg-white transition-transform ${
+                    webEnabled ? "translate-x-4" : "translate-x-0.5"
+                  }`}
+                />
+              </span>
+            </button>
+            {webEnabled && canToggleWeb && (
+              <div className="flex items-center justify-between gap-2 px-2.5 pb-2">
+                <div className="inline-flex rounded-full border border-glass-border overflow-hidden text-[0.68rem]">
+                  <button
+                    className={`px-2 py-0.5 transition-colors ${
+                      webDepth === "snippets"
+                        ? "bg-neon-subtle text-neon"
+                        : "bg-glass-bg text-txt-muted hover:text-txt"
+                    }`}
+                    onClick={() => onWebDepthChange?.("snippets")}
+                  >
+                    Snippets
+                  </button>
+                  <button
+                    className={`px-2 py-0.5 transition-colors ${
+                      webDepth === "full"
+                        ? "bg-neon-subtle text-neon"
+                        : "bg-glass-bg text-txt-muted hover:text-txt"
+                    }`}
+                    onClick={() => onWebDepthChange?.("full")}
+                  >
+                    Full
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <button
+            className={`w-full flex items-center justify-between gap-2 py-2 px-2.5 rounded-lg text-sm transition-all duration-150 ${
+              thinkingEnabled
+                ? "bg-neon-subtle text-neon"
+                : "text-txt-secondary hover:bg-glass-hover hover:text-txt"
+            } ${canToggleThinking ? "" : "opacity-50 cursor-not-allowed"}`}
+            onClick={() => {
+              if (!canToggleThinking) return;
+              onToggleThinking?.();
+            }}
+            title={canToggleThinking ? "Toggle thinking" : "Thinking is unavailable"}
+            disabled={!canToggleThinking}
+          >
+            <span className="text-[0.78rem] font-medium">Thinking</span>
+            <span
+              className={`relative inline-flex h-4 w-8 rounded-full transition-colors ${
+                thinkingEnabled ? "bg-neon" : "bg-void-700"
+              }`}
+            >
+              <span
+                className={`absolute top-0.5 h-3 w-3 rounded-full bg-white transition-transform ${
+                  thinkingEnabled ? "translate-x-4" : "translate-x-0.5"
+                }`}
+              />
+            </span>
+          </button>
+        </div>
+      </div>
+    );
+  };
 
   const renderAttachMenu = () => {
     if (chatMode === "vision") {
@@ -459,92 +588,6 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
           </div>
         </button>
       </>
-    );
-  };
-
-  const renderRagToggle = () => {
-    if (chatMode !== "text" || !onToggleRagEnabled) return null;
-
-    return (
-      <div className="flex items-center justify-center mb-2">
-        <button
-          className={`inline-flex items-center gap-2 py-1 px-2 rounded-full border text-[0.72rem] transition-all duration-200 ${
-            ragEnabled
-              ? "bg-neon-subtle text-neon border-neon/40"
-              : "bg-glass-bg text-txt-secondary border-glass-border hover:border-neon/30 hover:text-neon"
-          }`}
-          onClick={() => onToggleRagEnabled(!ragEnabled)}
-          title="Toggle RAG retrieval"
-        >
-          <span className="font-semibold">RAG is {ragEnabled ? "On" : "Off"}</span>
-          <span
-            className={`relative inline-flex h-4 w-8 rounded-full transition-colors ${
-              ragEnabled ? "bg-neon" : "bg-void-700"
-            }`}
-          >
-            <span
-              className={`absolute top-0.5 h-3 w-3 rounded-full bg-white transition-transform ${
-                ragEnabled ? "translate-x-4" : "translate-x-0.5"
-              }`}
-            />
-          </span>
-        </button>
-      </div>
-    );
-  };
-
-  const renderWebToggle = () => {
-    if (chatMode !== "text" || !onToggleWebEnabled) return null;
-
-    return (
-      <div className="flex items-center justify-center gap-2 mb-2">
-        <button
-          className={`inline-flex items-center gap-2 py-1 px-2 rounded-full border text-[0.72rem] transition-all duration-200 ${
-            webEnabled
-              ? "bg-neon-subtle text-neon border-neon/40"
-              : "bg-glass-bg text-txt-secondary border-glass-border hover:border-neon/30 hover:text-neon"
-          }`}
-          onClick={() => onToggleWebEnabled(!webEnabled)}
-          title="Toggle web search"
-        >
-          <span className="font-semibold">Web {webEnabled ? "On" : "Off"}</span>
-          <span
-            className={`relative inline-flex h-4 w-8 rounded-full transition-colors ${
-              webEnabled ? "bg-neon" : "bg-void-700"
-            }`}
-          >
-            <span
-              className={`absolute top-0.5 h-3 w-3 rounded-full bg-white transition-transform ${
-                webEnabled ? "translate-x-4" : "translate-x-0.5"
-              }`}
-            />
-          </span>
-        </button>
-        {webEnabled && (
-          <div className="inline-flex rounded-full border border-glass-border overflow-hidden text-[0.68rem]">
-            <button
-              className={`px-2 py-0.5 transition-colors ${
-                webDepth === "snippets"
-                  ? "bg-neon-subtle text-neon"
-                  : "bg-glass-bg text-txt-muted hover:text-txt"
-              }`}
-              onClick={() => onWebDepthChange?.("snippets")}
-            >
-              Snippets
-            </button>
-            <button
-              className={`px-2 py-0.5 transition-colors ${
-                webDepth === "full"
-                  ? "bg-neon-subtle text-neon"
-                  : "bg-glass-bg text-txt-muted hover:text-txt"
-              }`}
-              onClick={() => onWebDepthChange?.("full")}
-            >
-              Full
-            </button>
-          </div>
-        )}
-      </div>
     );
   };
 
@@ -652,9 +695,6 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
 
         {/* Centered Input */}
         <div className="relative z-10 w-full max-w-2xl">
-          {renderRagToggle()}
-          {renderWebToggle()}
-
           {/* RAG doc indicators */}
           {showRagControls && (
             <div className="flex items-center gap-2 mb-2 justify-center">
@@ -684,14 +724,14 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
             </div>
           )}
 
-          <div className="input-wrapper glass-strong flex flex-col gap-2 rounded-2xl px-3 py-2 transition-all duration-200 shadow-[0_4px_24px_rgba(0,0,0,0.3)] focus-within:border-neon focus-within:shadow-[0_0_24px_rgba(0,212,255,0.15),0_4px_24px_rgba(0,0,0,0.3)]">
+          <div className="input-wrapper glass-strong flex flex-col gap-2 rounded-2xl px-2 py-2 transition-all duration-200 shadow-[0_4px_24px_rgba(0,0,0,0.3)] focus-within:border-neon focus-within:shadow-[0_0_24px_rgba(0,212,255,0.15),0_4px_24px_rgba(0,0,0,0.3)]">
             {renderVisionAttachment()}
             {renderDirectDocumentAttachments()}
-            <div className="flex items-end gap-2">
+            <div className="flex items-center gap-2">
             {showAttachButton && (
               <div className="relative" ref={attachMenuRef}>
                 <button
-                  className="glass-btn flex items-center justify-center w-9 h-9 bg-glass-bg border border-glass-border text-txt-muted cursor-pointer rounded-lg transition-all duration-200 backdrop-blur-sm hover:text-neon hover:border-neon/30 hover:shadow-[0_0_8px_rgba(0,212,255,0.1)] disabled:opacity-40"
+                  className="glass-btn flex items-center justify-center w-10 h-10 bg-glass-bg border border-glass-border text-txt-muted cursor-pointer rounded-lg transition-all duration-200 backdrop-blur-sm hover:text-neon hover:border-neon/30 hover:shadow-[0_0_8px_rgba(0,212,255,0.1)] disabled:opacity-40"
                   onClick={() => setShowAttachMenu(!showAttachMenu)}
                   title={
                     chatMode === "vision"
@@ -733,23 +773,21 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
               }}
               disabled={isLoading}
             />
-            {onToggleThinking && (
+            <div className="relative" ref={toolsMenuRef}>
               <button
-                className={`glass-btn flex items-center gap-1.5 h-10 px-2.5 rounded-xl border transition-all duration-200 ${thinkingEnabled ? "bg-neon/10 border-neon/30 text-neon" : "bg-glass-bg border-glass-border text-txt-muted hover:text-txt hover:border-glass-border-hover"}`}
-                onClick={onToggleThinking}
-                title={thinkingEnabled ? "Disable thinking (faster)" : "Enable thinking"}
+                className="glass-btn flex items-center justify-center w-10 h-10 rounded-lg bg-glass-bg border border-glass-border text-txt-muted cursor-pointer transition-all duration-200 hover:text-neon hover:border-neon/30 hover:shadow-[0_0_10px_rgba(0,212,255,0.12)]"
+                onClick={() => setShowToolsMenu((v) => !v)}
+                title="Tools"
                 disabled={isLoading}
               >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M12 2a10 10 0 0 0-9.95 9 10 10 0 0 0 19.4 3.1 10 10 0 0 0-9.45-12.1zM12 6a6 6 0 0 1 5.82 7.5" />
-                  <circle cx="12" cy="12" r="1" fill="currentColor" />
-                </svg>
-                <span className="text-[0.74rem] font-medium leading-none">{thinkingEnabled ? "On" : "Off"}</span>
+                <Wrench size={16} strokeWidth={1.9} />
               </button>
-            )}
+
+              {showToolsMenu && renderToolsMenu()}
+            </div>
             <div className="relative" ref={modeMenuRef}>
               <button
-                className="glass-btn flex items-center gap-1.5 h-10 px-2.5 rounded-xl bg-glass-bg border border-glass-border text-txt-muted cursor-pointer transition-all duration-200 hover:text-neon hover:border-neon/30 hover:shadow-[0_0_10px_rgba(0,212,255,0.12)]"
+                className="glass-btn flex items-center gap-1.5 h-10 px-2 rounded-lg bg-glass-bg border border-glass-border text-txt-muted cursor-pointer transition-all duration-200 hover:text-neon hover:border-neon/30 hover:shadow-[0_0_10px_rgba(0,212,255,0.12)]"
                 onClick={() => setShowModeMenu((v) => !v)}
                 title="Switch mode"
                 disabled={isLoading}
@@ -783,7 +821,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
                 </div>
               )}
             </div>
-            <button className="send-btn flex items-center justify-center w-10 h-10 rounded-xl bg-neon text-void-900 border border-neon/50 cursor-pointer transition-all duration-200 shadow-[0_0_16px_rgba(0,212,255,0.2)] hover:bg-neon-hover hover:shadow-[0_0_24px_rgba(0,212,255,0.35)] disabled:opacity-30 disabled:cursor-not-allowed disabled:shadow-none shrink-0" onClick={handleSend} disabled={!inputObj.trim()}>
+            <button className="send-btn flex items-center justify-center w-10 h-10 rounded-lg bg-neon text-void-900 border border-neon/50 cursor-pointer transition-all duration-200 shadow-[0_0_16px_rgba(0,212,255,0.2)] hover:bg-neon-hover hover:shadow-[0_0_24px_rgba(0,212,255,0.35)] disabled:opacity-30 disabled:cursor-not-allowed disabled:shadow-none shrink-0" onClick={handleSend} disabled={!inputObj.trim()}>
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <path d="M5 12H19M19 12L12 5M19 12L12 19" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
@@ -997,9 +1035,6 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
 
       {/* ── Input Area ── */}
       <div className="px-6 py-3 shrink-0 border-t border-glass-border bg-void-900">
-        {renderRagToggle()}
-        {renderWebToggle()}
-
         {/* RAG doc indicators */}
         {showRagControls && (
           <div className="flex items-center gap-2 mb-2 max-w-3xl mx-auto">
@@ -1029,14 +1064,14 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
           </div>
         )}
 
-          <div className="input-wrapper glass-strong flex flex-col gap-2 rounded-2xl px-3 py-2 max-w-3xl mx-auto transition-all duration-200 shadow-[0_4px_24px_rgba(0,0,0,0.3)] focus-within:border-neon focus-within:shadow-[0_0_24px_rgba(0,212,255,0.15),0_4px_24px_rgba(0,0,0,0.3)]">
+          <div className="input-wrapper glass-strong flex flex-col gap-2 rounded-2xl px-2 py-2 max-w-3xl mx-auto transition-all duration-200 shadow-[0_4px_24px_rgba(0,0,0,0.3)] focus-within:border-neon focus-within:shadow-[0_0_24px_rgba(0,212,255,0.15),0_4px_24px_rgba(0,0,0,0.3)]">
             {renderVisionAttachment()}
             {renderDirectDocumentAttachments()}
-            <div className="flex items-end gap-2">
+            <div className="flex items-center gap-2">
           {showAttachButton && (
             <div className="relative" ref={attachMenuRef}>
               <button
-                className="glass-btn flex items-center justify-center w-9 h-9 bg-glass-bg border border-glass-border text-txt-muted cursor-pointer rounded-lg transition-all duration-200 backdrop-blur-sm hover:text-neon hover:border-neon/30 hover:shadow-[0_0_8px_rgba(0,212,255,0.1)] disabled:opacity-40"
+                className="glass-btn flex items-center justify-center w-10 h-10 bg-glass-bg border border-glass-border text-txt-muted cursor-pointer rounded-lg transition-all duration-200 backdrop-blur-sm hover:text-neon hover:border-neon/30 hover:shadow-[0_0_8px_rgba(0,212,255,0.1)] disabled:opacity-40"
                 onClick={() => setShowAttachMenu(!showAttachMenu)}
                 title={
                   chatMode === "vision"
@@ -1080,7 +1115,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
           />
           <div className="relative" ref={modeMenuRef}>
             <button
-              className="glass-btn flex items-center gap-1.5 h-10 px-2.5 rounded-xl bg-glass-bg border border-glass-border text-txt-muted cursor-pointer transition-all duration-200 hover:text-neon hover:border-neon/30 hover:shadow-[0_0_10px_rgba(0,212,255,0.12)]"
+              className="glass-btn flex items-center gap-1.5 h-10 px-2 rounded-lg bg-glass-bg border border-glass-border text-txt-muted cursor-pointer transition-all duration-200 hover:text-neon hover:border-neon/30 hover:shadow-[0_0_10px_rgba(0,212,255,0.12)]"
               onClick={() => setShowModeMenu((v) => !v)}
               title="Switch mode"
               disabled={isLoading}
@@ -1114,12 +1149,24 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
               </div>
             )}
           </div>
+          <div className="relative" ref={toolsMenuRef}>
+            <button
+              className="glass-btn flex items-center justify-center w-10 h-10 rounded-lg bg-glass-bg border border-glass-border text-txt-muted cursor-pointer transition-all duration-200 hover:text-neon hover:border-neon/30 hover:shadow-[0_0_10px_rgba(0,212,255,0.12)]"
+              onClick={() => setShowToolsMenu((v) => !v)}
+              title="Tools"
+              disabled={isLoading}
+            >
+              <Wrench size={16} strokeWidth={1.9} />
+            </button>
+
+            {showToolsMenu && renderToolsMenu()}
+          </div>
           {isLoading ? (
-            <button className="flex items-center justify-center w-10 h-10 rounded-xl bg-danger/80 backdrop-blur-sm text-white border border-danger/30 cursor-pointer transition-all duration-200 shadow-[0_0_12px_rgba(248,113,113,0.2)] hover:bg-danger hover:shadow-[0_0_20px_rgba(248,113,113,0.3)] shrink-0" onClick={onCancel} title="Stop generation">
+            <button className="flex items-center justify-center w-10 h-10 rounded-lg bg-danger/80 backdrop-blur-sm text-white border border-danger/30 cursor-pointer transition-all duration-200 shadow-[0_0_12px_rgba(248,113,113,0.2)] hover:bg-danger hover:shadow-[0_0_20px_rgba(248,113,113,0.3)] shrink-0" onClick={onCancel} title="Stop generation">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2" /></svg>
             </button>
           ) : (
-            <button className="send-btn flex items-center justify-center w-10 h-10 rounded-xl bg-neon text-void-900 border border-neon/50 cursor-pointer transition-all duration-200 shadow-[0_0_16px_rgba(0,212,255,0.2)] hover:bg-neon-hover hover:shadow-[0_0_24px_rgba(0,212,255,0.35)] disabled:opacity-30 disabled:cursor-not-allowed disabled:shadow-none shrink-0" onClick={handleSend} disabled={!inputObj.trim()}>
+            <button className="send-btn flex items-center justify-center w-10 h-10 rounded-lg bg-neon text-void-900 border border-neon/50 cursor-pointer transition-all duration-200 shadow-[0_0_16px_rgba(0,212,255,0.2)] hover:bg-neon-hover hover:shadow-[0_0_24px_rgba(0,212,255,0.35)] disabled:opacity-30 disabled:cursor-not-allowed disabled:shadow-none shrink-0" onClick={handleSend} disabled={!inputObj.trim()}>
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <path d="M5 12H19M19 12L12 5M19 12L12 19" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
