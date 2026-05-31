@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, memo } from "react";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { MessageSquare, Eye, Volume2, Mic, FileText, Share2, Workflow, X, Wrench } from "lucide-react";
 import MarkdownRenderer from "./MarkdownRenderer";
 import AudioPlayer from "./AudioPlayer";
@@ -356,15 +357,14 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
         <ul className="space-y-1.5 max-h-48 overflow-y-auto">
           {result.results.map((hit, i) => (
             <li key={`${hit.url}-${i}`} className="text-[0.7rem] leading-snug">
-              <a
-                href={hit.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-neon hover:underline font-medium block truncate"
+              <button
+                type="button"
+                onClick={() => { void openUrl(hit.url); }}
+                className="text-neon hover:underline font-medium block truncate text-left w-full"
                 title={hit.url}
               >
                 {hit.title || hit.url}
-              </a>
+              </button>
               {hit.snippet && (
                 <p className="text-txt-muted mt-0.5 line-clamp-2">{hit.snippet}</p>
               )}
