@@ -9,11 +9,11 @@ import type { ChatMessage, MediaAsset, IngestionStatus, ChatMode, ChatSession } 
 
 const MODE_ICON_MAP: Record<ChatMode, React.ElementType> = {
   text: MessageSquare,
-  vision: Eye,
-  audio: Volume2,
   rag: FileText,
   podcast: Mic,
   mindmap: Share2,
+  vision: Eye,
+  audio: Volume2,
   playground: Workflow,
 };
 

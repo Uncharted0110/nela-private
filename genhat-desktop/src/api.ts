@@ -997,6 +997,10 @@ export async function storeCredential(key: string, value: string): Promise<void>
   return invoke<void>("playground_store_credential", { key, value });
 }
 
+export async function exportPipelineFile(path: string, payload: string): Promise<void> {
+  return invoke<void>("playground_export_pipeline", { path, payload });
+}
+
 // ── Watched Paths / Auto-discovery ───────────────────────────────────────────
 
 export async function addWatchedPath(path: string): Promise<void> {

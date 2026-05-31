@@ -328,6 +328,7 @@ fn main() {
             app_lib::commands::playground::playground_run_pipeline,
             app_lib::commands::playground::playground_cancel_run,
             app_lib::commands::playground::playground_store_credential,
+            app_lib::commands::playground::playground_export_pipeline,
             // Web search commands
             app_lib::commands::web_search::web_search,
         ])

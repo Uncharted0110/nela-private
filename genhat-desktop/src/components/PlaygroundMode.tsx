@@ -7,8 +7,10 @@
  */
 
 import { useEffect, useState, useCallback } from "react";
-import { Plus, Trash2, RefreshCw, Clock, Download, Upload, Sparkles, X as XIcon, ToggleLeft, ToggleRight, ArrowLeft } from "lucide-react";
+import { Plus, Trash2, RefreshCw, Clock, Download, Sparkles, X as XIcon, ToggleLeft, ToggleRight, ArrowLeft, ImportIcon } from "lucide-react";
+import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { save } from "@tauri-apps/plugin-dialog";
 import { ReactFlowProvider } from "@xyflow/react";
 import { usePipelineStore } from "../hooks/usePipelineStore";
 import PlaygroundCanvas from "./PlaygroundCanvas";
@@ -61,7 +63,7 @@ function PipelineList({
           className="text-txt-muted hover:text-txt-primary transition-colors p-1 rounded"
           title="Import pipeline from JSON file"
         >
-          <Upload size={13} />
+          <ImportIcon size={13} />
         </button>
         <button
           onClick={onCreate}
@@ -239,23 +241,39 @@ export default function PlaygroundMode({ onNavigateBack }: { onNavigateBack?: ()
     [store]
   );
 
-  const handleExportPipeline = useCallback((pipeline: Pipeline) => {
+  const handleExportPipeline = useCallback(async (pipeline: Pipeline) => {
     const json = JSON.stringify(pipeline, null, 2);
+    const defaultName = `${pipeline.name.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}.pipeline.json`;
+
+    try {
+      const path = await save({
+        title: "Export Pipeline",
+        defaultPath: defaultName,
+        filters: [{ name: "Pipeline JSON", extensions: ["json"] }],
+      });
+      if (path) {
+        await invoke<void>("playground_export_pipeline", { path, payload: json });
+        return;
+      }
+    } catch (err) {
+      console.warn("Failed to export pipeline via dialog, falling back to browser download", err);
+    }
+
     const blob = new Blob([json], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${pipeline.name.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}.pipeline.json`;
+    a.download = defaultName;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
   }, []);
 
   const handleImportPipeline = useCallback(() => {
     const input = document.createElement("input");
     input.type = "file";
-    input.accept = ".json";
+    input.accept = ".json,.pipeline.json,application/json";
     input.onchange = async () => {
       const file = input.files?.[0];
       if (!file) return;

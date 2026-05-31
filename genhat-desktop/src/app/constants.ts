@@ -43,9 +43,9 @@ export interface ModeConfigItem {
 
 export const MODE_CONFIG: ModeConfigItem[] = [
   { mode: "text", label: "Chat", icon: MessageSquare, desc: "Text conversation" },
-  { mode: "vision", label: "Vision", icon: Eye, desc: "Image analysis" },
-  { mode: "audio", label: "Audio", icon: Volume2, desc: "Text to speech" },
   { mode: "podcast", label: "Podcast", icon: Mic, desc: "AI podcast generation" },
   { mode: "mindmap", label: "Mindmap", icon: Share2, desc: "Visual idea map" },
+  { mode: "vision", label: "Vision", icon: Eye, desc: "Image analysis" },
+  { mode: "audio", label: "Audio", icon: Volume2, desc: "Text to speech" },
   { mode: "playground", label: "Playground", icon: Workflow, desc: "Agentic pipeline builder" },
 ];

@@ -5,7 +5,7 @@
  * Backend persistence goes through Tauri IPC (see api.ts playground commands).
  */
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
 import type { NodeChange, EdgeChange, Connection } from "@xyflow/react";
 import { applyNodeChanges, applyEdgeChanges, addEdge } from "@xyflow/react";
@@ -81,6 +81,19 @@ export function usePipelineStore(): PipelineStoreActions {
   const [activePipeline, setActivePipeline] = useState<Pipeline | null>(null);
   const [activeRun, setActiveRun] = useState<PipelineRun | null>(null);
   const [runActive, setRunActive] = useState(false);
+  const lastSavedRef = useRef<string>("");
+  const autosaveTimeoutRef = useRef<number | null>(null);
+
+  const serializePipeline = useCallback((p: Pipeline): string => {
+    return JSON.stringify({
+      id: p.id,
+      name: p.name,
+      description: p.description ?? "",
+      auto_resume: p.auto_resume,
+      nodes: p.nodes,
+      edges: p.edges,
+    });
+  }, []);
 
   // ── Pipeline list ────────────────────────────────────────────────────────────
 
@@ -98,10 +111,11 @@ export function usePipelineStore(): PipelineStoreActions {
       const p = await loadPipeline(id);
       setActivePipeline(p);
       setActivePipelineId(id);
+      lastSavedRef.current = serializePipeline(p);
     } catch (e) {
       console.error("Failed to load pipeline", id, e);
     }
-  }, []);
+  }, [serializePipeline]);
 
   const createPipeline = useCallback(async (name?: string) => {
     const p = newPipeline(name);
@@ -109,7 +123,8 @@ export function usePipelineStore(): PipelineStoreActions {
     setPipelines(prev => [p, ...prev]);
     setActivePipeline(p);
     setActivePipelineId(p.id);
-  }, []);
+    lastSavedRef.current = serializePipeline(p);
+  }, [serializePipeline]);
 
   const renamePipeline = useCallback((id: string, name: string) => {
     setPipelines(prev =>
@@ -145,6 +160,7 @@ export function usePipelineStore(): PipelineStoreActions {
     const updated = { ...activePipeline, updated_at: Date.now() };
     await savePipeline(updated);
     setPipelines(prev => prev.map(p => (p.id === updated.id ? updated : p)));
+    lastSavedRef.current = serializePipeline(updated);
   }, [activePipeline]);
 
   const importPipeline = useCallback(async (p: Pipeline) => {
@@ -152,7 +168,36 @@ export function usePipelineStore(): PipelineStoreActions {
     setPipelines(prev => [p, ...prev.filter(x => x.id !== p.id)]);
     setActivePipeline(p);
     setActivePipelineId(p.id);
-  }, []);
+    lastSavedRef.current = serializePipeline(p);
+  }, [serializePipeline]);
+
+  useEffect(() => {
+    if (!activePipeline || runActive) return;
+    const snapshot = serializePipeline(activePipeline);
+    if (snapshot === lastSavedRef.current) return;
+
+    if (autosaveTimeoutRef.current) {
+      window.clearTimeout(autosaveTimeoutRef.current);
+    }
+
+    autosaveTimeoutRef.current = window.setTimeout(async () => {
+      try {
+        const updated = { ...activePipeline, updated_at: Date.now() };
+        await savePipeline(updated);
+        setPipelines(prev => prev.map(p => (p.id === updated.id ? updated : p)));
+        setActivePipeline(updated);
+        lastSavedRef.current = snapshot;
+      } catch (e) {
+        console.warn("Auto-save failed", e);
+      }
+    }, 800);
+
+    return () => {
+      if (autosaveTimeoutRef.current) {
+        window.clearTimeout(autosaveTimeoutRef.current);
+      }
+    };
+  }, [activePipeline, runActive, serializePipeline]);
 
   // ── Graph mutations ──────────────────────────────────────────────────────────
 

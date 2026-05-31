@@ -1,5 +1,5 @@
 {
-  "id": "email-summarizer-template",
+  "id": "fee99ab3-60fb-45ec-affa-5bba515df4bc",
   "name": "Email Summarizer",
   "description": "Fetches unread emails every morning at 8 AM and summarizes them with a local LLM. Sends a desktop notification when done.",
   "auto_resume": false,
@@ -7,62 +7,112 @@
     {
       "id": "node-trigger",
       "type": "playgroundNode",
-      "position": { "x": 300, "y": 60 },
+      "position": {
+        "x": 300,
+        "y": 60
+      },
       "data": {
-        "kind": "Schedule",
         "label": "Every Morning",
-        "config": { "cron": "0 8 * * *" }
+        "kind": "Schedule",
+        "config": {
+          "cron": "0 8 * * *"
+        }
       }
     },
     {
       "id": "node-fetch",
       "type": "playgroundNode",
-      "position": { "x": 300, "y": 200 },
+      "position": {
+        "x": 380.8780068728522,
+        "y": 130.9003436426117
+      },
       "data": {
-        "kind": "EmailFetch",
         "label": "Fetch Emails",
+        "kind": "EmailFetch",
         "config": {
           "host": "imap.gmail.com",
-          "port": 993,
-          "username": "",
-          "password_key": "",
           "mailbox": "INBOX",
           "max_messages": 20,
-          "unseen_only": true
+          "password_key": "",
+          "port": 993,
+          "unseen_only": true,
+          "username": ""
         }
       }
     },
     {
       "id": "node-summarize",
       "type": "playgroundNode",
-      "position": { "x": 300, "y": 340 },
+      "position": {
+        "x": 278.01374570446734,
+        "y": 221.43127147766324
+      },
       "data": {
-        "kind": "Summarize",
         "label": "Summarize",
+        "kind": "Summarize",
         "config": {
+          "ctx_size": 32768,
           "model_id": "",
           "style": "bullet",
-          "ctx_size": 32768,
           "system_prompt": "You are an email summarization assistant. The input contains one or more emails separated by '---'.\nFor each email:\n  • Identify the sender (if visible) and the main subject or request.\n  • Extract any action items, deadlines, or decisions required from you.\n  • Flag anything urgent or time-sensitive.\nGroup related emails where it makes sense. Use bullet points. Be concise — skip social niceties, signatures, and boilerplate."
+        }
+      }
+    },
+    {
+      "id": "n4",
+      "type": "playgroundNode",
+      "position": {
+        "x": 382.2611683848797,
+        "y": 291.91752577319585
+      },
+      "data": {
+        "label": "Write to File",
+        "kind": "FileWrite",
+        "config": {
+          "append": false,
+          "path": "~/Documents/code-review.md"
         }
       }
     },
     {
       "id": "node-notify",
       "type": "playgroundNode",
-      "position": { "x": 300, "y": 480 },
+      "position": {
+        "x": 281.1546391752577,
+        "y": 381.0618556701031
+      },
       "data": {
-        "kind": "Notification",
         "label": "Morning Digest",
-        "config": { "title": "📬 Morning Email Digest", "body_template": "{{output}}" }
+        "kind": "Notification",
+        "config": {
+          "body_template": "{{output}}",
+          "title": "📬 Morning Email Digest"
+        }
       }
     }
   ],
   "edges": [
-    { "id": "e1", "source": "node-trigger", "target": "node-fetch" },
-    { "id": "e2", "source": "node-fetch", "target": "node-summarize" },
-    { "id": "e3", "source": "node-summarize", "target": "node-notify" }
+    {
+      "id": "e1",
+      "source": "node-trigger",
+      "target": "node-fetch"
+    },
+    {
+      "id": "e2",
+      "source": "node-fetch",
+      "target": "node-summarize"
+    },
+    {
+      "id": "f9b6c8fa-2512-4bef-b451-7b7660fa5b17",
+      "source": "n4",
+      "target": "node-notify"
+    },
+    {
+      "id": "668ee672-fed7-4a45-aaf6-41d3ffff5fb6",
+      "source": "node-summarize",
+      "target": "n4"
+    }
   ],
-  "created_at": 0,
-  "updated_at": 0
+  "created_at": 1780245162311,
+  "updated_at": 1780245189288
 }

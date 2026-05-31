@@ -154,3 +154,17 @@ pub async fn playground_store_credential(
 
     Ok(())
 }
+
+#[tauri::command]
+pub async fn playground_export_pipeline(path: String, payload: String) -> Result<(), String> {
+    let file_path = PathBuf::from(path);
+    if let Some(parent) = file_path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create export directory {}: {e}", parent.display()))?;
+    }
+
+    std::fs::write(&file_path, payload.as_bytes())
+        .map_err(|e| format!("Failed to export pipeline to {}: {e}", file_path.display()))?;
+
+    Ok(())
+}
