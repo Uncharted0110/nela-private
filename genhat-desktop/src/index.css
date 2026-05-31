@@ -101,4 +101,31 @@ html[data-theme="light"] {
   a:hover {
     color: #66e5ff;
   }
+
+  /* ── Global Scrollbar ── */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-neon-subtle) transparent;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background-color: var(--color-neon-subtle);
+    border-radius: 4px;
+    background-clip: padding-box;
+    border: 1px solid transparent;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: var(--color-neon-glow);
+    border: 1px solid var(--color-neon);
+  }
 }

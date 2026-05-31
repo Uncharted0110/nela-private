@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useMemo } from "react";
-import { X, Download, Loader2, Trash2, Sparkles, Save, CheckCircle, SlidersHorizontal, Cpu } from "lucide-react";
+import { X, Download, Loader2, Trash2, Sparkles, Save, CheckCircle, SlidersHorizontal, Cpu, ChevronDown } from "lucide-react";
 import type { RegisteredModel, RagModelPreferences } from "../types";
 import { KITTEN_TTS_VOICES } from "../types";
 import { Api, type CompatibilityRating } from "../api";
 import InstallModelModal from "./InstallModelModal";
+import { DropdownSelect } from "./DropdownSelect";
 import "./ModelsSettingsModal.css";
 
 interface ModelsSettingsModalProps {
@@ -667,24 +668,22 @@ const ModelsSettingsModal: React.FC<ModelsSettingsModalProps> = ({
                   <div className="settings-rag-prefs">
                     <div className="settings-rag-field">
                       <label htmlFor="embed-model-select">Embedding Model</label>
-                      <select
-                        id="embed-model-select"
-                        className="settings-select"
-                        value={ragPrefs.embed_model_id ?? ""}
-                        onChange={(e) =>
-                          setRagPrefs((prev) => ({
-                            ...prev,
-                            embed_model_id: e.target.value || null,
-                          }))
-                        }
-                      >
-                        <option value="">Auto (default)</option>
-                        {embedModels.map((m) => (
-                          <option key={m.id} value={m.id}>
-                            {m.name}
-                          </option>
-                        ))}
-                      </select>
+                      <div className="relative w-full z-[110]">
+                        <DropdownSelect
+                          value={ragPrefs.embed_model_id ?? ""}
+                          onChange={(val) =>
+                            setRagPrefs((prev) => ({
+                              ...prev,
+                              embed_model_id: val || null,
+                            }))
+                          }
+                          options={[
+                            { label: "Auto (default)", value: "" },
+                            ...embedModels.map((m) => ({ label: m.name, value: m.id }))
+                          ]}
+                          className="settings-select w-full"
+                        />
+                      </div>
                       <span className="settings-field-hint">
                         Model used for generating vector embeddings
                       </span>
@@ -692,24 +691,22 @@ const ModelsSettingsModal: React.FC<ModelsSettingsModalProps> = ({
 
                     <div className="settings-rag-field">
                       <label htmlFor="llm-model-select">LLM Model</label>
-                      <select
-                        id="llm-model-select"
-                        className="settings-select"
-                        value={ragPrefs.llm_model_id ?? ""}
-                        onChange={(e) =>
-                          setRagPrefs((prev) => ({
-                            ...prev,
-                            llm_model_id: e.target.value || null,
-                          }))
-                        }
-                      >
-                        <option value="">Auto (default)</option>
-                        {llmModels.map((m) => (
-                          <option key={m.id} value={m.id}>
-                            {m.name}
-                          </option>
-                        ))}
-                      </select>
+                      <div className="relative w-full z-[100]">
+                        <DropdownSelect
+                          value={ragPrefs.llm_model_id ?? ""}
+                          onChange={(val) =>
+                            setRagPrefs((prev) => ({
+                              ...prev,
+                              llm_model_id: val || null,
+                            }))
+                          }
+                          options={[
+                            { label: "Auto (default)", value: "" },
+                            ...llmModels.map((m) => ({ label: m.name, value: m.id }))
+                          ]}
+                          className="settings-select w-full"
+                        />
+                      </div>
                       <span className="settings-field-hint">
                         Model used for enrichment and chat tasks
                       </span>
@@ -894,21 +891,17 @@ const ModelsSettingsModal: React.FC<ModelsSettingsModalProps> = ({
                             <div className="settings-param-head">
                               <label htmlFor={`model-param-${control.key}`}>{control.label}</label>
                             </div>
-                            <select
-                              id={`model-param-${control.key}`}
-                              className="settings-select"
-                              value={rawValue}
-                              onChange={(e) => setControlValue(control.key, e.target.value)}
-                            >
-                              {!hasCurrentValue && (
-                                <option value={rawValue}>{rawValue}</option>
-                              )}
-                              {options.map((option) => (
-                                <option key={option.value} value={option.value}>
-                                  {option.label}
-                                </option>
-                              ))}
-                            </select>
+                            <div className="relative w-full z-[80]">
+                              <DropdownSelect
+                                value={rawValue as string}
+                                onChange={(val) => setControlValue(control.key, val)}
+                                options={[
+                                  ...(!hasCurrentValue ? [{ label: rawValue as string, value: rawValue as string }] : []),
+                                  ...options.map((option) => ({ label: option.label, value: option.value as string }))
+                                ]}
+                                className="settings-select w-full"
+                              />
+                            </div>
                             <span className="settings-field-hint">{control.description}</span>
                           </div>
                         );

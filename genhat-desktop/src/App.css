@@ -295,39 +295,9 @@
 }
 
 
-/* ══════════════════════════════════════════════════════════════════════════════
-   SCROLLBAR
-   ══════════════════════════════════════════════════════════════════════════════ */
-
-.messages-area::-webkit-scrollbar,
-.kb-sidebar-docs::-webkit-scrollbar,
-.kb-sidebar-sources::-webkit-scrollbar,
-.podcast-transcript::-webkit-scrollbar {
-  width: 4px;
-}
-
-.messages-area::-webkit-scrollbar-track,
-.kb-sidebar-docs::-webkit-scrollbar-track,
-.kb-sidebar-sources::-webkit-scrollbar-track,
-.podcast-transcript::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.messages-area::-webkit-scrollbar-thumb,
-.kb-sidebar-docs::-webkit-scrollbar-thumb,
-.kb-sidebar-sources::-webkit-scrollbar-thumb,
-.podcast-transcript::-webkit-scrollbar-thumb {
-  background-color: rgba(255, 255, 255, 0.08);
-  border-radius: 2px;
-}
-
-.messages-area::-webkit-scrollbar-thumb:hover,
-.kb-sidebar-docs::-webkit-scrollbar-thumb:hover {
-  background-color: rgba(255, 255, 255, 0.14);
-}
-
 /* Hide textarea scrollbar */
 .input-wrapper textarea {
+
   scrollbar-width: none;
   -ms-overflow-style: none;
 }
@@ -818,24 +788,6 @@
   margin: 0;
 }
 
-.pdf-content::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-
-.pdf-content::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.pdf-content::-webkit-scrollbar-thumb {
-  background: rgba(0, 212, 255, 0.15);
-  border-radius: 4px;
-}
-
-.pdf-content::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 212, 255, 0.3);
-}
-
 .pdf-spinner,
 .dv-spinner {
   width: 28px;
@@ -860,24 +812,6 @@
 
 .dv-overlay {
   animation: dvFadeIn 0.2s ease-out;
-}
-
-.dv-content::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-
-.dv-content::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.dv-content::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 4px;
-}
-
-.dv-content::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.18);
 }
 
 /* Code viewer */
@@ -1681,19 +1615,6 @@ html[data-theme="light"] .glass-btn:hover:not(:disabled) {
   box-shadow: 0 0 8px rgba(0, 0, 0, 0.06);
 }
 
-/* ── Scrollbars ── */
-html[data-theme="light"] .messages-area::-webkit-scrollbar-thumb,
-html[data-theme="light"] .kb-sidebar-docs::-webkit-scrollbar-thumb,
-html[data-theme="light"] .kb-sidebar-sources::-webkit-scrollbar-thumb,
-html[data-theme="light"] .podcast-transcript::-webkit-scrollbar-thumb {
-  background-color: rgba(0, 0, 0, 0.14);
-}
-
-html[data-theme="light"] .messages-area::-webkit-scrollbar-thumb:hover,
-html[data-theme="light"] .kb-sidebar-docs::-webkit-scrollbar-thumb:hover {
-  background-color: rgba(0, 0, 0, 0.22);
-}
-
 /* ── Dragging clone ── */
 html[data-theme="light"] .dragging-clone {
   background: var(--color-void-800);
@@ -1891,14 +1812,6 @@ html[data-theme="light"] .dv-spinner {
   border-top-color: var(--color-neon);
 }
 
-html[data-theme="light"] .pdf-content::-webkit-scrollbar-thumb {
-  background: rgba(0, 153, 204, 0.20);
-}
-
-html[data-theme="light"] .pdf-content::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 153, 204, 0.36);
-}
-
 html[data-theme="light"] .pdf-page-loading {
   background: rgba(244, 244, 248, 0.7);
 }
@@ -1908,14 +1821,6 @@ html[data-theme="light"] .pdf-loading-overlay {
 }
 
 /* ── Document viewer ── */
-html[data-theme="light"] .dv-content::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.12);
-}
-
-html[data-theme="light"] .dv-content::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 0, 0, 0.20);
-}
-
 html[data-theme="light"] .dv-image-scroll {
   background-image:
     linear-gradient(45deg, #dddde8 25%, transparent 25%),

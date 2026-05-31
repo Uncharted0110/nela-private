@@ -406,19 +406,15 @@ function App() {
         {chatMode === "text" && (
           <div>
             <label htmlFor="model-select" style={{ display: 'block', marginBottom: '5px' }}>LLM Model:</label>
-            <select
-              id="model-select"
-              value={selectedModel}
-              onChange={(e) => handleModelChange(e.target.value)}
-              disabled={loading || models.length === 0}
-              style={{ width: '200px' }}
-            >
-              {models.map((m) => (
-                <option key={m.path} value={m.path}>
-                  {m.name}
-                </option>
-              ))}
-            </select>
+            <div className="relative w-[200px] z-[100]">
+              <DropdownSelect
+                value={selectedModel}
+                onChange={handleModelChange}
+                options={models.map((m) => ({ label: m.name, value: m.path }))}
+                className="w-full"
+                disabled={loading || models.length === 0}
+              />
+            </div>
           </div>
         )}
 
@@ -431,19 +427,15 @@ function App() {
         {chatMode === "vision" && (
           <div>
             <label htmlFor="vision-select" style={{ display: 'block', marginBottom: '5px' }}>Vision Model:</label>
-            <select
-              id="vision-select"
-              value={selectedVisionModel}
-              onChange={(e) => setSelectedVisionModel(e.target.value)}
-              disabled={loading || visionModels.length === 0}
-              style={{ width: '200px' }}
-            >
-              {visionModels.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.name}
-                </option>
-              ))}
-            </select>
+            <div className="relative w-[200px] z-[100]">
+              <DropdownSelect
+                value={selectedVisionModel}
+                onChange={setSelectedVisionModel}
+                options={visionModels.map((m) => ({ label: m.name, value: m.id }))}
+                className="w-full"
+                disabled={loading || visionModels.length === 0}
+              />
+            </div>
           </div>
         )}
       </div>

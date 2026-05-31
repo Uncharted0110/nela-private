@@ -5,9 +5,10 @@
  * All field changes propagate back through onUpdateConfig.
  */
 
-import { useState, useEffect } from "react";
-import { X, Trash2, AlertTriangle, ChevronDown } from "lucide-react";
+import { useState, useEffect, useRef } from "react";
+import { X, Trash2, AlertTriangle, ChevronDown, Check } from "lucide-react";
 import { Api } from "../api";
+import { DropdownSelect } from "./DropdownSelect";
 import type { RegisteredModel } from "../types";
 import type {
   PlaygroundNode,
@@ -81,6 +82,8 @@ function ModelPicker({
 }) {
   const [models, setModels] = useState<RegisteredModel[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isOpen, setIsOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     Api.listRegisteredModels()
@@ -93,6 +96,16 @@ function ModelPicker({
       .catch(() => setModels([]))
       .finally(() => setLoading(false));
   }, [taskFilter]);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
   if (loading) {
     return (
@@ -114,28 +127,44 @@ function ModelPicker({
     );
   }
 
+  const currentModelName = models.find((m) => m.id === value)?.name || placeholder;
+
   return (
-    <div className="relative">
-      <select
-        className={inputCls + " appearance-none pr-7 cursor-pointer"}
-        value={value}
-        onChange={e => onChange(e.target.value)}
+    <div className="relative model-selector-container w-full" ref={containerRef}>
+      <button
+        type="button"
+        className={`model-selector-btn ${isOpen ? "active" : ""} w-full h-[30px] rounded-lg bg-white/5 border-white/15 px-2.5 hover:bg-white/10`}
+        onClick={() => setIsOpen(!isOpen)}
+        style={{ justifyContent: "space-between", minWidth: 0 }}
       >
-        {value === "" && (
-          <option value="" disabled>
-            {placeholder}
-          </option>
-        )}
-        {models.map(m => (
-          <option key={m.id} value={m.id}>
-            {m.name}
-          </option>
-        ))}
-      </select>
-      <ChevronDown
-        size={12}
-        className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-txt-muted"
-      />
+        <span className="model-name text-xs truncate" title={currentModelName}>
+          {currentModelName}
+        </span>
+        <ChevronDown size={12} className="chevron text-txt-muted shrink-0 ml-2" />
+      </button>
+
+      {isOpen && (
+        <div className="model-dropdown absolute w-full mt-1 z-[100] left-0">
+          <div className="dropdown-header">
+            <span>{taskFilter === "chat" ? "Text Models" : taskFilter === "audio" ? "Voice Models" : "Models"}</span>
+          </div>
+          <div className="model-list max-h-[200px] overflow-y-auto">
+            {models.map(m => (
+              <div
+                key={m.id}
+                className={`model-item ${value === m.id ? "selected" : ""}`}
+                onClick={() => {
+                  onChange(m.id);
+                  setIsOpen(false);
+                }}
+              >
+                <span className="truncate flex-1">{m.name}</span>
+                {value === m.id && <Check size={14} className="check-icon shrink-0 ml-2" />}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -258,15 +287,15 @@ function SummarizeForm({
         />
       </Field>
       <Field label="Style">
-        <select
-          className={inputCls}
+        <DropdownSelect
           value={config.style ?? "bullet"}
-          onChange={e => onChange({ style: e.target.value as SummarizeConfig["style"] })}
-        >
-          <option value="bullet">Bullet points</option>
-          <option value="paragraph">Paragraph</option>
-          <option value="tldr">TL;DR</option>
-        </select>
+          onChange={val => onChange({ style: val as SummarizeConfig["style"] })}
+          options={[
+            { label: "Bullet points", value: "bullet" },
+            { label: "Paragraph", value: "paragraph" },
+            { label: "TL;DR", value: "tldr" }
+          ]}
+        />
       </Field>
       <Field
         label="System Prompt"
@@ -715,15 +744,11 @@ function HttpRequestForm({
         />
       </Field>
       <Field label="Method">
-        <select
-          className={inputCls}
+        <DropdownSelect
           value={config.method}
-          onChange={e => onChange({ method: e.target.value as HttpRequestConfig["method"] })}
-        >
-          {(["GET", "POST", "PUT", "PATCH", "DELETE"] as const).map(m => (
-            <option key={m} value={m}>{m}</option>
-          ))}
-        </select>
+          onChange={val => onChange({ method: val as HttpRequestConfig["method"] })}
+          options={(["GET", "POST", "PUT", "PATCH", "DELETE"] as const).map(m => ({ label: m, value: m }))}
+        />
       </Field>
       <Field label="Timeout (seconds)">
         <input
