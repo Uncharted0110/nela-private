@@ -67,37 +67,7 @@ export default function AppMainTopBar({
           </div>
         )}
 
-        {contextUsage && (
-          <div className="w-full max-w-140 mt-1 px-3 py-2 rounded-lg border border-glass-border bg-void-700/60">
-            <div className="flex items-center justify-between text-[0.68rem] text-txt-muted">
-              <span>Context window tracks how much conversation history is sent to the model each turn.</span>
-              <span>{contextUsage.contextWindowTokens.toLocaleString()} tokens</span>
-            </div>
-
-            <div className="mt-1.5 h-1.5 rounded-full bg-void-900 overflow-hidden">
-              <div
-                className={`h-full transition-all duration-200 ${
-                  contextUsage.projectedPercent >= contextUsage.thresholdPercent
-                    ? "bg-amber-400"
-                    : "bg-neon"
-                }`}
-                style={{ width: `${Math.min(100, contextUsage.projectedPercent)}%` }}
-              />
-            </div>
-
-            <div className="mt-1.5 flex items-center justify-between text-[0.68rem] text-txt-secondary">
-              <span>
-                Used {contextUsage.usedTokens.toLocaleString()} ({contextUsage.usedPercent.toFixed(1)}%)
-              </span>
-              <span>
-                Remaining {contextUsage.remainingTokens.toLocaleString()}
-              </span>
-              <span>
-                Auto-compact at {contextUsage.thresholdPercent.toFixed(0)}%
-              </span>
-            </div>
-          </div>
-        )}
+        
       </div>
 
       {modeControls}

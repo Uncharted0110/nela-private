@@ -427,7 +427,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
           onClick={() => onToggleRagEnabled(!ragEnabled)}
           title="Toggle RAG retrieval"
         >
-          <span className="font-semibold">RAG {ragEnabled ? "On" : "Off"}</span>
+          <span className="font-semibold">RAG is {ragEnabled ? "On" : "Off"}</span>
           <span
             className={`relative inline-flex h-4 w-8 rounded-full transition-colors ${
               ragEnabled ? "bg-neon" : "bg-void-700"

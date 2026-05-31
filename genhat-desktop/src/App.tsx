@@ -2029,13 +2029,13 @@ function App() {
       default:
         if (ragEnabled) {
           return ragDocs.length > 0
-            ? "RAG ON: ask about your ingested documents..."
-            : "RAG ON: ingest documents or chat freely...";
+            ? "RAG is ON: ask about your ingested documents..."
+            : "RAG is ON: ingest documents or chat freely...";
         }
 
         return directDocumentPaths.length > 0 || ragDocs.length > 0
-          ? "RAG OFF: documents will be sent directly to the model..."
-          : "RAG OFF: attach documents or chat freely...";
+          ? "RAG is OFF: documents will be sent directly to the model..."
+          : "RAG is OFF: attach documents or chat freely...";
     }
   };
 
