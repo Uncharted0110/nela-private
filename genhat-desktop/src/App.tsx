@@ -2069,7 +2069,7 @@ function App() {
     .filter((s): s is ChatSession => !!s);
 
   // Sidebar section state with toggle logic
-  const [sidebarSection, setSidebarSection] = useState<"chats" | "audio" | "mindmaps" | "playground" | null>("chats");
+  const [sidebarSection, setSidebarSection] = useState<"chats" | "audio" | "mindmaps" | "playground" | null>(null);
 
   // Toggle handler for sidebar
   const handleSidebarNav = (section: "chats" | "audio" | "mindmaps" | "playground") => {
