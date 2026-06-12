@@ -51,6 +51,10 @@ export interface ChatMessage {
   thinking?: string;
   /** Optional web search sources attached to an assistant message. */
   webSearchResult?: WebSearchResult;
+  /** Optional artifact path if this message generated one */
+  artifactPath?: string | null;
+  /** Optional artifact stage if this message is generating one */
+  artifactStage?: string | null;
 }
 
 export interface ChatContextMessage {
@@ -267,6 +271,12 @@ export interface ChatSession {
   mediaAssets: Record<number, MediaAsset[]>;
   /** Unix timestamp when this session was created (ms). */
   createdAt: number;
+  /** Absolute path to the generated artifact on disk. */
+  artifactPath?: string | null;
+  /** The current pipeline stage of the generating artifact. */
+  artifactStage?: string | null;
+  /** Whether the artifact sandbox is currently visible for this session. */
+  artifactVisible?: boolean;
 }
 
 /** Available KittenTTS voice names. */
@@ -339,5 +349,78 @@ export interface RagModelPreferences {
   embed_model_id: string | null;
   /** Preferred LLM model ID for enrichment and chat tasks. */
   llm_model_id: string | null;
+}
+
+// ── Revamp Artifact Types ──────────────────────────────────────────────────
+
+export type IntentKind =
+  | { kind: "Chat" }
+  | { kind: "FileSearch" }
+  | { kind: "Artifact"; tool: string; schema_id: string }
+  | { kind: "Patch"; artifact_path: string }
+  | { kind: "Summarize" };
+
+export interface IntentDecision {
+  kind: IntentKind;
+  tier: number;
+  confidence: number;
+}
+
+export type SpreadsheetOp =
+  | { op: "SUM_COLUMN"; col: string; label?: string }
+  | { op: "AVERAGE_BY_GROUP"; value_col: string; group_col: string }
+  | { op: "PIVOT"; row_col: string; col_col: string; value_col: string }
+  | { op: "SORT_DESC"; col: string }
+  | { op: "SORT_ASC"; col: string }
+  | { op: "FILTER_ROWS"; col: string; value: string }
+  | { op: "COUNT_BY_GROUP"; group_col: string }
+  | { op: "ADD_COLUMN"; name: string; formula: string }
+  | { op: "WRITE_DATA"; headers: string[]; rows: string[][] }
+  | { op: "RENAME_SHEET"; name: string };
+
+export interface SpreadsheetPlan {
+  ops: SpreadsheetOp[];
+  source_rows?: string[][];
+  headers?: string[];
+  output_name?: string;
+}
+
+export type SlideLayout =
+  | "TITLE"
+  | "BULLET"
+  | "TWO_COLUMN"
+  | "IMAGE_LEFT"
+  | "BLANK";
+
+export interface PresentationSlide {
+  title: string;
+  layout: SlideLayout;
+  bullets?: string[];
+  notes?: string;
+}
+
+export interface PresentationPlan {
+  slides: PresentationSlide[];
+  theme?: string;
+  output_name?: string;
+}
+
+export interface HtmlPlan {
+  html: string;
+  output_name?: string;
+}
+
+export interface ArtifactResult {
+  path: string;
+  kind: string;
+  warning?: string;
+}
+
+export interface FileRecord {
+  path: string;
+  filename: string;
+  is_dir: boolean;
+  size: number;
+  mtime: number;
 }
 

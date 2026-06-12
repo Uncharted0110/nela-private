@@ -15,8 +15,10 @@ import type {
   KittenTtsVoice,
   MindMapGraph,
   WebSearchResult,
+  ArtifactResult,
 } from "../types";
-import { extractTaskText, parseMindMapGraph } from "./mindmapUtils";
+import type { PipelineStageKind } from "../components/ProgressSlate";
+import { extractTaskText, parseMindMapGraph, extractJsonObject } from "./mindmapUtils";
 import { deriveTitleFromMessage } from "./sessionUtils";
 import {
   applyCompactionResultToSession,
@@ -150,6 +152,27 @@ export async function executeHandleSend(
   const ctrl = new AbortController();
   ctx.abortControllersRef.current.set(sid, ctrl);
   const generationOptions = ctx.getChatGenerationOptions(ctx.selectedModel);
+
+  let resolvedIntentKind = "";
+  // ── Intent Resolution (Revamp P3/P5) ──────────────────────────────────────
+  if (ctx.chatMode === "text") {
+    try {
+      const intent = await Api.resolveIntent(text);
+      resolvedIntentKind = intent.kind.kind;
+      if (intent.kind.kind === "Artifact") {
+        const { tool, schema_id } = intent.kind;
+        await handleArtifactGeneration(text, tool, schema_id, sid, ctx, ctrl);
+        return;
+      }
+      if (intent.kind.kind === "Patch") {
+        const { artifact_path } = intent.kind;
+        await handlePatchApplication(text, artifact_path || "", sid, ctx, ctrl);
+        return;
+      }
+    } catch (err) {
+      console.warn("Intent resolution failed, falling back to standard chat:", err);
+    }
+  }
 
   try {
     if (ctx.chatMode === "mindmap") {
@@ -728,6 +751,91 @@ export async function executeHandleSend(
       }
     }
 
+    // ── Ambient FTS5 file search context injection (Revamp P4 grounding) ───
+    let ambientFileContext = "";
+    let attachedFile = ctx.directDocumentPaths.length > 0 ? ctx.directDocumentPaths[0] : null;
+    let discoveryMsg: ChatMessage | null = null;
+
+    if (ctx.chatMode === "text" && !attachedFile) {
+      if (resolvedIntentKind === "FileSearch" || hasSearchKeywords(text)) {
+        const searchQuery = extractSearchQuery(text);
+        try {
+          const results = await Api.searchAmbientFiles(searchQuery);
+          if (results && results.length > 0) {
+            // Find first file that is not a directory, preferably text/code or spreadsheet
+            const fileToRead = results.find(
+              (f) =>
+                !f.is_dir &&
+                (f.path.endsWith(".csv") ||
+                  f.path.endsWith(".xlsx") ||
+                  f.path.endsWith(".xls") ||
+                  f.path.endsWith(".txt") ||
+                  f.path.endsWith(".md"))
+            ) || results.find((f) => !f.is_dir) || results[0];
+
+            if (fileToRead && !fileToRead.is_dir) {
+              attachedFile = fileToRead.path;
+              const filename = attachedFile.split(/[/\\]/).pop() ?? "file";
+
+              discoveryMsg = {
+                role: "assistant" as const,
+                content: `🔍 Discovered matching system file: **${filename}**\nPath: \`${attachedFile}\`\nReading file content...`,
+              };
+
+              ctx.updateSession(sid, (prev) => ({
+                messages: [...prev.messages, discoveryMsg!],
+              }));
+
+              // Extract text or headers
+              if (attachedFile.endsWith(".csv") || attachedFile.endsWith(".tsv")) {
+                try {
+                  const fileContent = await Api.readFileText(attachedFile);
+                  const parsed = parseCSV(fileContent);
+                  if (parsed.headers.length > 0) {
+                    ambientFileContext = `Metadata/Content for CSV file "${filename}" (Path: ${attachedFile}):\n` +
+                      `Columns: [${parsed.headers.join(", ")}].\n` +
+                      `First few rows of content:\n` +
+                      parsed.rows.slice(0, 10).map(row => row.join(", ")).join("\n");
+                  }
+                } catch (err) {
+                  console.warn("Failed to read CSV in standard chat:", err);
+                }
+              } else if (
+                attachedFile.endsWith(".xlsx") ||
+                attachedFile.endsWith(".xls") ||
+                attachedFile.endsWith(".ods")
+              ) {
+                try {
+                  const cached = await Api.getAmbientFileContent(attachedFile);
+                  if (cached) {
+                    ambientFileContext = `Metadata/Schema for Excel file "${filename}" (Path: ${attachedFile}):\n${cached}`;
+                  }
+                } catch (err) {
+                  console.warn("Failed to query Excel metadata cache in standard chat:", err);
+                }
+              } else {
+                // Plain text / markdown files
+                try {
+                  const fileContent = await Api.readFileText(attachedFile);
+                  ambientFileContext = `Content of file "${filename}" (Path: ${attachedFile}, showing first 10KB):\n${fileContent.substring(0, 10240)}`;
+                } catch (err) {
+                  console.warn("Failed to read text file in standard chat:", err);
+                }
+              }
+            }
+          }
+        } catch (err) {
+          console.warn("Ambient search in standard chat failed:", err);
+        }
+
+        // If file search intent was detected but no file was found/read,
+        // inject a system message to prevent the model from hallucinating.
+        if (!ambientFileContext && !attachedFile) {
+          ambientFileContext = "FILE_SEARCH_NO_RESULTS";
+        }
+      }
+    }
+
     ctx.setGeneralGenerating(true);
     ctx.setGeneralElapsedTime(0);
     ctx.setGeneralGenerationTime(null);
@@ -744,8 +852,25 @@ export async function executeHandleSend(
     let textFirstTokenTimeMs: number | null = null;
 
     const sessionMessages = session.messages;
-    const fullSessionMessages: ChatMessage[] = [...sessionMessages, newMsg];
+    const fullSessionMessages: ChatMessage[] = [
+      ...sessionMessages,
+      newMsg,
+      ...(discoveryMsg ? [discoveryMsg] : []),
+    ];
     let apiMessages = toContextMessages(fullSessionMessages);
+
+    // Prepend ambient file search context as a system message so the model has the file contents
+    if (ambientFileContext === "FILE_SEARCH_NO_RESULTS") {
+      apiMessages = [
+        { role: "system", content: "The user appears to be asking about a specific file on their system. A search of the local file index returned no matching files. Tell the user that you could not find the file they are looking for. Do NOT make up information or pretend to have read the file. Suggest they check the filename or attach the file directly." },
+        ...apiMessages,
+      ];
+    } else if (ambientFileContext) {
+      apiMessages = [
+        { role: "system", content: `You have access to the following local file content retrieved from the user's system:\n\n${ambientFileContext}\n\nUse this information to answer the user's query.` },
+        ...apiMessages,
+      ];
+    }
 
     // Prepend web search context as a system message so the model can cite it
     if (webSearchResult && webSearchResult.formatted_context) {
@@ -865,3 +990,577 @@ export async function executeHandleSend(
     }));
   }
 }
+
+async function handleArtifactGeneration(
+  text: string,
+  _tool: string,
+  schemaId: string,
+  sid: string,
+  ctx: SendHandlerContext,
+  ctrl: AbortController
+): Promise<void> {
+  ctx.updateSession(sid, (prev) => ({
+    loading: true,
+    artifactVisible: false,
+    artifactStage: "IntentLocked",
+    artifactPath: null,
+    messages: [
+      ...prev.messages,
+      {
+        role: "assistant",
+        content: `Generating artifact for: "${text}"`,
+        artifactStage: "IntentLocked",
+        artifactPath: null,
+      }
+    ]
+  }));
+
+  const updateArtifactMsg = (stage: PipelineStageKind, path: string | null = null, contentOverride?: string) => {
+    ctx.updateSession(sid, (prev) => {
+      const updated = [...prev.messages];
+      const idx = updated.map((m, i) => ({ m, i })).reverse().find(({ m }) => m.role === "assistant" && m.artifactStage !== undefined)?.i;
+      if (idx !== undefined && updated[idx]) {
+        updated[idx] = {
+          ...updated[idx],
+          artifactStage: stage,
+          ...(path !== null ? { artifactPath: path } : {}),
+          ...(contentOverride !== undefined ? { content: contentOverride } : {}),
+        };
+      }
+      return {
+        artifactStage: stage,
+        ...(path !== null ? { artifactPath: path } : {}),
+        messages: updated,
+      };
+    });
+  };
+
+  try {
+    const grammar = await Api.getSchemaGrammar(schemaId);
+
+    let headers: string[] | undefined;
+    let rows: string[][] | undefined;
+    let ambientFileContent = "";
+
+    let attachedFile = ctx.directDocumentPaths.length > 0 ? ctx.directDocumentPaths[0] : null;
+
+    // Proactive ambient FTS5 search if no file is attached but query requests finding files
+    if (!attachedFile && hasSearchKeywords(text)) {
+      updateArtifactMsg("SearchingDisk");
+      const searchQuery = extractSearchQuery(text);
+      try {
+        const results = await Api.searchAmbientFiles(searchQuery);
+        if (results && results.length > 0) {
+          // Find first file that is not a directory, preferably spreadsheets
+          const fileToRead = results.find(
+            (f) =>
+              !f.is_dir &&
+              (f.path.endsWith(".csv") ||
+                f.path.endsWith(".xlsx") ||
+                f.path.endsWith(".xls") ||
+                f.path.endsWith(".txt") ||
+                f.path.endsWith(".md"))
+          ) || results.find((f) => !f.is_dir) || results[0];
+
+          if (fileToRead && !fileToRead.is_dir) {
+            attachedFile = fileToRead.path;
+            const filename = attachedFile.split(/[/\\]/).pop();
+            ctx.updateSession(sid, (prev) => ({
+              messages: [
+                ...prev.messages,
+                {
+                  role: "assistant" as const,
+                  content: `🔍 Discovered matching system file: **${filename}**\nPath: \`${attachedFile}\`\nReading schema and metadata...`,
+                },
+              ],
+            }));
+          }
+        }
+      } catch (err) {
+        console.warn("Ambient search failed:", err);
+      }
+    }
+
+    if (attachedFile) {
+      updateArtifactMsg("SearchingDisk");
+      if (attachedFile.endsWith(".csv") || attachedFile.endsWith(".tsv")) {
+        try {
+          const fileContent = await Api.readFileText(attachedFile);
+          const parsed = parseCSV(fileContent);
+          headers = parsed.headers;
+          rows = parsed.rows;
+        } catch (err) {
+          console.warn("Failed to read/parse CSV file:", err);
+        }
+      } else if (
+        attachedFile.endsWith(".xlsx") ||
+        attachedFile.endsWith(".xls") ||
+        attachedFile.endsWith(".ods")
+      ) {
+        try {
+          // Query cached Excel sheet/column metadata from FTS5 index database
+          const cached = await Api.getAmbientFileContent(attachedFile);
+          if (cached) {
+            ambientFileContent = cached;
+          }
+        } catch (err) {
+          console.warn("Failed to query Excel metadata cache:", err);
+        }
+      } else {
+        // Plain text files
+        try {
+          const fileContent = await Api.readFileText(attachedFile);
+          ambientFileContent = fileContent.substring(0, 10240);
+        } catch (err) {
+          console.warn("Failed to read text file:", err);
+        }
+      }
+    }
+
+    updateArtifactMsg("CrunchingMetrics");
+
+    let dataContext = "";
+    if (headers && headers.length > 0) {
+      dataContext = `Source data columns: [${headers.join(", ")}].\n` +
+        `Number of rows: ${rows ? rows.length : 0}.\n\n`;
+    } else if (ambientFileContent) {
+      dataContext = `Source data details:\n${ambientFileContent}\n\n`;
+    }
+
+    const systemPrompt = `You are a professional assistant that generates precise structural JSON plans for creating artifacts.
+You must return ONLY a JSON object conforming to the schema contract. Do NOT include markdown formatting, code fences (e.g. \`\`\`json), or thinking/explanations.
+
+Schema Contract:
+${schemaId === "spreadsheet_synthesis" 
+  ? `{"ops": [{"op": "SUM_COLUMN" | "AVERAGE_BY_GROUP" | "PIVOT" | "SORT_DESC" | "SORT_ASC" | "FILTER_ROWS" | "COUNT_BY_GROUP" | "ADD_COLUMN" | "RENAME_SHEET" | "WRITE_DATA", ...}]}` 
+  : schemaId === "presentation_synthesis"
+  ? `{"slides": [{"title": "string", "layout": "TITLE" | "BULLET" | "TWO_COLUMN" | "IMAGE_LEFT" | "BLANK", "bullets": ["string"], "notes": "string"}]}`
+  : `{"html": "string", "output_name": "string"}`
+}
+
+Allowed Operations/Fields:
+${schemaId === "spreadsheet_synthesis"
+  ? `- SUM_COLUMN: { "col": "col_name", "label": "optional_label" }
+- AVERAGE_BY_GROUP: { "value_col": "col_name", "group_col": "col_name" }
+- PIVOT: { "row_col": "col_name", "col_col": "col_name", "value_col": "col_name" }
+- SORT_DESC: { "col": "col_name" }
+- SORT_ASC: { "col": "col_name" }
+- FILTER_ROWS: { "col": "col_name", "value": "value_to_match" }
+- COUNT_BY_GROUP: { "group_col": "col_name" }
+- ADD_COLUMN: { "name": "new_col_name", "formula": "simple_formula" }
+- RENAME_SHEET: { "name": "new_sheet_name" }
+- WRITE_DATA: { "headers": ["col1", "col2", ...], "rows": [["row1_val1", "row1_val2", ...], ["row2_val1", "row2_val2", ...]] }
+  Use WRITE_DATA to write raw headers and rows of data into the spreadsheet. If there is no input data/file attached, you MUST use WRITE_DATA first to populate the sheet. You can also use WRITE_DATA to add/write data even when attached files/source data are present.`
+  : schemaId === "presentation_synthesis"
+  ? `- TITLE: title slide
+- BULLET: title + bullet points
+- TWO_COLUMN: title + bullet points for two columns
+- IMAGE_LEFT: image on left, text on right
+- BLANK: empty layout`
+  : `- html: The complete raw HTML content to render. Make it visually stunning, responsive, using modern UI styling (rounded borders, harmonized HSL/RGB colors, clean typography, glassmorphism if appropriate) and functional script logic if needed. Do not use raw tailwind unless standard CSS is used inside <style>.
+- output_name: Optional hint for the filename without extension.`
+}
+`;
+
+    const userPrompt = `${dataContext}Generate a plan for the user request: "${text}"`;
+
+    let planJson = "";
+    const generationOptions = ctx.getChatGenerationOptions(ctx.selectedModel);
+
+    await Api.streamChat(
+      [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt }
+      ],
+      (chunk) => {
+        planJson += chunk;
+      },
+      () => {},
+      async () => {
+        updateArtifactMsg("WritingCode");
+        try {
+          let planObj: any;
+          try {
+            const cleanedText = extractJsonObject(planJson);
+            if (!cleanedText) {
+              throw new Error("No valid JSON object found in model output.");
+            }
+            planObj = JSON.parse(cleanedText);
+          } catch (jsonErr) {
+            console.warn("Failed to parse JSON directly, cleaning up markdown fences:", jsonErr);
+            const cleaned = planJson.replace(/```json|```/g, "").trim();
+            const cleaned2 = extractJsonObject(cleaned) || cleaned;
+            planObj = JSON.parse(cleaned2);
+          }
+
+          planObj = repairNestedKeys(planObj);
+
+          if (headers && rows) {
+            planObj.headers = headers;
+            planObj.source_rows = rows;
+          }
+
+          let result: ArtifactResult;
+          if (schemaId === "spreadsheet_synthesis") {
+            result = await Api.generateSpreadsheet(planObj);
+          } else if (schemaId === "presentation_synthesis") {
+            result = await Api.generatePresentation(planObj);
+          } else {
+            result = await Api.generateHtml(planObj);
+          }
+
+          ctx.updateSession(sid, {
+            loading: false,
+            artifactVisible: false,
+          });
+
+          const filename = result.path.split(/[/\\]/).pop();
+          updateArtifactMsg("LivePreview", result.path, `Generated artifact successfully: **${filename}**\nPath: \`${result.path}\``);
+
+        } catch (execErr: any) {
+          console.error("Artifact generation execution failed:", execErr);
+          ctx.updateSession(sid, {
+            loading: false,
+          });
+          updateArtifactMsg("Error", null, `Failed to compile/execute artifact plan: ${execErr.message || execErr}`);
+        }
+      },
+      (err) => {
+        console.error("Artifact plan generation failed:", err);
+        ctx.updateSession(sid, {
+          loading: false,
+        });
+        updateArtifactMsg("Error", null, `Failed to generate artifact plan: ${err}`);
+      },
+      undefined,
+      ctrl.signal,
+      true,
+      {
+        ...generationOptions,
+        maxTokens: 500,
+        temperature: 0.1,
+        grammar,
+      }
+    );
+
+  } catch (err: any) {
+    console.error("Artifact setup failed:", err);
+    ctx.updateSession(sid, {
+      loading: false,
+    });
+    updateArtifactMsg("Error", null, `Failed to initialize artifact creation: ${err.message || err}`);
+  }
+}
+
+async function handlePatchApplication(
+  text: string,
+  artifactPath: string,
+  sid: string,
+  ctx: SendHandlerContext,
+  ctrl: AbortController
+): Promise<void> {
+  if (!artifactPath) {
+    // If no path was resolved, fall back to default artifact path in session
+    const session = ctx.sessions.find((s) => s.id === sid);
+    artifactPath = session?.artifactPath || "";
+  }
+
+  if (!artifactPath) {
+    console.warn("No active artifact to patch.");
+    return;
+  }
+
+  ctx.updateSession(sid, (prev) => ({
+    loading: true,
+    artifactVisible: false,
+    artifactStage: "CrunchingMetrics",
+    messages: [
+      ...prev.messages,
+      {
+        role: "assistant",
+        content: `Applying modifications: "${text}"`,
+        artifactStage: "CrunchingMetrics",
+        artifactPath,
+      }
+    ]
+  }));
+
+  const updatePatchMsg = (stage: PipelineStageKind, path: string | null = null, contentOverride?: string) => {
+    ctx.updateSession(sid, (prev) => {
+      const updated = [...prev.messages];
+      const idx = updated.map((m, i) => ({ m, i })).reverse().find(({ m }) => m.role === "assistant" && m.artifactStage !== undefined)?.i;
+      if (idx !== undefined && updated[idx]) {
+        updated[idx] = {
+          ...updated[idx],
+          artifactStage: stage,
+          ...(path !== null ? { artifactPath: path } : {}),
+          ...(contentOverride !== undefined ? { content: contentOverride } : {}),
+        };
+      }
+      return {
+        artifactStage: stage,
+        ...(path !== null ? { artifactPath: path } : {}),
+        messages: updated,
+      };
+    });
+  };
+
+  try {
+    const currentContent = await Api.readFileText(artifactPath);
+
+    const systemPrompt = `You are a professional software assistant that modifies HTML and other code artifacts.
+Generate a valid, minimal unified git-style diff (patch) to apply the user's modifications.
+Do NOT output anything else — no markdown fences, no explanations, no chat text. Just the raw unified diff starting with "@@".
+
+Original Code:
+\`\`\`html
+${currentContent}
+\`\`\``;
+
+    const userPrompt = `Generate a unified diff patch to: "${text}"`;
+
+    let patchText = "";
+    const generationOptions = ctx.getChatGenerationOptions(ctx.selectedModel);
+
+    await Api.streamChat(
+      [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt }
+      ],
+      (chunk) => {
+        patchText += chunk;
+      },
+      () => {},
+      async () => {
+        updatePatchMsg("WritingCode");
+        try {
+          let cleanPatch = patchText.trim();
+          if (cleanPatch.startsWith("```")) {
+            const lines = cleanPatch.split("\n");
+            if (lines[0].startsWith("```")) {
+              lines.shift();
+            }
+            if (lines[lines.length - 1] === "```") {
+              lines.pop();
+            }
+            cleanPatch = lines.join("\n").trim();
+          }
+
+          // Apply patch on disk
+          await Api.applyDiffPatch(artifactPath, cleanPatch);
+
+          // Trigger hot-reload in sandbox
+          import("@tauri-apps/api/event").then(({ emit }) => {
+            emit("artifact-patch", { patch: cleanPatch, path: artifactPath });
+          });
+
+          ctx.updateSession(sid, {
+            loading: false,
+            artifactVisible: false,
+          });
+
+          const filename = artifactPath.split(/[/\\]/).pop();
+          updatePatchMsg("LivePreview", artifactPath, `Successfully applied modifications to: **${filename}** via targeted hot-reload.`);
+
+        } catch (execErr: any) {
+          console.error("Patch execution failed:", execErr);
+          ctx.updateSession(sid, {
+            loading: false,
+          });
+          updatePatchMsg("Error", null, `Failed to apply diff patch: ${execErr.message || execErr}`);
+        }
+      },
+      (err) => {
+        console.error("Patch generation failed:", err);
+        ctx.updateSession(sid, {
+          loading: false,
+        });
+        updatePatchMsg("Error", null, `Failed to generate patch: ${err}`);
+      },
+      undefined,
+      ctrl.signal,
+      true,
+      {
+        ...generationOptions,
+        maxTokens: 1000,
+        temperature: 0.1,
+      }
+    );
+
+  } catch (err: any) {
+    console.error("Patch setup failed:", err);
+    ctx.updateSession(sid, {
+      loading: false,
+    });
+    updatePatchMsg("Error", null, `Failed to initialize patch application: ${err.message || err}`);
+  }
+}
+
+function parseCSV(content: string): { headers: string[]; rows: string[][] } {
+  const lines = content.split(/\r?\n/).map(line => {
+    const result: string[] = [];
+    let current = "";
+    let inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i];
+      if (c === '"') {
+        inQuotes = !inQuotes;
+      } else if (c === ',' && !inQuotes) {
+        result.push(current.trim());
+        current = "";
+      } else {
+        current += c;
+      }
+    }
+    result.push(current.trim());
+    return result;
+  }).filter(line => line.length > 0 && line.some(cell => cell !== ""));
+
+  if (lines.length === 0) {
+    return { headers: [], rows: [] };
+  }
+  const headers = lines[0];
+  const rows = lines.slice(1);
+  return { headers, rows };
+}
+
+function extractSearchQuery(text: string): string {
+  const lowerText = text.toLowerCase();
+  let startIdx = 0;
+  let endIdx = text.length;
+
+  const prefixes = [
+    "can you tell me about",
+    "tell me about",
+    "do you have any info on",
+    "do you have",
+    "what is in",
+    "show me the contents of",
+    "show me",
+    "search for",
+    "look for",
+    "look up",
+    "find",
+    "locate",
+    "where is"
+  ];
+  for (const prefix of prefixes) {
+    if (lowerText.startsWith(prefix)) {
+      startIdx = prefix.length;
+      break;
+    }
+  }
+
+  const remaining = text.substring(startIdx).trim();
+  const lowerRemaining = remaining.toLowerCase();
+
+  const suffixes = [
+    "from my system files",
+    "from my files",
+    "on my system",
+    "in my system",
+    "in my files",
+    "from system files",
+    "system files",
+    "my files",
+    "on my computer"
+  ];
+  for (const suffix of suffixes) {
+    if (lowerRemaining.endsWith(suffix)) {
+      endIdx = startIdx + lowerRemaining.lastIndexOf(suffix);
+      break;
+    }
+  }
+
+  let cleaned = text.substring(startIdx, endIdx).trim();
+  const lowerCleaned = cleaned.toLowerCase();
+
+  const stopWords = [
+    "and make",
+    "and create",
+    "and generate",
+    "and build",
+    "into a",
+    "to generate",
+    "to create",
+    "as a",
+  ];
+  for (const sw of stopWords) {
+    const swIdx = lowerCleaned.indexOf(sw);
+    if (swIdx !== -1) {
+      cleaned = cleaned.substring(0, swIdx).trim();
+      break;
+    }
+  }
+
+  // Clean up punctuation EXCEPT dots, underscores, and hyphens (important for filenames)
+  cleaned = cleaned.replace(/[,\/#!$%\^&\*;:{}=`~()?]/g, "").trim();
+
+  return cleaned || text;
+}
+
+function repairNestedKeys(obj: any): any {
+  if (obj === null || typeof obj !== "object") {
+    return obj;
+  }
+
+  if (Array.isArray(obj)) {
+    return obj.map(repairNestedKeys);
+  }
+
+  const repaired: any = {};
+  for (const key of Object.keys(obj)) {
+    let newKey = key;
+    const lower = key.toLowerCase();
+
+    // Map common misspellings of functional schema keys
+    if (lower === "column" || lower === "col_name" || lower === "target_col" || lower === "cols" || lower === "colname") {
+      newKey = "col";
+    } else if (lower === "group" || lower === "group_column" || lower === "groupcol" || lower === "by_col" || lower === "group_by" || lower === "by") {
+      newKey = "group_col";
+    } else if (lower === "value" || lower === "value_column" || lower === "val_col" || lower === "valcol" || lower === "val") {
+      newKey = "value_col";
+    } else if (lower === "row_column" || lower === "rowcol") {
+      newKey = "row_col";
+    } else if (lower === "column_column" || lower === "column_col" || lower === "colcol") {
+      newKey = "col_col";
+    } else if (lower === "expression" || lower === "expr" || lower === "calc") {
+      newKey = "formula";
+    }
+
+    repaired[newKey] = repairNestedKeys(obj[key]);
+  }
+
+  // Operation-specific structural repair
+  if (repaired.op) {
+    const op = String(repaired.op).toUpperCase();
+    repaired.op = op; // Ensure uppercase
+
+    if (op === "COUNT_BY_GROUP") {
+      // COUNT_BY_GROUP expects group_col. If model generated col/column (which mapped to col), move it.
+      if (repaired.col && !repaired.group_col) {
+        repaired.group_col = repaired.col;
+        delete repaired.col;
+      }
+    } else if (op === "AVERAGE_BY_GROUP") {
+      if (repaired.col && !repaired.group_col) {
+        repaired.group_col = repaired.col;
+        delete repaired.col;
+      }
+    } else if (op === "SUM_COLUMN" || op === "SORT_DESC" || op === "SORT_ASC" || op === "FILTER_ROWS") {
+      if (repaired.group_col && !repaired.col) {
+        repaired.col = repaired.group_col;
+        delete repaired.group_col;
+      }
+    }
+  }
+
+  return repaired;
+}
+
+function hasSearchKeywords(text: string): boolean {
+  const searchKeywordsRegex = /\b(search\w*|find\w*|locat\w+|look\s*up|read\w*|where\s+(is|are)|get\s+(the|file|document)|open\s+file|retriev\w*)\b/i;
+  return searchKeywordsRegex.test(text);
+}
+
+

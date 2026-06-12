@@ -18,6 +18,12 @@ import type {
   ChatContextCompactionRequest,
   ChatContextCompactionResult,
   WebSearchResult,
+  IntentDecision,
+  SpreadsheetPlan,
+  PresentationPlan,
+  HtmlPlan,
+  ArtifactResult,
+  FileRecord,
 } from "./types";
 
 export interface HFModel {
@@ -639,6 +645,7 @@ export const Api = {
       topP?: number;
       topK?: number;
       repeatPenalty?: number;
+      grammar?: string;
     }
   ) {
     try {
@@ -656,6 +663,10 @@ export const Api = {
         top_k: generationOptions?.topK ?? 40,
         repeat_penalty: generationOptions?.repeatPenalty ?? 1.1,
       };
+
+      if (generationOptions?.grammar) {
+        requestBody.grammar = generationOptions.grammar;
+      }
 
       // Reasoning is OFF by default; callers can enable by passing disableThinking=false.
       // IMPORTANT: When disabling, set ALL THREE:
@@ -961,6 +972,53 @@ export const Api = {
     models: Array<[string, number]> // [path, file_size_mb]
   ): Promise<Array<[string, ModelCompatibility]>> {
     return invoke("batch_check_compatibility", { models });
+  },
+
+  /** Resolve macro-intent from prompt. */
+  async resolveIntent(prompt: string, extra?: Record<string, string>): Promise<IntentDecision> {
+    return invoke<IntentDecision>("resolve_intent", {
+      request: { prompt, extra: extra ?? {} }
+    });
+  },
+
+  /** Get GBNF grammar string for a specific schema/manifest ID. */
+  async getSchemaGrammar(schemaId: string): Promise<string> {
+    return invoke<string>("get_schema_grammar", { schemaId });
+  },
+
+  /** Generate spreadsheet artifact using the Excel sidecar. */
+  async generateSpreadsheet(plan: SpreadsheetPlan): Promise<ArtifactResult> {
+    return invoke<ArtifactResult>("generate_spreadsheet", { plan });
+  },
+
+  /** Generate presentation artifact using the Presentation sidecar. */
+  async generatePresentation(plan: PresentationPlan): Promise<ArtifactResult> {
+    return invoke<ArtifactResult>("generate_presentation", { plan });
+  },
+
+  /** Generate HTML artifact using the HTML sidecar. */
+  async generateHtml(plan: HtmlPlan): Promise<ArtifactResult> {
+    return invoke<ArtifactResult>("generate_html", { plan });
+  },
+
+  /** Parse cells/rows of spreadsheet files using Calamine/CSV. */
+  async parseSpreadsheetData(path: string): Promise<{ sheet_name: string; rows: string[][] }> {
+    return invoke<{ sheet_name: string; rows: string[][] }>("parse_spreadsheet_data", { path });
+  },
+
+  /** Search for ambient files using FTS5 (revamp P4) */
+  async searchAmbientFiles(query: string): Promise<FileRecord[]> {
+    return invoke<FileRecord[]>("search_ambient_files", { query });
+  },
+
+  /** Get cached index content of an ambient file (revamp P4) */
+  async getAmbientFileContent(path: string): Promise<string | null> {
+    return invoke<string | null>("get_ambient_file_content", { path });
+  },
+
+  /** Apply a unified diff patch to a file (revamp P5) */
+  async applyDiffPatch(path: string, patch: string): Promise<string> {
+    return invoke<string>("apply_diff_patch", { path, patch });
   },
 };
 

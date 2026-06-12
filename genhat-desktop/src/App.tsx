@@ -2147,6 +2147,12 @@ function App() {
     }));
   };
 
+  // Handler to close artifact panel
+  const handleCloseArtifact = () => {
+    if (!activeSession) return;
+    updateSession(activeSession.id, { artifactVisible: false });
+  };
+
   const handleManualContextCompaction = useCallback(async () => {
     if (!activeSession) return;
     if (activeSession.loading) return;
@@ -2421,6 +2427,7 @@ function App() {
         docViewerFile={docViewerFile}
         onCloseDocViewer={closeDocViewer}
         onExitPlayground={handleExitPlayground}
+        onCloseArtifact={handleCloseArtifact}
       />
 
       <StartupModelToast

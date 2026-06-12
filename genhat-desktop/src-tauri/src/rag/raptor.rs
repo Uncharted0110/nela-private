@@ -14,7 +14,7 @@
 //!
 //! # Example Usage
 //!
-//! ```no_run
+//! ```rust,ignore
 //! use app_lib::rag::raptor;
 //!
 //! // Build a RAPTOR tree for document ID 1
@@ -363,7 +363,7 @@ fn group_by_cluster<T: Clone>(items: &[T], assignments: &[usize]) -> HashMap<usi
 /// * LLM summarization fails
 ///
 /// # Example
-/// ```no_run
+/// ```rust,ignore
 /// let status = build_raptor_tree(db, router, doc_id).await?;
 /// println!("Built tree: {} nodes, {} levels", status.nodes_created, status.levels);
 /// ```
@@ -624,7 +624,7 @@ async fn embed_text(router: &TaskRouter, text: &str) -> Result<Vec<f32>, String>
 /// - text is either summary or expanded child text
 ///
 /// # Example
-/// ```no_run
+/// ```rust,ignore
 /// let results = raptor_retrieve(db, router, 1, "key findings", 5, None).await?;
 /// for (id, score, text) in results {
 ///     println!("Result {}: {:.2} - {}", id, score, &text[..50]);

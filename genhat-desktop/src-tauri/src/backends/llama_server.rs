@@ -170,17 +170,18 @@ fn is_truthy(value: &str) -> bool {
 }
 
 fn recommended_thread_counts(def: &ModelDef) -> (usize, usize) {
-    let mut sys = System::new();
-    sys.refresh_cpu();
+    // Use the Governor's thermally-aware thread count as the ceiling.
+    // This enforces the revamp.md §3.1 "no space heater" mandate at every
+    // llama-server spawn, regardless of what the model config requests.
+    let governor_threads = crate::governor::Governor::new().inference_threads();
 
-    let physical_cores = sys
-        .physical_core_count()
-        .or_else(|| std::thread::available_parallelism().ok().map(|n| n.get()))
+    let physical_cores = std::thread::available_parallelism()
+        .map(|n| n.get())
         .unwrap_or(4)
         .max(1);
 
-    // Keep some headroom for the app/UI and background tasks.
-    let default_threads = ((physical_cores * 3) / 4).max(1);
+    // Default: use governor ceiling, but allow the model config to request fewer.
+    let default_threads = governor_threads;
     let default_threads_batch = physical_cores.max(default_threads);
 
     let parse_positive = |key: &str| -> Option<usize> {
@@ -190,8 +191,12 @@ fn recommended_thread_counts(def: &ModelDef) -> (usize, usize) {
             .filter(|&v| v > 0)
     };
 
-    let threads = parse_positive("threads").unwrap_or(default_threads);
+    // Model config may override downward (never upward past governor ceiling).
+    let threads = parse_positive("threads")
+        .map(|t| t.min(governor_threads))
+        .unwrap_or(default_threads);
     let threads_batch = parse_positive("threads_batch")
+        .map(|t| t.min(governor_threads))
         .unwrap_or(default_threads_batch)
         .max(threads);
 
@@ -706,6 +711,17 @@ impl ModelBackend for LlamaServerBackend {
             "cache_prompt": true,
             "stream": false
         });
+
+        // ── GBNF grammar constraint (revamp P1) ───────────────────────────────
+        // If the caller passes a `grammar` key in `request.extra`, inject it
+        // into the completion request so llama-server constrains its logit
+        // sampling to only structurally valid output.  This is the accuracy
+        // layer from revamp.md §5 — GBNF mandatory for all artifact output.
+        if let Some(grammar) = request.extra.get("grammar") {
+            if !grammar.is_empty() {
+                body["grammar"] = serde_json::json!(grammar);
+            }
+        }
 
         // Allow callers to override max_tokens via the extra map
         if let Some(mt) = request.extra.get("max_tokens") {

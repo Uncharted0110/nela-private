@@ -14,6 +14,7 @@ pub fn chat_request(input: &str) -> TaskRequest {
         input: input.to_string(),
         model_override: None,
         extra: HashMap::new(),
+        cancel_token: None,
     }
 }
 
@@ -25,6 +26,7 @@ pub fn summarize_request(input: &str) -> TaskRequest {
         input: input.to_string(),
         model_override: None,
         extra: HashMap::new(),
+        cancel_token: None,
     }
 }
 
@@ -36,6 +38,7 @@ pub fn mindmap_request(input: &str) -> TaskRequest {
         input: input.to_string(),
         model_override: None,
         extra: HashMap::new(),
+        cancel_token: None,
     }
 }
 
@@ -47,6 +50,7 @@ pub fn tts_request(text: &str) -> TaskRequest {
         input: text.to_string(),
         model_override: None,
         extra: HashMap::new(),
+        cancel_token: None,
     }
 }
 
@@ -58,6 +62,7 @@ pub fn embed_request(texts: Vec<String>) -> TaskRequest {
         input: serde_json::to_string(&texts).unwrap_or_default(),
         model_override: None,
         extra: HashMap::new(),
+        cancel_token: None,
     }
 }
 
@@ -69,6 +74,7 @@ pub fn classify_request(query: &str) -> TaskRequest {
         input: query.to_string(),
         model_override: None,
         extra: HashMap::new(),
+        cancel_token: None,
     }
 }
 
@@ -80,6 +86,7 @@ pub fn enrich_request(chunk_text: &str) -> TaskRequest {
         input: chunk_text.to_string(),
         model_override: None,
         extra: HashMap::new(),
+        cancel_token: None,
     }
 }
 
@@ -94,6 +101,7 @@ pub fn grade_request(query: &str, context: &str) -> TaskRequest {
         input: context.to_string(),
         model_override: None,
         extra,
+        cancel_token: None,
     }
 }
 
@@ -105,6 +113,7 @@ pub fn hyde_request(query: &str) -> TaskRequest {
         input: query.to_string(),
         model_override: None,
         extra: HashMap::new(),
+        cancel_token: None,
     }
 }
 
@@ -116,5 +125,6 @@ pub fn transcribe_request(audio_path: &str) -> TaskRequest {
         input: audio_path.to_string(),
         model_override: None,
         extra: HashMap::new(),
+        cancel_token: None,
     }
 }

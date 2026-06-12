@@ -11,6 +11,8 @@ import PdfViewer from "./PdfViewer";
 import DocumentViewer from "./DocumentViewer";
 import PlaygroundMode from "./PlaygroundMode";
 
+import ArtifactSandbox from "./ArtifactSandbox";
+
 interface ModeOption {
   mode: ChatMode;
   label: string;
@@ -71,6 +73,7 @@ interface AppMainContentAreaProps {
   } | null;
   onCloseDocViewer: () => void;
   onExitPlayground?: () => void;
+  onCloseArtifact?: () => void;
 }
 
 export default function AppMainContentArea({
@@ -117,6 +120,7 @@ export default function AppMainContentArea({
   docViewerFile,
   onCloseDocViewer,
   onExitPlayground,
+  onCloseArtifact,
 }: AppMainContentAreaProps) {
   return (
     <>
@@ -136,51 +140,67 @@ export default function AppMainContentArea({
             : "No workspace selected. Create a workspace from the left sidebar."}
         </div>
       ) : (
-        <ChatWindow
-          key={activeSession.id}
-          messages={activeSession.messages}
-          streamingContent={activeSession.streamingContent}
-          isLoading={activeSession.loading}
-          onSend={onSend}
-          onCancel={onCancel}
-          cancelled={activeSession.cancelled}
-          audioSrc={activeSession.audioOutput}
-          audioOutputs={activeSession.audioOutputs}
-          placeholder={placeholder}
-          mediaAssets={activeSession.mediaAssets}
-          ragDocs={ragDocs}
-          ragIngesting={ragIngesting}
-          enrichmentStatus={enrichmentStatus}
-          onIngestFile={onIngestFile}
-          onIngestDir={onIngestDir}
-          onAttachDirectDocuments={onAttachDirectDocuments}
-          directDocumentPaths={directDocumentPaths}
-          onRemoveDirectDocument={onRemoveDirectDocument}
-          onClearDirectDocuments={onClearDirectDocuments}
-          onSelectVisionImage={onSelectVisionImage}
-          visionImagePath={visionImagePath}
-          visionImagePreview={visionImagePreview}
-          onClearVisionImage={onClearVisionImage}
-          onToggleDocPanel={onToggleDocPanel}
-          chatMode={chatMode}
-          ragEnabled={ragEnabled}
-          onToggleRagEnabled={onToggleRagEnabled}
-          webEnabled={webEnabled}
-          onToggleWebEnabled={onToggleWebEnabled}
-          webDepth={webDepth}
-          onWebDepthChange={onWebDepthChange}
-          showRagControls={chatMode === "text" || chatMode === "mindmap"}
-          docPanelOpen={docPanelOpen}
-          modeOptions={modeOptions}
-          currentMode={chatMode}
-          onSelectMode={onSelectMode}
-          modeSwitchNotice={modeSwitchNotice}
-          saveAudioToSidebar={onSaveAudioToSidebar}
-          session={activeSession}
-          streamingThinking={streamingThinking}
-          thinkingEnabled={thinkingEnabled}
-          onToggleThinking={onToggleThinking}
-        />
+        <div className="flex-1 flex min-w-0 h-full relative overflow-hidden">
+          <div
+            className="flex-1 min-w-0 h-full transition-all duration-300"
+            style={{ flexBasis: activeSession.artifactVisible ? "35%" : "100%" }}
+          >
+            <ChatWindow
+              key={activeSession.id}
+              messages={activeSession.messages}
+              streamingContent={activeSession.streamingContent}
+              isLoading={activeSession.loading}
+              onSend={onSend}
+              onCancel={onCancel}
+              cancelled={activeSession.cancelled}
+              audioSrc={activeSession.audioOutput}
+              audioOutputs={activeSession.audioOutputs}
+              placeholder={placeholder}
+              mediaAssets={activeSession.mediaAssets}
+              ragDocs={ragDocs}
+              ragIngesting={ragIngesting}
+              enrichmentStatus={enrichmentStatus}
+              onIngestFile={onIngestFile}
+              onIngestDir={onIngestDir}
+              onAttachDirectDocuments={onAttachDirectDocuments}
+              directDocumentPaths={directDocumentPaths}
+              onRemoveDirectDocument={onRemoveDirectDocument}
+              onClearDirectDocuments={onClearDirectDocuments}
+              onSelectVisionImage={onSelectVisionImage}
+              visionImagePath={visionImagePath}
+              visionImagePreview={visionImagePreview}
+              onClearVisionImage={onClearVisionImage}
+              onToggleDocPanel={onToggleDocPanel}
+              chatMode={chatMode}
+              ragEnabled={ragEnabled}
+              onToggleRagEnabled={onToggleRagEnabled}
+              webEnabled={webEnabled}
+              onToggleWebEnabled={onToggleWebEnabled}
+              webDepth={webDepth}
+              onWebDepthChange={onWebDepthChange}
+              showRagControls={chatMode === "text" || chatMode === "mindmap"}
+              docPanelOpen={docPanelOpen}
+              modeOptions={modeOptions}
+              currentMode={chatMode}
+              onSelectMode={onSelectMode}
+              modeSwitchNotice={modeSwitchNotice}
+              saveAudioToSidebar={onSaveAudioToSidebar}
+              session={activeSession}
+              streamingThinking={streamingThinking}
+              thinkingEnabled={thinkingEnabled}
+              onToggleThinking={onToggleThinking}
+            />
+          </div>
+          {activeSession.artifactVisible && (
+            <div className="w-[65%] min-w-0 h-full border-l border-glass-border">
+              <ArtifactSandbox
+                visible={activeSession.artifactVisible}
+                initialPath={activeSession.artifactPath ?? undefined}
+                onClose={onCloseArtifact}
+              />
+            </div>
+          )}
+        </div>
       )}
 
       {activeMindmapOverlay && (activeMindmapGraph || activeMindmapOverlay.isGenerating) && (

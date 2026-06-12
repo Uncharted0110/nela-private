@@ -241,6 +241,7 @@ async fn generate_podcast_inner(
         input: prompt,
         model_override: None,
         extra,
+        cancel_token: None,
     };
 
     let script_text = match router.route(&chat_request).await {
@@ -324,6 +325,7 @@ async fn generate_podcast_inner(
                     input: text,
                     model_override: None,
                     extra,
+                    cancel_token: None,
                 };
 
                 let wav_path = match router.route(&tts_request).await {

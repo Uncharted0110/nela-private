@@ -267,6 +267,7 @@ pub async fn compact_chat_context(
                     .clone()
                     .and_then(|v| if v.trim().is_empty() { None } else { Some(v) }),
                 extra,
+                cancel_token: None,
             };
 
             let summary_text = match router_state.0.route(&summarize_req).await {
@@ -427,6 +428,7 @@ pub async fn route_request(
         input,
         model_override,
         extra: extra.unwrap_or_default(),
+        cancel_token: None,
     };
 
     router_state.0.route(&request).await
@@ -475,6 +477,7 @@ pub async fn vision_chat(
         input: prompt,
         model_override: None,
         extra,
+        cancel_token: None,
     };
 
     match router_state.0.route(&request).await? {

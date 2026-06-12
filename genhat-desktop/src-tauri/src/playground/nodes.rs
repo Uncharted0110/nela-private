@@ -53,6 +53,7 @@ async fn route_text(
         input: prompt.to_string(),
         model_override: if model_id.is_empty() { None } else { Some(model_id.to_string()) },
         extra,
+        cancel_token: None,
     };
     match router.route(&req).await? {
         TaskResponse::Text(t) | TaskResponse::ChatWithThinking { content: t, .. } => Ok(t),
@@ -253,6 +254,7 @@ pub async fn execute_node(
                 input: audio_path.to_string(),
                 model_override: if cfg.model_id.is_empty() { None } else { Some(cfg.model_id.clone()) },
                 extra: Default::default(),
+                cancel_token: None,
             };
             match router.route(&req).await? {
                 TaskResponse::Transcription { segments } => {
@@ -276,6 +278,7 @@ pub async fn execute_node(
                 input: ctx.output.clone(),
                 model_override: if cfg.engine_id.is_empty() { None } else { Some(cfg.engine_id.clone()) },
                 extra,
+                cancel_token: None,
             };
             match router.route(&req).await? {
                 TaskResponse::FilePath(path) => Ok(path),

@@ -125,6 +125,7 @@ interface AppMainContentProps {
   } | null;
   onCloseDocViewer: () => void;
   onExitPlayground?: () => void;
+  onCloseArtifact?: () => void;
 }
 
 export default function AppMainContent({
@@ -208,6 +209,7 @@ export default function AppMainContent({
   docViewerFile,
   onCloseDocViewer,
   onExitPlayground,
+  onCloseArtifact,
 }: AppMainContentProps) {
   return (
     <main className="flex-1 flex flex-col bg-void-900 min-w-0 relative">
@@ -307,6 +309,7 @@ export default function AppMainContent({
         docViewerFile={docViewerFile}
         onCloseDocViewer={onCloseDocViewer}
         onExitPlayground={onExitPlayground}
+        onCloseArtifact={onCloseArtifact}
       />
     </main>
   );

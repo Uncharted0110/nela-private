@@ -19,7 +19,7 @@ export function extractTaskText(response: unknown): string {
   return JSON.stringify(response ?? "");
 }
 
-function extractJsonObject(raw: string): string | null {
+export function extractJsonObject(raw: string): string | null {
   const trimmed = raw.trim();
   if (trimmed.startsWith("{")) return trimmed;
 

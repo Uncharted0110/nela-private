@@ -1,0 +1,7 @@
+{
+  "intent": "spreadsheet_synthesis",
+  "schema_contract_version": "1.0.0",
+  "tool": "mcp-server-excel",
+  "gbnf": "grammars/spreadsheet_plan.gbnf",
+  "max_plan_tokens": 500
+}

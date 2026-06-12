@@ -73,6 +73,7 @@ pub async fn generate_speech(
         input,
         model_override: None,
         extra,
+        cancel_token: None,
     };
 
     let file_path = match router_state.0.route(&request).await? {
@@ -110,6 +111,7 @@ pub async fn transcribe_audio(
         input: audio_path,
         model_override: None,
         extra: HashMap::new(),
+        cancel_token: None,
     };
 
     router_state.0.route(&request).await
@@ -187,6 +189,7 @@ pub async fn transcribe_audio_base64(
         input: wav_path.clone(),
         model_override: None,
         extra: HashMap::new(),
+        cancel_token: None,
     };
 
     let result = router_state.0.route(&request).await;
@@ -247,6 +250,7 @@ pub async fn generate_speech_chunk(
         input: text,
         model_override: None,
         extra,
+        cancel_token: None,
     };
 
     let file_path = match router_state.0.route(&request).await? {

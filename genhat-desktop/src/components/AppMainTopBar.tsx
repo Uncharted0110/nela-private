@@ -34,7 +34,7 @@ export default function AppMainTopBar({
   onRenameWorkspace,
   workspaceBusy,
   modelLoadingStatus,
-  contextUsage,
+  contextUsage: _contextUsage,
   modeControls,
 }: AppMainTopBarProps) {
   const CurrentModeIcon = currentModeConfig.icon;

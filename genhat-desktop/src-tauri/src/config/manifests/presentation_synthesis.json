@@ -1,0 +1,7 @@
+{
+  "intent": "presentation_synthesis",
+  "schema_contract_version": "1.0.0",
+  "tool": "mcp-server-presentation",
+  "gbnf": "grammars/presentation_plan.gbnf",
+  "max_plan_tokens": 500
+}

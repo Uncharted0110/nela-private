@@ -12,6 +12,10 @@ use app_lib::commands::playground::PlaygroundState;
 use app_lib::commands::rag::RagPipelineState;
 use app_lib::commands::workspace::WorkspaceState;
 use app_lib::commands::download::DownloadState;
+use app_lib::governor::{Governor, GovernorState};
+use app_lib::intent::{IntentResolver, IntentResolverState};
+use app_lib::indexer::{AmbientIndexer, AmbientIndexerState};
+use app_lib::mcp::coordinator::{McpCoordinator, McpCoordinatorState};
 use app_lib::process::ProcessManager;
 use app_lib::rag::pipeline::RagPipeline;
 use app_lib::registry::ModelRegistry;
@@ -52,11 +56,6 @@ fn copy_missing_tree(src: &Path, dst: &Path) -> std::io::Result<()> {
 
 fn main() {
     tauri::Builder::default()
-        .plugin(
-            tauri_plugin_log::Builder::default()
-                .level(log::LevelFilter::Info)
-                .build(),
-        )
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
@@ -65,6 +64,14 @@ fn main() {
             let registry = Arc::new(
                 ModelRegistry::load().expect("Failed to load model registry"),
             );
+
+            // P6: Verify schema contract manifests on boot (revamp.md §12)
+            for contract in &["spreadsheet_synthesis", "presentation_synthesis", "html_synthesis"] {
+                match app_lib::grammar::schema::SchemaManifest::load(contract) {
+                    Ok(m) => log::info!("Schema contract '{}' verified: contract_version={}", contract, m.schema_contract_version),
+                    Err(e) => log::error!("CRITICAL: Schema contract '{}' contract mismatch: {}", contract, e),
+                }
+            }
 
             // 2. Resolve models directory
             let models_dir = app_lib::commands::models::get_models_dir();
@@ -136,6 +143,16 @@ fn main() {
                 process_manager.clone(),
             ));
 
+            // P0: Initialize the thermal/power governor.
+            // Must come before lifecycle loop so battery state is sampled early.
+            let governor = Arc::new(Governor::new());
+
+            // P2: Initialize the MCP coordinator (sidecar manager).
+            let mcp_coordinator = Arc::new(McpCoordinator::new());
+
+            // P3: Initialize the intent resolver (reuses the task router for Tier 1).
+            let intent_resolver = Arc::new(IntentResolver::new(router.clone()));
+
             // 5. Start the lifecycle manager (background health checks + reaping)
             let pm_clone = process_manager.clone();
             app_lib::process::lifecycle::start_lifecycle_thread(pm_clone, 30);
@@ -197,6 +214,36 @@ fn main() {
                 });
             }
 
+            // P4: Initialize Ambient Indexer
+            let app_cache_dir = app
+                .path()
+                .app_cache_dir()
+                .unwrap_or_else(|_| std::env::temp_dir());
+            if let Err(e) = std::fs::create_dir_all(&app_cache_dir) {
+                log::warn!("Failed to create cache dir: {e}");
+            }
+
+            // P6: Initialize TelemetryLogger
+            app_lib::telemetry::TelemetryLogger::init(&app_cache_dir).ok();
+            let home_dir = app.path().home_dir().expect("Failed to resolve home directory");
+            
+            let workspaces = workspace_manager.list_workspaces().unwrap_or_default();
+            let mut workspace_paths = Vec::new();
+            for ws in workspaces {
+                if let Some(ref p) = ws.nela_path {
+                    if let Some(parent) = std::path::Path::new(p).parent() {
+                        workspace_paths.push(parent.to_path_buf());
+                    }
+                }
+            }
+
+            let indexer = AmbientIndexer::start(
+                &app_cache_dir,
+                home_dir,
+                governor.clone(),
+                workspace_paths,
+            ).expect("Failed to start Ambient Indexer");
+
             // 9. Register state for Tauri commands
             app.manage(ProcessManagerState(process_manager));
             app.manage(TaskRouterState(router.clone()));
@@ -204,6 +251,11 @@ fn main() {
             app.manage(WorkspaceState(workspace_manager));
             app.manage(DownloadState::default());
             app.manage(MicRecorderState::default());
+            // Revamp state (P0–P4)
+            app.manage(GovernorState(governor));
+            app.manage(McpCoordinatorState(mcp_coordinator));
+            app.manage(IntentResolverState(intent_resolver));
+            app.manage(AmbientIndexerState(indexer));
 
             // 10. Initialize playground state
             match PlaygroundState::new(&app_data_dir) {
@@ -321,6 +373,7 @@ fn main() {
             app_lib::commands::system::estimate_model_memory,
             app_lib::commands::system::detect_quantization,
             app_lib::commands::system::detect_model_params,
+            app_lib::commands::system::export_telemetry_logs,
             // Playground commands
             app_lib::commands::playground::playground_list_pipelines,
             app_lib::commands::playground::playground_load_pipeline,
@@ -332,12 +385,27 @@ fn main() {
             app_lib::commands::playground::playground_export_pipeline,
             // Web search commands
             app_lib::commands::web_search::web_search,
+            // Artifact commands (revamp P3)
+            app_lib::commands::artifact::resolve_intent,
+            app_lib::commands::artifact::generate_spreadsheet,
+            app_lib::commands::artifact::generate_presentation,
+            app_lib::commands::artifact::generate_html,
+            app_lib::commands::artifact::parse_spreadsheet_data,
+            app_lib::commands::artifact::get_governor_state,
+            app_lib::commands::artifact::get_schema_grammar,
+            app_lib::commands::artifact::apply_diff_patch,
+            // Ambient FTS5 Indexer command (revamp P4)
+            app_lib::commands::indexer::search_ambient_files,
+            app_lib::commands::indexer::get_ambient_file_content,
         ])
         .build(tauri::generate_context!())
         .expect("error building tauri app")
         .run(|app_handle, event| {
             if let tauri::RunEvent::Exit = event {
-                log::info!("App exiting — stopping all models...");
+                log::info!("App exiting — stopping all models and indexer...");
+                if let Some(indexer) = app_handle.try_state::<AmbientIndexerState>() {
+                    indexer.0.stop();
+                }
                 let pm = app_handle.state::<ProcessManagerState>();
                 let pm = pm.0.clone();
                 // Block on stopping all processes before exit

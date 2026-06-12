@@ -6,6 +6,7 @@ import AudioPlayer from "./AudioPlayer";
 import VoiceInputButton from "./VoiceInputButton";
 import SpeakButton from "./SpeakButton";
 import { Api } from "../api";
+import InlineArtifact from "./InlineArtifact";
 import type { ChatMessage, MediaAsset, IngestionStatus, ChatMode, ChatSession, WebSearchResult } from "../types";
 
 const MODE_ICON_MAP: Record<ChatMode, React.ElementType> = {
@@ -663,7 +664,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
   // ─── Centered Welcome State (Claude/Copilot style) ───
   if (!hasMessages) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center relative px-6">
+      <div className="h-full flex-1 flex flex-col items-center justify-center relative px-6">
         {/* Animated orb */}
         <div className="welcome-orb" />
 
@@ -841,7 +842,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
 
   // ─── Normal Chat State ───
   return (
-    <div className="flex-1 flex flex-col min-h-0">
+    <div className="h-full flex-1 flex flex-col min-h-0">
       <div className="messages-area flex-1 overflow-y-auto px-6 py-4">
         {messages.map((msg, idx) => {
           const isNew = idx >= prevMsgCount;
@@ -904,6 +905,14 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
                         <MarkdownRenderer content={msg.content} />
                         {renderInlineWebSources(msg.webSearchResult)}
                         {mediaAssets[idx] && <MediaGallery assets={mediaAssets[idx]} />}
+                        {(msg.artifactPath || msg.artifactStage) && (
+                          <div className="mt-3">
+                            <InlineArtifact
+                              artifactPath={msg.artifactPath}
+                              artifactStage={msg.artifactStage as any}
+                            />
+                          </div>
+                        )}
                         <div className="flex items-center gap-1 mt-2 pt-1.5">
                           <CopyMsgButton text={msg.content} />
                           {/* Read response aloud button */}
@@ -937,7 +946,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
           );
         })}
 
-        {isLoading && (
+        {isLoading && !messages.some(m => m.artifactStage && m.artifactStage !== "LivePreview" && m.artifactStage !== "Error") && (
           <div className="animate-msg-fade flex gap-3 mb-5 max-w-3xl mx-auto">
             <img
               src="/logo-dark.png"

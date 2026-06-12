@@ -331,6 +331,10 @@ pub struct TaskRequest {
     /// Optional: additional key-value parameters.
     #[serde(default)]
     pub extra: HashMap<String, String>,
+    /// Optional: cancellation token for cooperative inference abort (revamp P0).
+    /// Skipped during serialization — not part of the wire format.
+    #[serde(skip)]
+    pub cancel_token: Option<std::sync::Arc<crate::governor::CancellationToken>>,
 }
 
 /// Response from a completed task.

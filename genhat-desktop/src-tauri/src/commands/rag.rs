@@ -600,15 +600,34 @@ pub fn read_file_base64(path: String) -> Result<String, String> {
     Ok(format!("data:{};base64,{}", mime, b64))
 }
 
-/// Read a file and return the raw text content (for text-based files).
-/// For binary files (docx, pptx, xlsx, images, audio), use read_file_base64 instead.
+/// Read a file and return the raw text content.
+/// Automatically parses document formats (PDF, DOCX, PPTX) using the RAG parser system,
+/// falling back to raw UTF-8 text reading for plain text files.
 #[tauri::command]
 pub fn read_file_text(path: String) -> Result<String, String> {
     let p = std::path::Path::new(&path);
     if !p.exists() {
         return Err(format!("File not found: {}", p.display()));
     }
-    std::fs::read_to_string(p).map_err(|e| format!("Failed to read file as text: {e}"))
+
+    let ext = p
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    if ext == "pdf" || ext == "docx" || ext == "pptx" {
+        let parsed = crate::rag::parsers::parse_document(p)?;
+        let combined = parsed
+            .sections
+            .iter()
+            .map(|section| section.text.clone())
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        Ok(combined)
+    } else {
+        std::fs::read_to_string(p).map_err(|e| format!("Failed to read file as text: {e}"))
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

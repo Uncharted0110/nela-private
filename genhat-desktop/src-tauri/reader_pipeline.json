@@ -1,0 +1,71 @@
+{
+  "id": "33be4cdf-18d2-4aee-a3d0-733b3015dbef",
+  "name": "Untitled Pipeline",
+  "description": "",
+  "auto_resume": false,
+  "nodes": [
+    {
+      "id": "48a5c02e-733e-4d4a-b425-7fcbaad844bd",
+      "type": "playgroundNode",
+      "position": {
+        "x": 98.5,
+        "y": 168.5
+      },
+      "data": {
+        "label": "Read File",
+        "kind": "FileRead",
+        "config": {
+          "path": "/home/amogh/pdf_to_markdown.py"
+        }
+      }
+    },
+    {
+      "id": "6f5d673c-98f3-4b7d-85dd-45d9f5f1d5af",
+      "type": "playgroundNode",
+      "position": {
+        "x": 193,
+        "y": 285.75
+      },
+      "data": {
+        "label": "LLM Chat",
+        "kind": "LlmChat",
+        "config": {
+          "ctx_size": 8192,
+          "max_tokens": 32768,
+          "model_id": "disk-llm-unsloth-gemma-4-e2b-it-gguf-b2a1cba5",
+          "system_prompt": "Give me an explanation of what the file does in detail."
+        }
+      }
+    },
+    {
+      "id": "41524482-ee21-40be-84cd-6eeff794009c",
+      "type": "playgroundNode",
+      "position": {
+        "x": 92.5,
+        "y": 403.75
+      },
+      "data": {
+        "label": "Write File",
+        "kind": "FileWrite",
+        "config": {
+          "append": false,
+          "path": "/home/amogh/nela_test/result.md"
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "83d0ca27-3780-474a-8bef-db7bd67d14d6",
+      "source": "48a5c02e-733e-4d4a-b425-7fcbaad844bd",
+      "target": "6f5d673c-98f3-4b7d-85dd-45d9f5f1d5af"
+    },
+    {
+      "id": "e64263e9-69a5-4b5e-80d9-4d3243070ccc",
+      "source": "6f5d673c-98f3-4b7d-85dd-45d9f5f1d5af",
+      "target": "41524482-ee21-40be-84cd-6eeff794009c"
+    }
+  ],
+  "created_at": 1780479905067,
+  "updated_at": 1780480988898
+}

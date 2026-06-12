@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect } from "react";
 import { ChevronDown, Check } from "lucide-react";
 import "./ModelSelector.css";
 
@@ -7,11 +7,13 @@ export function DropdownSelect({
   onChange,
   options,
   className,
+  disabled,
 }: {
   value: string;
   onChange: (val: string) => void;
   options: { label: string; value: string }[];
   className?: string;
+  disabled?: boolean;
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -35,8 +37,9 @@ export function DropdownSelect({
     <div className="relative model-selector-container w-full" ref={containerRef}>
       <button
         type="button"
-        className={`model-selector-btn ${isOpen ? "active" : ""} w-full h-[30px] rounded-lg bg-white/5 border-white/15 px-2.5 hover:bg-white/10 ${className || ""}`}
-        onClick={() => setIsOpen(!isOpen)}
+        disabled={disabled}
+        className={`model-selector-btn ${isOpen ? "active" : ""} w-full h-[30px] rounded-lg bg-white/5 border-white/15 px-2.5 hover:bg-white/10 ${className || ""} ${disabled ? "opacity-50 cursor-not-allowed" : ""}`}
+        onClick={() => !disabled && setIsOpen(!isOpen)}
         style={{
           justifyContent: "space-between",
           minWidth: 0,

@@ -67,9 +67,24 @@ pub fn detect_quantization(filename: String) -> String {
     quant.display_name().to_string()
 }
 
+// System commands
+use tauri::Manager;
+
 /// Detect model parameter size from filename
 #[tauri::command]
 pub fn detect_model_params(filename: String) -> String {
     let params = ModelParams::from_filename(&filename);
     format!("{:?}", params)
+}
+
+/// Export diagnostic telemetry logs to the Downloads directory.
+#[tauri::command]
+pub fn export_telemetry_logs(app: tauri::AppHandle) -> Result<String, String> {
+    let app_cache_dir = app.path().app_cache_dir()
+        .map_err(|e| format!("Failed to resolve cache dir: {e}"))?;
+    let downloads_dir = app.path().download_dir()
+        .map_err(|e| format!("Failed to resolve downloads dir: {e}"))?;
+    
+    let path = crate::telemetry::export_logs(&app_cache_dir, &downloads_dir)?;
+    Ok(path.to_string_lossy().to_string())
 }
