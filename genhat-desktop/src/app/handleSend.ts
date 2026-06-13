@@ -1127,6 +1127,11 @@ async function handleArtifactGeneration(
       dataContext = `Source data details:\n${ambientFileContent}\n\n`;
     }
 
+    const slidePlan = extractSlideCount(text);
+    const slideCountInstruction = slidePlan.explicit
+      ? `Produce EXACTLY ${slidePlan.count} slides, as the user explicitly requested.`
+      : `Produce a complete multi-slide deck of about ${slidePlan.count} slides (add or remove a few only if the topic clearly needs it).`;
+
     const systemPrompt = `You are a professional assistant that generates precise structural JSON plans for creating artifacts.
 You must return ONLY a JSON object conforming to the schema contract. Do NOT include markdown formatting, code fences (e.g. \`\`\`json), or thinking/explanations.
 
@@ -1152,17 +1157,40 @@ ${schemaId === "spreadsheet_synthesis"
 - WRITE_DATA: { "headers": ["col1", "col2", ...], "rows": [["row1_val1", "row1_val2", ...], ["row2_val1", "row2_val2", ...]] }
   Use WRITE_DATA to write raw headers and rows of data into the spreadsheet. If there is no input data/file attached, you MUST use WRITE_DATA first to populate the sheet. You can also use WRITE_DATA to add/write data even when attached files/source data are present.`
   : schemaId === "presentation_synthesis"
-  ? `- TITLE: title slide
-- BULLET: title + bullet points
-- TWO_COLUMN: title + bullet points for two columns
-- IMAGE_LEFT: image on left, text on right
-- BLANK: empty layout`
+  ? `Layouts:
+- TITLE: title slide (cover). Use this ONCE as the first slide; put the subtitle as the single bullet.
+- BULLET: title + 3-5 concise bullet points.
+- TWO_COLUMN: title + bullet points split across two columns (good for comparisons).
+- IMAGE_LEFT: image on left, text on right.
+- BLANK: empty layout.
+
+Deck requirements:
+- ${slideCountInstruction}
+- The FIRST slide must be a TITLE slide; the LAST slide should be a summary/conclusion or "Thank you" slide.
+- Every content slide must cover a DISTINCT sub-topic derived from the request — never collapse the whole topic into one slide.
+- Break the subject into a logical progression (e.g. intro/overview → key points → details/examples → summary).
+- Keep each bullet short and presentation-ready (roughly 12 words or fewer); use 3-5 bullets per content slide.
+- Vary layouts (BULLET, TWO_COLUMN, IMAGE_LEFT) where it improves clarity.
+- Use the optional "notes" field for brief speaker notes when helpful.`
   : `- html: The complete raw HTML content to render. Make it visually stunning, responsive, using modern UI styling (rounded borders, harmonized HSL/RGB colors, clean typography, glassmorphism if appropriate) and functional script logic if needed. Do not use raw tailwind unless standard CSS is used inside <style>.
 - output_name: Optional hint for the filename without extension.`
 }
 `;
 
-    const userPrompt = `${dataContext}Generate a plan for the user request: "${text}"`;
+    const planRequest =
+      schemaId === "presentation_synthesis"
+        ? `Generate a multi-slide presentation plan (${slidePlan.count} slides) for the user request: "${text}"`
+        : `Generate a plan for the user request: "${text}"`;
+    const userPrompt = `${dataContext}${planRequest}`;
+
+    // Presentations need far more output room than a single artifact plan: budget
+    // roughly per-slide so larger decks aren't truncated mid-array.
+    const planMaxTokens =
+      schemaId === "presentation_synthesis"
+        ? Math.min(4096, 512 + slidePlan.count * 220)
+        : schemaId === "html_synthesis"
+        ? 1000
+        : 500;
 
     let planJson = "";
     const generationOptions = ctx.getChatGenerationOptions(ctx.selectedModel);
@@ -1237,7 +1265,7 @@ ${schemaId === "spreadsheet_synthesis"
       true,
       {
         ...generationOptions,
-        maxTokens: 500,
+        maxTokens: planMaxTokens,
         temperature: 0.1,
         grammar,
       }
@@ -1394,6 +1422,41 @@ ${currentContent}
     });
     updatePatchMsg("Error", null, `Failed to initialize patch application: ${err.message || err}`);
   }
+}
+
+/**
+ * Decide how many slides a presentation deck should contain.
+ *
+ * Honors an explicit count in the prompt (e.g. "make a 7 slide deck",
+ * "10-slide presentation", "slides: 8"), clamped to a sane range. Falls back
+ * to a default when the user doesn't specify a number.
+ *
+ * Returns the resolved count plus whether it was explicitly requested so the
+ * prompt can phrase the instruction accordingly.
+ */
+function extractSlideCount(text: string): { count: number; explicit: boolean } {
+  const MIN_SLIDES = 3;
+  const MAX_SLIDES = 20;
+  const DEFAULT_SLIDES = 6;
+
+  const lower = text.toLowerCase();
+
+  const explicitMatch =
+    lower.match(/(\d{1,2})\s*-?\s*slides?\b/) ||
+    lower.match(/\bslides?\s*[:=]?\s*(\d{1,2})\b/) ||
+    lower.match(/\b(\d{1,2})\s*-?\s*slide\b/);
+
+  if (explicitMatch) {
+    const n = parseInt(explicitMatch[1], 10);
+    if (!Number.isNaN(n) && n > 0) {
+      return {
+        count: Math.min(MAX_SLIDES, Math.max(MIN_SLIDES, n)),
+        explicit: true,
+      };
+    }
+  }
+
+  return { count: DEFAULT_SLIDES, explicit: false };
 }
 
 function parseCSV(content: string): { headers: string[]; rows: string[][] } {

@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { convertFileSrc } from "@tauri-apps/api/core";
+import { openPath } from "@tauri-apps/plugin-opener";
 import ProgressSlate, { type PipelineStageKind } from "./ProgressSlate";
 import DiffPatchOverlay from "./DiffPatchOverlay";
+import { Api } from "../api";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -179,7 +180,7 @@ export default function ArtifactSandbox({
     };
   }, [_applyPatch]);
 
-  // ── Convert file path to a Tauri-safe asset URL ───────────────────────────
+  // ── Load HTML artifact content via Tauri ──────────────────────────────────
   useEffect(() => {
     if (!artifactPath) {
       setArtifactSrc(null);
@@ -187,15 +188,29 @@ export default function ArtifactSandbox({
     }
 
     const ext = artifactPath.split(".").pop()?.toLowerCase() ?? "";
-    if (ext === "html" || ext === "htm") {
-      try {
-        setArtifactSrc(convertFileSrc(artifactPath));
-      } catch {
-        setArtifactSrc(null);
-      }
-    } else {
+    if (ext !== "html" && ext !== "htm") {
       setArtifactSrc(null);
+      return;
     }
+
+    let blobUrl: string | null = null;
+    let cancelled = false;
+
+    Api.readFileText(artifactPath)
+      .then((html) => {
+        if (cancelled) return;
+        blobUrl = URL.createObjectURL(new Blob([html], { type: "text/html;charset=utf-8" }));
+        setArtifactSrc(blobUrl);
+      })
+      .catch((err) => {
+        console.error("Failed to load HTML artifact:", err);
+        if (!cancelled) setArtifactSrc(null);
+      });
+
+    return () => {
+      cancelled = true;
+      if (blobUrl) URL.revokeObjectURL(blobUrl);
+    };
   }, [artifactPath]);
 
   if (!visible) return null;
@@ -298,9 +313,7 @@ export default function ArtifactSandbox({
               <button
                 onClick={() => {
                   // Open the file using the OS default application.
-                  import("@tauri-apps/plugin-opener")
-                    .then((m) => m.openUrl(artifactPath))
-                    .catch(console.error);
+                  openPath(artifactPath).catch(console.error);
                 }}
                 style={{
                   padding: "8px 20px",

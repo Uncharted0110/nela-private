@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { convertFileSrc } from "@tauri-apps/api/core";
+import { openPath } from "@tauri-apps/plugin-opener";
 import { FileText, Eye, EyeOff, Play, AlertCircle } from "lucide-react";
 import { type PipelineStageKind } from "./ProgressSlate";
 import DiffPatchOverlay from "./DiffPatchOverlay";
@@ -230,7 +230,7 @@ export default function InlineArtifact({ artifactPath, artifactStage }: InlineAr
     };
   }, [currentPath, applyPatch]);
 
-  // Convert file path to Tauri-safe asset URL
+  // Load HTML artifact content via Tauri (avoids asset-protocol scope requirements).
   useEffect(() => {
     if (!currentPath) {
       setArtifactSrc(null);
@@ -238,16 +238,30 @@ export default function InlineArtifact({ artifactPath, artifactStage }: InlineAr
     }
 
     const ext = currentPath.split(".").pop()?.toLowerCase() ?? "";
-    if (ext === "html" || ext === "htm") {
-      try {
-        setArtifactSrc(convertFileSrc(currentPath));
-        setShowPreview(true); // Auto-expand when path is resolved
-      } catch {
-        setArtifactSrc(null);
-      }
-    } else {
+    if (ext !== "html" && ext !== "htm") {
       setArtifactSrc(null);
+      return;
     }
+
+    let blobUrl: string | null = null;
+    let cancelled = false;
+
+    Api.readFileText(currentPath)
+      .then((html) => {
+        if (cancelled) return;
+        blobUrl = URL.createObjectURL(new Blob([html], { type: "text/html;charset=utf-8" }));
+        setArtifactSrc(blobUrl);
+        setShowPreview(true);
+      })
+      .catch((err) => {
+        console.error("Failed to load HTML artifact:", err);
+        if (!cancelled) setArtifactSrc(null);
+      });
+
+    return () => {
+      cancelled = true;
+      if (blobUrl) URL.revokeObjectURL(blobUrl);
+    };
   }, [currentPath]);
 
   const filename = currentPath ? currentPath.split(/[/\\]/).pop() : "artifact";
@@ -279,9 +293,7 @@ export default function InlineArtifact({ artifactPath, artifactStage }: InlineAr
   // Open file in OS
   const handleOpenFile = () => {
     if (!currentPath) return;
-    import("@tauri-apps/plugin-opener")
-      .then((m) => m.openUrl(currentPath))
-      .catch((err) => console.error("Failed to open file:", err));
+    openPath(currentPath).catch((err) => console.error("Failed to open file:", err));
   };
 
   // ── Render Loading Progress ──

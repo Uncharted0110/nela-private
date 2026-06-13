@@ -201,7 +201,11 @@ fn resolve_mcp_binary(name: &str) -> Result<std::path::PathBuf, String> {
     // Dev fallback: look next to the current executable.
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
-            let candidate = dir.join(name);
+            let candidate = if cfg!(windows) {
+                dir.join(format!("{name}.exe"))
+            } else {
+                dir.join(name)
+            };
             if candidate.exists() {
                 return Ok(candidate);
             }
