@@ -110,6 +110,12 @@ pub enum SlideLayout {
     TwoColumn,
     ImageLeft,
     Blank,
+    Section,
+    Stat,
+    Quote,
+    Cards,
+    Comparison,
+    Centered,
 }
 
 /// A single slide in a presentation plan.

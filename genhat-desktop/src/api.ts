@@ -1020,6 +1020,11 @@ export const Api = {
   async applyDiffPatch(path: string, patch: string): Promise<string> {
     return invoke<string>("apply_diff_patch", { path, patch });
   },
+
+  /** Write base64-encoded bytes to an absolute path (used by deck export). */
+  async saveBinaryFile(path: string, contentsBase64: string): Promise<void> {
+    await invoke("save_binary_file", { path, contentsBase64 });
+  },
 };
 
 // ── Playground / Pipeline commands ─────────────────────────────────────────────

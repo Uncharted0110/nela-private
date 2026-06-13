@@ -390,7 +390,13 @@ export type SlideLayout =
   | "BULLET"
   | "TWO_COLUMN"
   | "IMAGE_LEFT"
-  | "BLANK";
+  | "BLANK"
+  | "SECTION"
+  | "STAT"
+  | "QUOTE"
+  | "CARDS"
+  | "COMPARISON"
+  | "CENTERED";
 
 export interface PresentationSlide {
   title: string;

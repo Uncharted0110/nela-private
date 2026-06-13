@@ -1131,6 +1131,7 @@ async function handleArtifactGeneration(
     const slideCountInstruction = slidePlan.explicit
       ? `Produce EXACTLY ${slidePlan.count} slides, as the user explicitly requested.`
       : `Produce a complete multi-slide deck of about ${slidePlan.count} slides (add or remove a few only if the topic clearly needs it).`;
+    const themeHint = inferPresentationTheme(text);
 
     const systemPrompt = `You are a professional assistant that generates precise structural JSON plans for creating artifacts.
 You must return ONLY a JSON object conforming to the schema contract. Do NOT include markdown formatting, code fences (e.g. \`\`\`json), or thinking/explanations.
@@ -1139,7 +1140,7 @@ Schema Contract:
 ${schemaId === "spreadsheet_synthesis" 
   ? `{"ops": [{"op": "SUM_COLUMN" | "AVERAGE_BY_GROUP" | "PIVOT" | "SORT_DESC" | "SORT_ASC" | "FILTER_ROWS" | "COUNT_BY_GROUP" | "ADD_COLUMN" | "RENAME_SHEET" | "WRITE_DATA", ...}]}` 
   : schemaId === "presentation_synthesis"
-  ? `{"slides": [{"title": "string", "layout": "TITLE" | "BULLET" | "TWO_COLUMN" | "IMAGE_LEFT" | "BLANK", "bullets": ["string"], "notes": "string"}]}`
+  ? `{"slides": [{"title": "string", "layout": "TITLE" | "SECTION" | "BULLET" | "TWO_COLUMN" | "IMAGE_LEFT" | "STAT" | "QUOTE" | "CARDS" | "COMPARISON" | "CENTERED" | "BLANK", "bullets": ["string"], "notes": "string"}], "theme": "midnight" | "corporate" | "sunset" | "minimal" | "academic" | "cyber" | "ocean" | "forest" | "lavender" | "neon" | "rose" | "slate"}`
   : `{"html": "string", "output_name": "string"}`
 }
 
@@ -1157,29 +1158,43 @@ ${schemaId === "spreadsheet_synthesis"
 - WRITE_DATA: { "headers": ["col1", "col2", ...], "rows": [["row1_val1", "row1_val2", ...], ["row2_val1", "row2_val2", ...]] }
   Use WRITE_DATA to write raw headers and rows of data into the spreadsheet. If there is no input data/file attached, you MUST use WRITE_DATA first to populate the sheet. You can also use WRITE_DATA to add/write data even when attached files/source data are present.`
   : schemaId === "presentation_synthesis"
-  ? `Layouts:
-- TITLE: title slide (cover). Use this ONCE as the first slide; put the subtitle as the single bullet.
-- BULLET: title + 3-5 concise bullet points.
-- TWO_COLUMN: title + bullet points split across two columns (good for comparisons).
-- IMAGE_LEFT: image on left, text on right.
-- BLANK: empty layout.
+  ? `Layouts — choose the ONE that best fits each slide's content. Shape "bullets" to match the chosen layout:
+- TITLE: cover slide. bullets[0] = a short subtitle/tagline. Use ONCE, as the first slide.
+- SECTION: divider before a new part. title = section name; bullets[0] = optional one-line intro. No list.
+- BULLET: a list of 3-5 short points. Use SPARINGLY — only when the content is genuinely a list.
+- TWO_COLUMN: 4-6 related items shown in two columns (e.g. pros, features, categories).
+- IMAGE_LEFT: a visual placeholder beside 2-4 points. Use when describing a product, screen, or visual concept.
+- STAT: one headline metric. bullets[0] = the big number/value (e.g. "87%", "$2.4M", "3x"); title = what it measures; bullets[1..] = brief context.
+- QUOTE: a quotation or punchy takeaway. bullets[0] = the quote text; bullets[1] = attribution/source.
+- CARDS: 2-4 distinct concepts/features/steps. Format EACH bullet as "Label: short description". Renders as cards, not a list.
+- COMPARISON: two options/approaches side by side. First half of bullets = left side, second half = right side.
+- CENTERED: a single bold statement or 1-3 short lines, centered. Great for emphasis, transitions, or the closing slide.
+- BLANK: minimal; avoid unless nothing else fits.
+
+Themes — set the "theme" field to the ONE theme that best matches the topic tone:
+- midnight (sleek dark/modern), corporate (professional navy), sunset (warm/vibrant marketing),
+  minimal (clean light), academic (scholarly serif), cyber (tech/AI/futuristic), ocean (blue/health/calm),
+  forest (green/nature/sustainability), lavender (creative/soft purple), neon (bold/gaming/entertainment),
+  rose (elegant/luxury/fashion), slate (industrial/engineering monochrome).
+Always choose the single best-fitting theme for the subject matter.
 
 Deck requirements:
 - ${slideCountInstruction}
-- The FIRST slide must be a TITLE slide; the LAST slide should be a summary/conclusion or "Thank you" slide.
-- Every content slide must cover a DISTINCT sub-topic derived from the request — never collapse the whole topic into one slide.
-- Break the subject into a logical progression (e.g. intro/overview → key points → details/examples → summary).
-- Keep each bullet short and presentation-ready (roughly 12 words or fewer); use 3-5 bullets per content slide.
-- Vary layouts (BULLET, TWO_COLUMN, IMAGE_LEFT) where it improves clarity.
+- The FIRST slide must be TITLE; the LAST slide should be a CENTERED or SECTION conclusion / "Thank you" slide.
+- DESIGN VARIETY IS REQUIRED: do NOT make every slide a BULLET list. Use at least 4 DIFFERENT layouts across the deck, and never use BULLET on more than ~1/3 of slides. Reach for STAT, QUOTE, CARDS, COMPARISON, IMAGE_LEFT, TWO_COLUMN, and CENTERED wherever the content fits.
+- Pick the layout from the CONTENT: a metric → STAT, a key insight → QUOTE or CENTERED, distinct features/steps → CARDS, two options → COMPARISON, a visual topic → IMAGE_LEFT.
+- Every content slide must cover a DISTINCT sub-topic; break the subject into a logical progression (intro → key points → details/examples → summary).
+- Keep text short and presentation-ready (roughly 12 words or fewer per bullet).
 - Use the optional "notes" field for brief speaker notes when helpful.`
   : `- html: The complete raw HTML content to render. Make it visually stunning, responsive, using modern UI styling (rounded borders, harmonized HSL/RGB colors, clean typography, glassmorphism if appropriate) and functional script logic if needed. Do not use raw tailwind unless standard CSS is used inside <style>.
 - output_name: Optional hint for the filename without extension.`
 }
 `;
 
+    const themeSuffix = ` Use the "${themeHint}" theme for this deck.`;
     const planRequest =
       schemaId === "presentation_synthesis"
-        ? `Generate a multi-slide presentation plan (${slidePlan.count} slides) for the user request: "${text}"`
+        ? `Generate a multi-slide presentation plan (${slidePlan.count} slides) for the user request: "${text}".${themeSuffix}`
         : `Generate a plan for the user request: "${text}"`;
     const userPrompt = `${dataContext}${planRequest}`;
 
@@ -1226,6 +1241,26 @@ Deck requirements:
           if (headers && rows) {
             planObj.headers = headers;
             planObj.source_rows = rows;
+          }
+
+          // The theme is decided directly from the prompt and is authoritative:
+          // the same prompt always yields the same theme, chosen among all 12.
+          if (schemaId === "presentation_synthesis") {
+            planObj.theme = themeHint;
+            // Name the deck file after its title slide (falls back to the first
+            // slide's title) instead of the generic "nela_presentation".
+            if (!planObj.output_name) {
+              const slides = Array.isArray(planObj.slides) ? planObj.slides : [];
+              const titleSlide =
+                slides.find((s: any) => s?.layout === "TITLE") ?? slides[0];
+              const deckTitle = (titleSlide?.title ?? "").toString().trim();
+              const slug = deckTitle
+                .replace(/[\\/:*?"<>|]+/g, " ")
+                .replace(/\s+/g, " ")
+                .trim()
+                .slice(0, 80);
+              if (slug) planObj.output_name = slug;
+            }
           }
 
           let result: ArtifactResult;
@@ -1457,6 +1492,129 @@ function extractSlideCount(text: string): { count: number; explicit: boolean } {
   }
 
   return { count: DEFAULT_SLIDES, explicit: false };
+}
+
+/** The complete set of presentation themes supported by the renderer. */
+const PRESENTATION_THEMES = [
+  "midnight",
+  "corporate",
+  "sunset",
+  "minimal",
+  "academic",
+  "cyber",
+  "ocean",
+  "forest",
+  "lavender",
+  "neon",
+  "rose",
+  "slate",
+] as const;
+
+type PresentationTheme = (typeof PRESENTATION_THEMES)[number];
+
+/**
+ * Maps each theme to keyword groups. The first group holds the explicit theme
+ * names/aliases (highest priority); the second holds topic/domain keywords so a
+ * theme can be inferred from the subject matter even when no style is named.
+ */
+const THEME_KEYWORDS: Record<PresentationTheme, { aliases: string[]; topics: string[] }> = {
+  corporate: {
+    aliases: ["corporate", "business", "professional", "executive", "formal", "enterprise"],
+    topics: ["strategy", "quarterly", "revenue", "sales", "finance", "investor", "stakeholder", "roi", "market share", "company", "startup", "pitch deck", "kpi", "b2b"],
+  },
+  academic: {
+    aliases: ["academic", "research", "university", "thesis", "serif", "scholarly", "scholar", "dissertation"],
+    topics: ["study", "literature", "hypothesis", "methodology", "paper", "history", "philosophy", "education", "lecture", "curriculum", "experiment", "citation"],
+  },
+  cyber: {
+    aliases: ["cyber", "tech", "hacker", "matrix", "futuristic", "sci-fi", "scifi"],
+    topics: ["ai", "machine learning", "artificial intelligence", "software", "programming", "cybersecurity", "security", "blockchain", "crypto", "cloud", "devops", "data science", "neural", "algorithm", "robotics", "quantum"],
+  },
+  ocean: {
+    aliases: ["ocean", "aqua", "marine", "blue", "sea", "water"],
+    topics: ["health", "wellness", "medical", "medicine", "healthcare", "ocean", "water", "climate ocean", "fishery", "diving", "hydro", "calm", "meditation"],
+  },
+  forest: {
+    aliases: ["forest", "nature", "eco", "green", "organic"],
+    topics: ["environment", "sustainability", "climate", "renewable", "ecology", "biology", "agriculture", "conservation", "carbon", "green energy", "plant", "wildlife", "farming"],
+  },
+  sunset: {
+    aliases: ["sunset", "warm", "vibrant", "colorful", "energetic"],
+    topics: ["marketing", "campaign", "branding", "social media", "advertising", "growth", "launch", "event", "festival", "travel", "food", "lifestyle"],
+  },
+  lavender: {
+    aliases: ["lavender", "purple", "violet", "dreamy", "soft"],
+    topics: ["creativity", "art", "storytelling", "writing", "poetry", "imagination", "wedding", "beauty", "spa"],
+  },
+  neon: {
+    aliases: ["neon", "electric", "bright", "bold", "punchy", "loud"],
+    topics: ["gaming", "game", "esports", "music", "concert", "nightlife", "entertainment", "streaming", "youth", "party", "hype"],
+  },
+  rose: {
+    aliases: ["rose", "pink", "elegant", "luxury", "luxurious", "premium"],
+    topics: ["fashion", "luxury", "cosmetics", "jewelry", "romance", "valentine", "boutique", "couture", "perfume"],
+  },
+  slate: {
+    aliases: ["slate", "gray", "grey", "mono", "monochrome", "neutral", "industrial"],
+    topics: ["engineering", "architecture", "manufacturing", "logistics", "infrastructure", "hardware", "construction", "operations", "supply chain", "report"],
+  },
+  minimal: {
+    aliases: ["minimal", "minimalist", "clean", "simple", "light theme", "white background", "plain"],
+    topics: ["overview", "summary", "introduction", "getting started", "basics", "tutorial", "guide", "checklist"],
+  },
+  midnight: {
+    aliases: ["midnight", "dark", "default", "sleek", "modern"],
+    topics: ["product", "roadmap", "vision", "future", "innovation", "general", "tech demo"],
+  },
+};
+
+/** Small stable string hash (djb2) for deterministic theme fallback. */
+function hashString(text: string): number {
+  let hash = 5381;
+  for (let i = 0; i < text.length; i++) {
+    hash = ((hash << 5) + hash + text.charCodeAt(i)) >>> 0;
+  }
+  return hash >>> 0;
+}
+
+/**
+ * Decide a presentation theme DIRECTLY from the prompt, always returning one of
+ * the 12 supported themes. Resolution order:
+ *   1. Explicit theme name/alias in the prompt (e.g. "neon", "corporate").
+ *   2. Topic/domain keywords inferred from the subject (e.g. "AI" -> cyber).
+ *   3. Stable hash of the prompt across all 12 themes (deterministic + varied).
+ * The result is stable: the same prompt always maps to the same theme.
+ */
+function inferPresentationTheme(text: string): PresentationTheme {
+  const lower = text.toLowerCase();
+
+  // 1. Explicit theme name / alias wins.
+  for (const theme of PRESENTATION_THEMES) {
+    if (THEME_KEYWORDS[theme].aliases.some((kw) => lower.includes(kw))) {
+      return theme;
+    }
+  }
+
+  // 2. Topic / domain keyword inference — score each theme by keyword hits.
+  let best: PresentationTheme | null = null;
+  let bestScore = 0;
+  for (const theme of PRESENTATION_THEMES) {
+    const score = THEME_KEYWORDS[theme].topics.reduce(
+      (acc, kw) => (lower.includes(kw) ? acc + 1 : acc),
+      0
+    );
+    if (score > bestScore) {
+      bestScore = score;
+      best = theme;
+    }
+  }
+  if (best) {
+    return best;
+  }
+
+  // 3. Deterministic fallback: stable across runs, varied across prompts.
+  const idx = hashString(lower.trim()) % PRESENTATION_THEMES.length;
+  return PRESENTATION_THEMES[idx];
 }
 
 function parseCSV(content: string): { headers: string[]; rows: string[][] } {

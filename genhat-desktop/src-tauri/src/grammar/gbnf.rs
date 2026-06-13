@@ -49,14 +49,16 @@ ws        ::= ([ \t\n] ws)?
 ///
 /// Constrains the SLM to emit only valid `PresentationPlan` JSON with
 /// approved layout types.
-pub const PRESENTATION_PLAN_GBNF: &str = r#"root         ::= "{" ws "\"slides\"" ws ":" ws "[" ws slide-list "]" ws "}"
+pub const PRESENTATION_PLAN_GBNF: &str = r#"root         ::= "{" ws "\"slides\"" ws ":" ws "[" ws slide-list "]" ws ("," ws theme-field)? ws "}"
+theme-field  ::= "\"theme\"" ws ":" ws theme-name
+theme-name   ::= "\"midnight\"" | "\"corporate\"" | "\"sunset\"" | "\"minimal\"" | "\"academic\"" | "\"cyber\"" | "\"ocean\"" | "\"forest\"" | "\"lavender\"" | "\"neon\"" | "\"rose\"" | "\"slate\""
 slide-list   ::= slide ("," ws slide)*
 slide        ::= "{" ws "\"title\"" ws ":" ws string ws
                  "," ws "\"layout\"" ws ":" ws layout-type ws
                  ("," ws "\"bullets\"" ws ":" ws bullet-list)?
                  ("," ws "\"notes\"" ws ":" ws string)?
                  ws "}"
-layout-type  ::= "\"TITLE\"" | "\"BULLET\"" | "\"TWO_COLUMN\"" | "\"IMAGE_LEFT\"" | "\"BLANK\""
+layout-type  ::= "\"TITLE\"" | "\"BULLET\"" | "\"TWO_COLUMN\"" | "\"IMAGE_LEFT\"" | "\"BLANK\"" | "\"SECTION\"" | "\"STAT\"" | "\"QUOTE\"" | "\"CARDS\"" | "\"COMPARISON\"" | "\"CENTERED\""
 bullet-list  ::= "[" ws (string ("," ws string)*)? "]" ws
 string       ::= "\"" ([^"\\] | "\\" .)* "\"" ws
 ws           ::= ([ \t\n] ws)?

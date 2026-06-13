@@ -277,6 +277,8 @@ export default function ArtifactSandbox({
               src={artifactSrc}
               title="Artifact preview"
               sandbox="allow-scripts allow-same-origin"
+              allow="fullscreen"
+              allowFullScreen
               style={{ width: "100%", height: "100%", border: "none" }}
               // Strict CSP: no outbound network, no top navigation.
               // The `csp` attribute is applied via a <meta> injected below.

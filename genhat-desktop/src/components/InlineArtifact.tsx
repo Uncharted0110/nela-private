@@ -1,14 +1,17 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { openPath } from "@tauri-apps/plugin-opener";
-import { FileText, Eye, EyeOff, Play, AlertCircle } from "lucide-react";
+import { FileText, Eye, EyeOff, Play, AlertCircle, Download, FileType, Presentation, Loader2 } from "lucide-react";
 import { type PipelineStageKind } from "./ProgressSlate";
 import DiffPatchOverlay from "./DiffPatchOverlay";
 import { Api } from "../api";
+import { exportPresentation, type DeckExportFormat } from "../app/exportDeck";
 
 export interface InlineArtifactProps {
   artifactPath?: string | null;
   artifactStage?: PipelineStageKind | null;
+  /** Optional error detail (shown when the stage is "Error"). */
+  errorMessage?: string | null;
 }
 
 const STAGE_LABELS: Record<PipelineStageKind, { label: string; desc: string; icon: string }> = {
@@ -57,14 +60,16 @@ const SPINNER_VERBS: Record<PipelineStageKind, string[]> = {
   Error: ["Error generating artifact."],
 };
 
-export default function InlineArtifact({ artifactPath, artifactStage }: InlineArtifactProps) {
+export default function InlineArtifact({ artifactPath, artifactStage, errorMessage }: InlineArtifactProps) {
   const [stage, setStage] = useState<PipelineStageKind>(artifactStage || "IntentLocked");
   const [currentPath, setCurrentPath] = useState<string | null>(artifactPath ?? null);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [activePatch, setActivePatch] = useState<string | null>(null);
   const [patchActive, setPatchActive] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
   const [artifactSrc, setArtifactSrc] = useState<string | null>(null);
+  const [downloadMenuOpen, setDownloadMenuOpen] = useState(false);
+  const [exporting, setExporting] = useState<DeckExportFormat | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
 
   const [spreadsheetData, setSpreadsheetData] = useState<{ sheetName: string; rows: string[][] } | null>(null);
   const [loadingSpreadsheet, setLoadingSpreadsheet] = useState(false);
@@ -72,18 +77,15 @@ export default function InlineArtifact({ artifactPath, artifactStage }: InlineAr
 
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
-  // Sync internal stage with prop changes
+  // Mirror this artifact's own message props. Each InlineArtifact reflects only
+  // its own message, so switching chats/workspaces or generating a new artifact
+  // never overrides previously generated ones.
   useEffect(() => {
-    if (artifactStage) {
-      setStage(artifactStage);
-    }
+    setStage(artifactStage || "IntentLocked");
   }, [artifactStage]);
 
-  // Sync internal path with prop changes
   useEffect(() => {
-    if (artifactPath) {
-      setCurrentPath(artifactPath);
-    }
+    setCurrentPath(artifactPath ?? null);
   }, [artifactPath]);
 
   // Dynamic spinner verb cycler
@@ -189,29 +191,15 @@ export default function InlineArtifact({ artifactPath, artifactStage }: InlineAr
     }
   }, []);
 
-  // Listen for tauri events (pipeline-stage and artifact-patch)
+  // Listen for targeted hot-reload patches. We intentionally do NOT listen to
+  // the global "pipeline-stage" event here: that event is broadcast app-wide
+  // and would cause every rendered artifact (including finished ones in this
+  // chat or another workspace) to adopt the newest artifact's path/stage.
+  // Each artifact is instead driven solely by its own message props
+  // (artifactPath / artifactStage), so every artifact stays separate.
+  // The patch listener is scoped to this artifact's own path.
   useEffect(() => {
-    const unlisten = listen<{ stage: PipelineStageKind; path?: string; message?: string }>(
-      "pipeline-stage",
-      (event) => {
-        const payload = event.payload;
-        // Only update if this inline artifact matches or if it's the active generating one
-        if (payload.stage) {
-          setStage(payload.stage);
-        }
-        if (payload.stage === "LivePreview" && payload.path) {
-          setCurrentPath(payload.path);
-          setErrorMessage(null);
-          // Auto-expand HTML preview
-          if (payload.path.endsWith(".html") || payload.path.endsWith(".htm")) {
-            setShowPreview(true);
-          }
-        } else if (payload.stage === "Error" && payload.message) {
-          setErrorMessage(payload.message);
-        }
-      }
-    );
-
+    if (!currentPath) return;
     const unlistenPatch = listen<{ patch: string; path: string }>(
       "artifact-patch",
       (event) => {
@@ -225,7 +213,6 @@ export default function InlineArtifact({ artifactPath, artifactStage }: InlineAr
     );
 
     return () => {
-      unlisten.then((fn) => fn());
       unlistenPatch.then((fn) => fn());
     };
   }, [currentPath, applyPatch]);
@@ -295,6 +282,33 @@ export default function InlineArtifact({ artifactPath, artifactStage }: InlineAr
     if (!currentPath) return;
     openPath(currentPath).catch((err) => console.error("Failed to open file:", err));
   };
+
+  // Export the deck to PDF/PPTX at a user-chosen path.
+  const handleExport = useCallback(
+    async (format: DeckExportFormat) => {
+      if (!currentPath || exporting) return;
+      setDownloadMenuOpen(false);
+      setExportError(null);
+      setExporting(format);
+      try {
+        await exportPresentation(currentPath, format);
+      } catch (err: any) {
+        console.error(`Failed to export ${format}:`, err);
+        setExportError(err?.message || String(err));
+      } finally {
+        setExporting(null);
+      }
+    },
+    [currentPath, exporting]
+  );
+
+  // Close the download menu when clicking elsewhere.
+  useEffect(() => {
+    if (!downloadMenuOpen) return;
+    const close = () => setDownloadMenuOpen(false);
+    document.addEventListener("click", close);
+    return () => document.removeEventListener("click", close);
+  }, [downloadMenuOpen]);
 
   // ── Render Loading Progress ──
   if (stage !== "LivePreview" && stage !== "Error") {
@@ -400,6 +414,50 @@ export default function InlineArtifact({ artifactPath, artifactStage }: InlineAr
             </button>
           )}
 
+          {isHtml && (
+            <div className="relative">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setExportError(null);
+                  setDownloadMenuOpen((o) => !o);
+                }}
+                disabled={!!exporting}
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[0.74rem] bg-glass-bg text-txt-secondary border border-glass-border transition-all duration-150 hover:border-neon hover:text-txt disabled:opacity-60 disabled:cursor-not-allowed"
+                title="Download as PDF or PowerPoint"
+              >
+                {exporting ? (
+                  <Loader2 size={13} className="animate-spin" />
+                ) : (
+                  <Download size={13} />
+                )}
+                <span>{exporting ? `Exporting ${exporting.toUpperCase()}…` : "Download"}</span>
+              </button>
+
+              {downloadMenuOpen && !exporting && (
+                <div
+                  onClick={(e) => e.stopPropagation()}
+                  className="absolute right-0 top-full mt-1 z-20 min-w-[180px] rounded-lg bg-void-900 border border-glass-border shadow-xl overflow-hidden"
+                >
+                  <button
+                    onClick={() => handleExport("pdf")}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-[0.76rem] text-txt-secondary hover:bg-void-800 hover:text-txt transition-colors"
+                  >
+                    <FileType size={14} className="text-neon" />
+                    <span>Download as PDF</span>
+                  </button>
+                  <button
+                    onClick={() => handleExport("pptx")}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-[0.76rem] text-txt-secondary hover:bg-void-800 hover:text-txt transition-colors border-t border-glass-border"
+                  >
+                    <Presentation size={14} className="text-neon" />
+                    <span>Download as PowerPoint</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
           <button
             onClick={handleOpenFile}
             className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[0.74rem] bg-neon text-void-900 font-medium border border-neon/50 transition-all duration-150 hover:bg-neon-hover"
@@ -411,6 +469,12 @@ export default function InlineArtifact({ artifactPath, artifactStage }: InlineAr
         </div>
       </div>
 
+      {exportError && (
+        <div className="px-3.5 py-2 text-[0.72rem] text-red-300 bg-red-500/10 border-b border-red-500/20">
+          Export failed: {exportError}
+        </div>
+      )}
+
       {/* Interactive HTML Preview Area */}
       {isHtml && showPreview && artifactSrc && (
         <div className="w-full h-[420px] bg-white border-t border-glass-border relative">
@@ -419,6 +483,8 @@ export default function InlineArtifact({ artifactPath, artifactStage }: InlineAr
             src={artifactSrc}
             title="Artifact preview"
             sandbox="allow-scripts allow-same-origin"
+            allow="fullscreen"
+            allowFullScreen
             className="w-full h-full border-none"
           />
         </div>

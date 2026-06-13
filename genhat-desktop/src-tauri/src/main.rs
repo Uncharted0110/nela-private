@@ -394,6 +394,7 @@ fn main() {
             app_lib::commands::artifact::get_governor_state,
             app_lib::commands::artifact::get_schema_grammar,
             app_lib::commands::artifact::apply_diff_patch,
+            app_lib::commands::artifact::save_binary_file,
             // Ambient FTS5 Indexer command (revamp P4)
             app_lib::commands::indexer::search_ambient_files,
             app_lib::commands::indexer::get_ambient_file_content,

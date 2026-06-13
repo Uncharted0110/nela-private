@@ -133,6 +133,30 @@ pub async fn generate_html(
     })
 }
 
+/// Write raw bytes (base64-encoded by the frontend) to an absolute path.
+///
+/// Used by the presentation exporter to persist generated PDF/PPTX files the
+/// frontend builds in-memory (via jsPDF / pptxgenjs) to a user-chosen path.
+#[tauri::command]
+pub fn save_binary_file(path: String, contents_base64: String) -> Result<(), String> {
+    use base64::engine::general_purpose::STANDARD;
+    use base64::Engine;
+
+    let bytes = STANDARD
+        .decode(contents_base64.as_bytes())
+        .map_err(|e| format!("Failed to decode base64 payload: {e}"))?;
+
+    if let Some(parent) = std::path::Path::new(&path).parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create directory '{}': {e}", parent.display()))?;
+        }
+    }
+
+    std::fs::write(&path, &bytes).map_err(|e| format!("Failed to write file '{path}': {e}"))?;
+    Ok(())
+}
+
 /// Get the current governor state (battery, thread count, thermal pressure).
 #[tauri::command]
 pub fn get_governor_state(

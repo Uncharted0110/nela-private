@@ -908,8 +908,10 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
                         {(msg.artifactPath || msg.artifactStage) && (
                           <div className="mt-3">
                             <InlineArtifact
+                              key={`artifact-${idx}-${msg.artifactPath ?? "pending"}`}
                               artifactPath={msg.artifactPath}
                               artifactStage={msg.artifactStage as any}
+                              errorMessage={msg.artifactStage === "Error" ? msg.content : undefined}
                             />
                           </div>
                         )}
