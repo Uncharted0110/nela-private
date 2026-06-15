@@ -155,14 +155,23 @@ pub fn start_watcher(
                                     Err(_) => None,
                                 }
                             }
-                            "txt" | "md" | "rs" | "py" | "js" | "json" | "ts" | "tsx" | "html" | "css" | "toml" | "yaml" | "yml" => {
-                                crate::indexer::crawler::read_first_10kb(&path)
-                            }
+                            "txt" | "md" => crate::indexer::crawler::read_first_10kb(&path),
                             _ => None,
                         };
                     }
 
-                    if let Err(e) = db_clone.insert_or_update(&path_str, &filename, mtime, size, is_dir, content.as_deref()) {
+                    let name_tokens = crate::indexer::crawler::tokenize_filename(&filename);
+                    let location = crate::indexer::crawler::parent_location(&path, 2);
+                    if let Err(e) = db_clone.insert_or_update(
+                        &path_str,
+                        &filename,
+                        &name_tokens,
+                        &location,
+                        mtime,
+                        size,
+                        is_dir,
+                        content.as_deref(),
+                    ) {
                         log::error!("Watcher failed to index {}: {}", path_str, e);
                     }
                 }

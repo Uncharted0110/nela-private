@@ -15,6 +15,7 @@ The customization files under `.github/` are part of the repository contract.
 - `genhat-desktop/src/` contains frontend app logic and components.
 - `genhat-desktop/src-tauri/src/` contains Rust backend modules, commands, routing, and RAG pipeline code.
 - Text chat supports both document-grounding paths: KB-ingested RAG retrieval and direct file-to-prompt attachments, controlled by a RAG on/off toggle (default off = direct prompting).
+- Ambient file search is ranked (BM25 weighted name≫location>content, AND-first/OR-fallback) then reranked by the in-process `ms-marco-grader` cross-encoder with a relevance threshold; code files index filename + 2 parent dirs only (no body); `search_ambient_files` returns up to 5 ranked records with `score`+`snippet`, empty = no relevant file.
 - Runtime model parameters panel is hidden by default and opened explicitly by the user.
 - Disk-scanned model sync preserves user-applied runtime params (for example `ctx_size`, `max_tokens`, `flash_attn`) instead of resetting them during model-list refreshes.
 - `benchmark/` contains runtime benchmark scripts, plotting tools, and the RAG retrieval quality benchmark CLI.

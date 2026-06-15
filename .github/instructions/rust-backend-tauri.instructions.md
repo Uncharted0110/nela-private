@@ -17,6 +17,13 @@ applyTo: "genhat-desktop/src-tauri/src/**/*.rs"
 - Preserve local-first behavior and avoid introducing mandatory cloud dependencies for core flows.
 - When reconciling discovered/dynamic models, preserve user-updated runtime params unless the underlying model artifact or task capabilities actually changed.
 
+# Ambient File Search Indexer
+
+- Maintain the `indexer/rank.rs` module which coordinates two-stage ambient search (FTS5 BM25 + Cross-Encoder rerank).
+- The FTS5 table is structured as `files_fts(name, location, content, path UNINDEXED)`.
+- Reranking uses `TaskRouter` and `grade_request` to route passages through the `ms-marco-grader` cross-encoder.
+- The `search_ambient_files` Tauri command takes `TaskRouterState` to retrieve ranked files.
+
 # Verification
 
 - For Rust backend changes, run: `cd genhat-desktop/src-tauri && cargo check`.

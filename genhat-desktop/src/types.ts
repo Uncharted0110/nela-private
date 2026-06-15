@@ -428,5 +428,7 @@ export interface FileRecord {
   is_dir: boolean;
   size: number;
   mtime: number;
+  score?: number;
+  snippet?: string;
 }
 

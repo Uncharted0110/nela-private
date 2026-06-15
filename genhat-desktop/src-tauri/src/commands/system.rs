@@ -88,3 +88,39 @@ pub fn export_telemetry_logs(app: tauri::AppHandle) -> Result<String, String> {
     let path = crate::telemetry::export_logs(&app_cache_dir, &downloads_dir)?;
     Ok(path.to_string_lossy().to_string())
 }
+
+/// Open Windows File Explorer and select/highlight the file, or open parent directory on other platforms.
+#[tauri::command]
+pub fn reveal_in_explorer(path: String) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .arg(format!("/select,{}", path))
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .args(["-R", &path])
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+    #[cfg(target_os = "linux")]
+    {
+        if let Some(parent) = std::path::Path::new(&path).parent() {
+            std::process::Command::new("xdg-open")
+                .arg(parent)
+                .spawn()
+                .map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+    {
+        Err("Unsupported OS".to_string())
+    }
+}
+

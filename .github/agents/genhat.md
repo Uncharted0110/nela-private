@@ -135,6 +135,12 @@ GenHat-The-Local-Intelligence-Engine/
         │   │   ├── mod.rs        ← ProcessManager: spawn/health/reap/shutdown (542 lines)
         │   │   ├── pool.rs       ← Instance pool utilities (44 lines)
         │   │   └── lifecycle.rs  ← Background health check thread (37 lines)
+        │   ├── indexer/
+        │   │   ├── mod.rs        ← AmbientIndexer orchestrator (76 lines)
+        │   │   ├── db.rs         ← SQLite FTS5 index (324 lines)
+        │   │   ├── crawler.rs    ← Background crawler (301 lines)
+        │   │   ├── watcher.rs    ← File system watcher (176 lines)
+        │   │   └── rank.rs       ← Ranked search (BM25 + cross-encoder) (98 lines)
         │   ├── router/
         │   │   ├── mod.rs        ← TaskRouter: routes requests to models (189 lines)
         │   │   └── tasks.rs      ← Task request builders (embed, enrich, grade, etc.) (122 lines)
@@ -394,6 +400,14 @@ Fully local, on-device Retrieval-Augmented Generation:
 | `fusion.rs` | 120 | Reciprocal Rank Fusion (RRF) with configurable k-parameter and per-source weighting. |
 | `raptor_examples.rs` | 266 | Usage examples and patterns for RAPTOR integration. |
 | `parsers/` | 369 | Document parsers: PDF (pdf-extract), DOCX (docx-rs), PPTX (zip+xml), TXT/MD, Audio (→ Whisper STT). |
+
+### 4.9 `indexer/` — Ambient File Search Indexer
+
+Provides ambient file search grounding capabilities on local documents.
+- **FTS5 Schema**: `files_fts` table contains columns `name`, `location`, `content`, and `path UNINDEXED`.
+- **Pre-Tokenization**: Tokenizes filenames on word boundaries, underscores, hyphens, and camelCase boundaries in Rust.
+- **Content Restriction**: Only indexes full text content for `.txt` and `.md` files. All other code and non-document file types are skipped to keep index clean.
+- **Ranked Search**: Runs a 3-stage search pipeline: FTS5 BM25 candidate retrieval (weights 10.0, 4.0, 1.0, 1.0) -> in-process `ms-marco-grader` cross-encoder rerank with 650ms deadline guard -> relevance thresholding (>= 0.30) to yield top 5 results.
 
 ---
 
@@ -708,3 +722,4 @@ Run with: `cd genhat-desktop/src-tauri && cargo test --lib`
 39. **Workspace deletion edge-case fix (frontend)**: `App.tsx::deleteWorkspaceById` now trusts backend `delete_workspace` fallback selection and rebinds frontend state/scope only when deleting the active workspace. This avoids incorrect empty-state transitions when deleting the first/active workspace while other workspaces still exist.
 40. **Workspace controls returned to chat header (below Chat mode row)**: Workspace creation/management now lives in `App.tsx` header via `components/WorkspaceSelector.tsx`, rendered directly below the current mode label/description row (e.g., below Chat). Switching workspaces is handled in the selector dropdown itself; rename/delete remain in the same dropdown actions.
 41. **Sidebar responsibilities narrowed**: `components/SidebarNav.tsx` now contains section navigation (Chats/Audio/Mindmaps) plus bottom import/export icons only, and no longer hosts workspace create/manage logic.
+42. **Ambient File Search**: Search ambient files using `search_ranked` in `indexer/rank.rs`. When indexing new files in `crawler.rs` or `watcher.rs`, compute `name_tokens` and `location` using the helper functions, and pass them to `insert_or_update`. Do not index code file contents; restrict document bodies to `.txt` and `.md` files only.

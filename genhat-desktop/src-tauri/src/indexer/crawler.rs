@@ -111,6 +111,46 @@ pub(crate) fn extract_csv_headers(path: &Path) -> Option<String> {
     }
 }
 
+/// Lowercase the filename and split it into space-separated tokens on
+/// `_`, `-`, `.`, whitespace, AND camelCase boundaries.
+/// "TaxReturn_2023.pdf" -> "tax return 2023 pdf"
+pub(crate) fn tokenize_filename(filename: &str) -> String {
+    let mut out = String::with_capacity(filename.len() * 2);
+    let mut prev_lower = false;
+    for ch in filename.chars() {
+        if ch == '_' || ch == '-' || ch == '.' || ch.is_whitespace() {
+            out.push(' ');
+            prev_lower = false;
+        } else {
+            // camelCase boundary: lower/digit followed by Upper
+            if ch.is_uppercase() && prev_lower {
+                out.push(' ');
+            }
+            for c in ch.to_lowercase() {
+                out.push(c);
+            }
+            prev_lower = ch.is_lowercase() || ch.is_numeric();
+        }
+    }
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// The last `levels` parent directory names of `path`, tokenized like a filename.
+/// ".../projectA/src/main.rs", levels=2 -> "projecta src"
+pub(crate) fn parent_location(path: &std::path::Path, levels: usize) -> String {
+    let mut comps: Vec<String> = path
+        .parent()
+        .map(|p| {
+            p.components()
+                .filter_map(|c| c.as_os_str().to_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+    let take = comps.len().min(levels);
+    let tail = comps.split_off(comps.len() - take); // last `take` components
+    tail.iter().map(|s| tokenize_filename(s)).collect::<Vec<_>>().join(" ")
+}
+
 /// Main background crawling logic.
 pub fn run_crawler(
     home_dir: PathBuf,
@@ -270,14 +310,23 @@ pub fn run_crawler(
                             }
                         }
                     }
-                    "txt" | "md" | "rs" | "py" | "js" | "json" | "ts" | "tsx" | "html" | "css" | "toml" | "yaml" | "yml" => {
-                        read_first_10kb(path)
-                    }
+                    "txt" | "md" => read_first_10kb(path),
                     _ => None,
                 };
             }
 
-            if let Err(e) = db.insert_or_update(&path_str, &filename, mtime, size, is_dir, content.as_deref()) {
+            let name_tokens = tokenize_filename(&filename);
+            let location = parent_location(path, 2);
+            if let Err(e) = db.insert_or_update(
+                &path_str,
+                &filename,
+                &name_tokens,
+                &location,
+                mtime,
+                size,
+                is_dir,
+                content.as_deref(),
+            ) {
                 log::error!("Failed to index {}: {}", path_str, e);
             }
         }
