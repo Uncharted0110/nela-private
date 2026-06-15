@@ -257,6 +257,13 @@ fn main() {
             app.manage(IntentResolverState(intent_resolver));
             app.manage(AmbientIndexerState(indexer));
 
+            // Pre-warm the cross-encoder so the first ambient search stays within budget.
+            let router_for_warm = router.clone();
+            tauri::async_runtime::spawn(async move {
+                let req = app_lib::router::tasks::grade_request("warm up", "warm up passage");
+                let _ = router_for_warm.route(&req).await;
+            });
+
             // 10. Initialize playground state
             match PlaygroundState::new(&app_data_dir) {
                 Ok(pg_state) => {
@@ -374,6 +381,7 @@ fn main() {
             app_lib::commands::system::detect_quantization,
             app_lib::commands::system::detect_model_params,
             app_lib::commands::system::export_telemetry_logs,
+            app_lib::commands::system::reveal_in_explorer,
             // Playground commands
             app_lib::commands::playground::playground_list_pipelines,
             app_lib::commands::playground::playground_load_pipeline,

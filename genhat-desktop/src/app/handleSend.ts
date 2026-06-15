@@ -776,66 +776,56 @@ export async function executeHandleSend(
         try {
           const results = await Api.searchAmbientFiles(searchQuery);
           if (results && results.length > 0) {
-            // Find first file that is not a directory, preferably text/code or spreadsheet
-            const fileToRead = results.find(
-              (f) =>
-                !f.is_dir &&
-                (f.path.endsWith(".csv") ||
-                  f.path.endsWith(".xlsx") ||
-                  f.path.endsWith(".xls") ||
-                  f.path.endsWith(".txt") ||
-                  f.path.endsWith(".md"))
-            ) || results.find((f) => !f.is_dir) || results[0];
+            const top = results.filter(r => !r.is_dir).slice(0, 3);
+            const sections: string[] = [];
 
-            if (fileToRead && !fileToRead.is_dir) {
-              attachedFile = fileToRead.path;
-              const filename = attachedFile.split(/[/\\]/).pop() ?? "file";
-
-              discoveryMsg = {
-                role: "assistant" as const,
-                content: `${DISCOVERY_NOTICE_PREFIX} **${filename}**\nPath: \`${attachedFile}\`\nReading file content...`,
-              };
-
-              ctx.updateSession(sid, (prev) => ({
-                messages: [...prev.messages, discoveryMsg!],
-              }));
-
-              // Extract text or headers
-              if (attachedFile.endsWith(".csv") || attachedFile.endsWith(".tsv")) {
+            for (const rec of top) {
+              const filename = rec.path.split(/[/\\]/).pop() ?? "file";
+              if (rec.path.endsWith(".csv") || rec.path.endsWith(".tsv")) {
                 try {
-                  const fileContent = await Api.readFileText(attachedFile);
+                  const fileContent = await Api.readFileText(rec.path);
                   const parsed = parseCSV(fileContent);
                   if (parsed.headers.length > 0) {
-                    ambientFileContext = `Metadata/Content for CSV file "${filename}" (Path: ${attachedFile}):\n` +
-                      `Columns: [${parsed.headers.join(", ")}].\n` +
-                      `First few rows of content:\n` +
-                      parsed.rows.slice(0, 10).map(row => row.join(", ")).join("\n");
+                    sections.push(
+                      `File: "${filename}" (Path: ${rec.path})\n` +
+                      `Columns: [${parsed.headers.join(", ")}]\n` +
+                      `First rows:\n${parsed.rows.slice(0, 10).map(r => r.join(", ")).join("\n")}`
+                    );
+                    continue;
                   }
-                } catch (err) {
-                  console.warn("Failed to read CSV in standard chat:", err);
-                }
-              } else if (
-                attachedFile.endsWith(".xlsx") ||
-                attachedFile.endsWith(".xls") ||
-                attachedFile.endsWith(".ods")
-              ) {
+                } catch (err) { console.warn("CSV read failed:", err); }
+              } else if (rec.path.endsWith(".xlsx") || rec.path.endsWith(".xls") || rec.path.endsWith(".ods")) {
                 try {
-                  const cached = await Api.getAmbientFileContent(attachedFile);
+                  const cached = await Api.getAmbientFileContent(rec.path);
                   if (cached) {
-                    ambientFileContext = `Metadata/Schema for Excel file "${filename}" (Path: ${attachedFile}):\n${cached}`;
+                    sections.push(`File: "${filename}" (Path: ${rec.path})\nSchema:\n${cached}`);
+                    continue;
                   }
-                } catch (err) {
-                  console.warn("Failed to query Excel metadata cache in standard chat:", err);
-                }
-              } else {
-                // Plain text / markdown files
-                try {
-                  const fileContent = await Api.readFileText(attachedFile);
-                  ambientFileContext = `Content of file "${filename}" (Path: ${attachedFile}, showing first 10KB):\n${fileContent.substring(0, 10240)}`;
-                } catch (err) {
-                  console.warn("Failed to read text file in standard chat:", err);
-                }
+                } catch (err) { console.warn("Excel schema read failed:", err); }
               }
+              // Default: use the backend snippet; if missing, read a small slice of the file.
+              if (rec.snippet && rec.snippet.trim().length > 0) {
+                sections.push(`File: "${filename}" (Path: ${rec.path})\nExcerpt: ${rec.snippet}`);
+              } else {
+                try {
+                  const fileContent = await Api.readFileText(rec.path);
+                  sections.push(`File: "${filename}" (Path: ${rec.path}, first 4KB):\n${fileContent.substring(0, 4096)}`);
+                } catch (err) { console.warn("text read failed:", err); }
+              }
+            }
+
+            if (sections.length > 0) {
+              // Surface the best match to the user, like the old discovery message.
+              const bestName = top[0].path.split(/[/\\]/).pop() ?? "file";
+              attachedFile = top[0].path;
+              const fileUrl = "file:///" + top[0].path.replace(/\\/g, "/").split("/").map(encodeURIComponent).join("/");
+              discoveryMsg = {
+                role: "assistant" as const,
+                content: `🔍 Found ${top.length} matching file(s). Top match: **${bestName}**\nPath: [${top[0].path}](${fileUrl})`,
+              };
+              ctx.updateSession(sid, (prev) => ({ messages: [...prev.messages, discoveryMsg!] }));
+              ambientFileContext =
+                `The following local files were retrieved (most relevant first):\n\n${sections.join("\n\n---\n\n")}`;
             }
           }
         } catch (err) {
@@ -1071,20 +1061,12 @@ async function handleArtifactGeneration(
       try {
         const results = await Api.searchAmbientFiles(searchQuery);
         if (results && results.length > 0) {
-          // Find first file that is not a directory, preferably spreadsheets
-          const fileToRead = results.find(
-            (f) =>
-              !f.is_dir &&
-              (f.path.endsWith(".csv") ||
-                f.path.endsWith(".xlsx") ||
-                f.path.endsWith(".xls") ||
-                f.path.endsWith(".txt") ||
-                f.path.endsWith(".md"))
-          ) || results.find((f) => !f.is_dir) || results[0];
-
-          if (fileToRead && !fileToRead.is_dir) {
-            attachedFile = fileToRead.path;
-            const filename = attachedFile.split(/[/\\]/).pop();
+          const top = results.filter(r => !r.is_dir);
+          if (top.length > 0) {
+            const best = top[0];
+            attachedFile = best.path;
+            const filename = attachedFile.split(/[/\\]/).pop() ?? "file";
+            const fileUrl = "file:///" + best.path.replace(/\\/g, "/").split("/").map(encodeURIComponent).join("/");
             ctx.updateSession(sid, (prev) => ({
               messages: [
                 ...prev.messages,
@@ -1094,6 +1076,9 @@ async function handleArtifactGeneration(
                 },
               ],
             }));
+            if (best.snippet && best.snippet.trim().length > 0) {
+              ambientFileContent = best.snippet;
+            }
           }
         }
       } catch (err) {
@@ -1128,11 +1113,13 @@ async function handleArtifactGeneration(
         }
       } else {
         // Plain text files
-        try {
-          const fileContent = await Api.readFileText(attachedFile);
-          ambientFileContent = fileContent.substring(0, 10240);
-        } catch (err) {
-          console.warn("Failed to read text file:", err);
+        if (!ambientFileContent) {
+          try {
+            const fileContent = await Api.readFileText(attachedFile);
+            ambientFileContent = fileContent.substring(0, 10240);
+          } catch (err) {
+            console.warn("Failed to read text file:", err);
+          }
         }
       }
     }

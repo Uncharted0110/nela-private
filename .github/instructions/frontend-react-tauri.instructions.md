@@ -21,6 +21,7 @@ applyTo:
 - Keep RAG toggle default to `off` and keep runtime parameter dock hidden by default until explicitly opened.
 - Runtime parameter apply actions should resolve to a registered runtime model ID and must fail loudly instead of silently falling back to session-only overrides.
 - When command names or payload contracts change, update frontend call sites and matching Rust commands together.
+- `searchAmbientFiles` returns ranked `FileRecord`s (optionally with `score` and `snippet`). `handleSend.ts` parses the top 2-3 matching records, preferring `rec.snippet` for ambient context building.
 
 # Verification
 

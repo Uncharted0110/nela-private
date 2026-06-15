@@ -13,6 +13,18 @@ pub struct FileRecord {
     pub mtime: i64,
 }
 
+#[derive(Debug, Clone)]
+pub struct Candidate {
+    pub path: String,
+    pub filename: String,
+    pub is_dir: bool,
+    pub size: i64,
+    pub mtime: i64,
+    pub snippet: String, // query-relevant excerpt from the content column (may be empty)
+}
+
+const INDEXER_SCHEMA_VERSION: i64 = 2;
+
 #[derive(Clone)]
 pub struct IndexerDb {
     pool: Pool<SqliteConnectionManager>,
@@ -33,6 +45,17 @@ impl IndexerDb {
         conn.execute("PRAGMA journal_mode = WAL;", []).ok();
         conn.execute("PRAGMA synchronous = NORMAL;", []).ok();
 
+        // Migration: if the stored schema version is old, drop and rebuild.
+        let current: i64 = conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap_or(0);
+        if current < INDEXER_SCHEMA_VERSION {
+            conn.execute_batch(
+                "DROP TABLE IF EXISTS files_fts; DROP TABLE IF EXISTS files;",
+            ).ok();
+            conn.execute(&format!("PRAGMA user_version = {INDEXER_SCHEMA_VERSION}"), []).ok();
+        }
+
         // 2. Create tables
         conn.execute(
             "CREATE TABLE IF NOT EXISTS files (
@@ -49,9 +72,10 @@ impl IndexerDb {
 
         conn.execute(
             "CREATE VIRTUAL TABLE IF NOT EXISTS files_fts USING fts5(
-                path,
-                filename,
+                name,
+                location,
                 content,
+                path UNINDEXED,
                 tokenize='porter unicode61'
             );",
             [],
@@ -125,6 +149,8 @@ impl IndexerDb {
         &self,
         path: &str,
         filename: &str,
+        name_tokens: &str,   // NEW: tokenize_filename(filename)
+        location: &str,      // NEW: parent_location(path, 2)
         mtime: i64,
         size: i64,
         is_dir: bool,
@@ -149,8 +175,8 @@ impl IndexerDb {
 
         // 3. Insert new FTS index
         tx.execute(
-            "INSERT INTO files_fts (path, filename, content) VALUES (?, ?, ?)",
-            params![path, filename, content.unwrap_or("")],
+            "INSERT INTO files_fts (name, location, content, path) VALUES (?, ?, ?, ?)",
+            params![name_tokens, location, content.unwrap_or(""), path],
         )
         .map_err(|e| format!("Insert FTS failed: {e}"))?;
 
@@ -177,121 +203,111 @@ impl IndexerDb {
         Ok(())
     }
 
-    /// Search for files matching the query using FTS5. Fallback to simple filename substring search if FTS5 fails.
-    pub fn search(&self, query_str: &str) -> Result<Vec<FileRecord>, String> {
+    /// BM25-ranked candidate retrieval. Returns up to `limit` rows, best-first.
+    pub fn search_candidates(&self, query_str: &str, limit: usize) -> Result<Vec<Candidate>, String> {
         let conn = self.pool.get().map_err(|e| format!("Database connection error: {e}"))?;
 
-        // Escape double quotes to prevent FTS syntax errors, format query as OR'd prefix tokens
-        let sanitized_query = query_str.replace('"', "\"\"");
+        // 1. Tokenize the query: drop stop words, keep meaningful terms.
         let stop_words = [
-            "can", "you", "tell", "me", "about", "from", "my", "system", "files", 
-            "to", "and", "the", "a", "an", "for", "in", "on", "of", "with", "at", 
-            "by", "this", "that", "these", "those", "is", "are", "was", "were", 
-            "be", "been", "have", "has", "had", "do", "does", "did", "please", "find", "show"
+            "can","you","tell","me","about","from","my","system","files","to","and","the","a","an",
+            "for","in","on","of","with","at","by","this","that","these","those","is","are","was",
+            "were","be","been","have","has","had","do","does","did","please","find","show","get",
+            "open","read","where","what","i","want","all","any","some","each","every","file","folder",
+            "folders","directory","directories","path","paths","location","locations","document",
+            "documents","pdf","pdfs","docx","xlsx","txt","csv","md","named","called","titled",
+            "containing","contains","content","contents","here","there",
         ];
-        // Split into individual words and create FTS5-compatible prefix queries
-        let words: Vec<&str> = sanitized_query
+        let words: Vec<String> = query_str
             .split_whitespace()
-            .filter(|t| !t.is_empty() && !stop_words.contains(&t.to_lowercase().as_str()))
+            .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase())
+            .filter(|w| !w.is_empty() && !stop_words.contains(&w.as_str()))
             .collect();
-        
-        let mut fts_tokens: Vec<String> = words
-            .iter()
-            .map(|t| format!("\"{}\"*", t.replace('"', "")))
-            .collect();
-        
-        // Also add underscore-joined and hyphen-joined variants for filename matching (e.g., "form 1a" → "form_1a")
-        if words.len() > 1 {
-            let underscore_variant = words.join("_");
-            fts_tokens.push(format!("\"{}\"*", underscore_variant));
-            let hyphen_variant = words.join("-");
-            fts_tokens.push(format!("\"{}\"*", hyphen_variant));
-            // Also try without separators (e.g., "form1a")
-            let joined_variant: String = words.iter().copied().collect();
-            fts_tokens.push(format!("\"{}\"*", joined_variant));
+
+        if words.is_empty() {
+            return Ok(Vec::new());
         }
-        
-        let fts_query = if fts_tokens.is_empty() {
-            format!("\"{}\"*", sanitized_query)
-        } else {
-            fts_tokens.join(" OR ")
-        };
 
-        // Attempt FTS query
-        let mut stmt = conn.prepare(
-            "SELECT f.path, f.filename, f.is_dir, f.size, f.mtime 
-             FROM files_fts fts
-             JOIN files f ON f.path = fts.path
-             WHERE files_fts MATCH ?
-             LIMIT 100",
-        );
+        // Each term becomes a quoted prefix token: "tax"*  (quoting avoids FTS syntax errors).
+        let terms: Vec<String> = words.iter().map(|w| format!("\"{}\"*", w.replace('"', ""))).collect();
 
-        match &mut stmt {
-            Ok(s) => {
-                let rows = s.query_map(params![fts_query], |row| {
-                    Ok(FileRecord {
+        // 2. AND-first (precision), OR-fallback (recall).
+        let and_query = terms.join(" AND ");
+        let or_query = terms.join(" OR ");
+
+        // bm25 weights map to indexed columns in declared order: name, location, content, path(UNINDEXED).
+        // (path is UNINDEXED and contributes nothing.) Lower bm25() = more relevant, so ORDER BY ASC.
+        // snippet(files_fts, 2, ...) -> excerpt from the `content` column (index 2).
+        let sql = "
+            SELECT f.path, f.filename, f.is_dir, f.size, f.mtime,
+                   snippet(files_fts, 2, '', '', '…', 24) AS snip
+            FROM files_fts fts
+            JOIN files f ON f.path = fts.path
+            WHERE files_fts MATCH ?1
+            ORDER BY bm25(files_fts, 10.0, 4.0, 1.0, 1.0)
+            LIMIT ?2";
+
+        let run = |match_expr: &str| -> Result<Vec<Candidate>, String> {
+            let mut stmt = conn.prepare(sql).map_err(|e| format!("Prepare FTS query failed: {e}"))?;
+            let rows = stmt
+                .query_map(params![match_expr, limit as i64], |row| {
+                    Ok(Candidate {
                         path: row.get(0)?,
                         filename: row.get(1)?,
                         is_dir: row.get::<_, i32>(2)? == 1,
                         size: row.get(3)?,
                         mtime: row.get(4)?,
+                        snippet: row.get::<_, String>(5).unwrap_or_default(),
                     })
-                });
-
-                match rows {
-                    Ok(mapped_rows) => {
-                        let results: Result<Vec<FileRecord>, _> = mapped_rows.collect();
-                        if let Ok(vec) = results {
-                            if !vec.is_empty() {
-                                return Ok(vec);
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        log::warn!("FTS5 search failed: {e}. Falling back to substring search.");
-                    }
-                }
-            }
-            Err(e) => {
-                log::warn!("FTS5 prepare failed: {e}. Falling back to substring search.");
-            }
-        }
-
-        // Fallback search using LIKE query on both filename AND path
-        let like_query = format!("%{}%", query_str);
-        // Also generate underscore and hyphen variants for LIKE
-        let underscore_like = format!("%{}%", words.join("_"));
-        let hyphen_like = format!("%{}%", words.join("-"));
-        let mut stmt_fallback = conn
-            .prepare(
-                "SELECT path, filename, is_dir, size, mtime 
-                 FROM files 
-                 WHERE filename LIKE ?1 OR path LIKE ?1 
-                    OR filename LIKE ?2 OR path LIKE ?2
-                    OR filename LIKE ?3 OR path LIKE ?3
-                 LIMIT 100",
-            )
-            .map_err(|e| format!("Prepare fallback query failed: {e}"))?;
-
-        let rows_fallback = stmt_fallback
-            .query_map(params![like_query, underscore_like, hyphen_like], |row| {
-                Ok(FileRecord {
-                    path: row.get(0)?,
-                    filename: row.get(1)?,
-                    is_dir: row.get::<_, i32>(2)? == 1,
-                    size: row.get(3)?,
-                    mtime: row.get(4)?,
                 })
-            })
-            .map_err(|e| format!("Execute fallback query failed: {e}"))?;
+                .map_err(|e| format!("FTS query_map failed: {e}"))?;
+            let mut out = Vec::new();
+            for r in rows { if let Ok(c) = r { out.push(c); } }
+            Ok(out)
+        };
 
-        let mut results = Vec::new();
-        for row in rows_fallback {
-            if let Ok(record) = row {
-                results.push(record);
-            }
+        // Try AND, then OR.
+        match run(&and_query) {
+            Ok(v) if !v.is_empty() => return Ok(v),
+            Ok(_) => {} // empty -> fall through to OR
+            Err(e) => log::warn!("FTS AND query failed: {e}; trying OR"),
+        }
+        match run(&or_query) {
+            Ok(v) if !v.is_empty() => return Ok(v),
+            Ok(_) => {}
+            Err(e) => log::warn!("FTS OR query failed: {e}; falling back to LIKE"),
         }
 
-        Ok(results)
+        // 3. LIKE fallback (filename/path only).
+        let like = format!("%{}%", words.join("%"));
+        let mut stmt = conn.prepare(
+            "SELECT path, filename, is_dir, size, mtime FROM files
+             WHERE filename LIKE ?1 OR path LIKE ?1 LIMIT ?2",
+        ).map_err(|e| format!("Prepare LIKE fallback failed: {e}"))?;
+        let rows = stmt.query_map(params![like, limit as i64], |row| {
+            Ok(Candidate {
+                path: row.get(0)?, filename: row.get(1)?,
+                is_dir: row.get::<_, i32>(2)? == 1, size: row.get(3)?, mtime: row.get(4)?,
+                snippet: String::new(),
+            })
+        }).map_err(|e| format!("LIKE query_map failed: {e}"))?;
+        let mut out = Vec::new();
+        for r in rows { if let Ok(c) = r { out.push(c); } }
+        Ok(out)
+    }
+
+    /// Search for files matching the query using FTS5. Fallback to simple filename substring search if FTS5 fails.
+    pub fn search(&self, query_str: &str) -> Result<Vec<FileRecord>, String> {
+        self.search_candidates(query_str, 100).map(|candidates| {
+            candidates
+                .into_iter()
+                .map(|c| FileRecord {
+                    path: c.path,
+                    filename: c.filename,
+                    is_dir: c.is_dir,
+                    size: c.size,
+                    mtime: c.mtime,
+                })
+                .collect()
+        })
     }
 }

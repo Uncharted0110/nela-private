@@ -1,6 +1,9 @@
 pub mod crawler;
 pub mod db;
 pub mod watcher;
+pub mod rank;
+
+pub use rank::{search_ranked, RankedFileRecord};
 
 use crate::governor::{CancellationToken, Governor};
 use db::{FileRecord, IndexerDb};

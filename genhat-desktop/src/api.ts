@@ -1006,7 +1006,11 @@ export const Api = {
     return invoke<{ sheet_name: string; rows: string[][] }>("parse_spreadsheet_data", { path });
   },
 
-  /** Search for ambient files using FTS5 (revamp P4) */
+  /**
+   * Search ambient files. Returns up to 5 records ranked best-first
+   * (BM25 + cross-encoder rerank). Each record may include `score` (0–1 relevance)
+   * and `snippet` (query-relevant excerpt). An empty array means "no relevant file found".
+   */
   async searchAmbientFiles(query: string): Promise<FileRecord[]> {
     return invoke<FileRecord[]>("search_ambient_files", { query });
   },
@@ -1024,6 +1028,11 @@ export const Api = {
   /** Write base64-encoded bytes to an absolute path (used by deck export). */
   async saveBinaryFile(path: string, contentsBase64: string): Promise<void> {
     await invoke("save_binary_file", { path, contentsBase64 });
+  },
+
+  /** Reveal file in OS file explorer and select it (P4 follow-up) */
+  async revealInExplorer(path: string): Promise<void> {
+    await invoke("reveal_in_explorer", { path });
   },
 };
 

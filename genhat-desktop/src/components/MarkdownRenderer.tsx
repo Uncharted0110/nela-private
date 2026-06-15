@@ -7,6 +7,8 @@ import rehypeRaw from "rehype-raw";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
 import type { Components } from "react-markdown";
+import { openPath } from "@tauri-apps/plugin-opener";
+import { Api } from "../api";
 
 interface MarkdownRendererProps {
   content: string;
@@ -93,15 +95,46 @@ const markdownComponents: Components = {
     );
   },
 
-  // Links open in external browser (important for Tauri)
+  // Links open in external browser or local explorer (important for Tauri)
   a({ href, children, ...props }) {
+    const isLocalFile = !!(
+      href?.startsWith("file://") ||
+      (href && /^[a-zA-Z]:[/\\]/.test(href)) ||
+      href?.startsWith("\\\\")
+    );
+
+    const handleClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
+      if (isLocalFile && href) {
+        e.preventDefault();
+        // Decode file:// URI or clean raw Windows path to standard windows file path
+        let path = href;
+        if (path.startsWith("file://")) {
+          path = decodeURIComponent(path.replace(/^file:\/\/\/?/, ""));
+          // On Windows, "/C:/path" -> "C:/path"
+          if (/^\/[a-zA-Z]:/.test(path)) {
+            path = path.substring(1);
+          }
+        }
+        path = path.replace(/\//g, "\\");
+        
+        Api.revealInExplorer(path).catch((err) => {
+          console.error("Failed to reveal local path:", err);
+          // Fallback to standard openPath in case custom command fails
+          openPath(path).catch((openErr) =>
+            console.error("Failed to open local path fallback:", openErr)
+          );
+        });
+      }
+    };
+
     return (
       <a
-        href={href}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="md-link"
         {...props}
+        href={href}
+        target={isLocalFile ? undefined : "_blank"}
+        rel={isLocalFile ? undefined : "noopener noreferrer"}
+        onClick={handleClick}
+        className="md-link"
       >
         {children}
       </a>
@@ -159,6 +192,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content }) => {
         remarkPlugins={[remarkGfm, remarkMath]}
         rehypePlugins={[rehypeRaw, rehypeKatex, rehypeHighlight]}
         components={markdownComponents}
+        urlTransform={(url) => url}
       >
         {processed}
       </ReactMarkdown>

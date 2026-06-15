@@ -24,6 +24,13 @@ applyTo: "genhat-desktop/src-tauri/src/**/*.rs"
 - `is_zip` applies only to the Google Drive fallback path (archive extract). HF downloads individual files directly.
 - Update `models.toml` mappings when changing default model sources; keep on-disk `model_file` paths stable for backends.
 
+# Ambient File Search Indexer
+
+- Maintain the `indexer/rank.rs` module which coordinates two-stage ambient search (FTS5 BM25 + Cross-Encoder rerank).
+- The FTS5 table is structured as `files_fts(name, location, content, path UNINDEXED)`.
+- Reranking uses `TaskRouter` and `grade_request` to route passages through the `ms-marco-grader` cross-encoder.
+- The `search_ambient_files` Tauri command takes `TaskRouterState` to retrieve ranked files.
+
 # Verification
 
 - For Rust backend changes, run: `cd genhat-desktop/src-tauri && cargo check`.
