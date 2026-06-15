@@ -4,12 +4,35 @@
 //! Optional full-page content is fetched via Jina AI Reader (r.jina.ai),
 //! which is also free and requires no credentials.
 //!
+//! ## Accuracy (Phase 1: candidate over-fetch + cross-encoder reranking)
+//!
+//! DuckDuckGo's native ordering mixes authoritative pages with SEO spam, so
+//! the model used to receive whatever DDG ranked first. We now over-fetch a
+//! larger candidate pool, deduplicate it, and rerank every candidate's
+//! `title + snippet` against the query using the in-process ms-marco
+//! cross-encoder (the `grade` task). Only the top `max_results` survive, and
+//! full-page content (when requested) is fetched solely for those — keeping
+//! network and memory usage low. If the grader model is unavailable, the
+//! original DuckDuckGo ordering is preserved so search never breaks.
+//!
 //! All errors are soft: parse or network failures return empty results so
 //! the chat flow is never blocked.
 
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, ACCEPT_LANGUAGE, USER_AGENT};
 use scraper::{Html, Selector};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
+use tauri::State;
+
+use crate::commands::inference::TaskRouterState;
+use crate::registry::types::TaskResponse;
+use crate::router::tasks::grade_request;
+use crate::router::TaskRouter;
+
+/// Number of candidate results to over-fetch before reranking down to the
+/// caller-requested `max_results`. A larger pool gives the cross-encoder room
+/// to surface authoritative pages DuckDuckGo ranked lower.
+const OVERFETCH_CANDIDATES: usize = 15;
 
 /// A single web search result.
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -205,6 +228,111 @@ async fn fetch_jina_content(url: &str) -> Option<String> {
     }
 }
 
+// ── Dedup + cross-encoder reranking ───────────────────────────────────────────
+
+/// Normalize a URL into a dedup key: strip scheme, leading `www.`, and any
+/// trailing slash, then lowercase. Two URLs that point at the same page (e.g.
+/// `http://www.x.com/a/` and `https://x.com/a`) collapse to one key.
+fn normalize_url_key(url: &str) -> String {
+    let trimmed = url.trim();
+    let without_scheme = trimmed
+        .strip_prefix("https://")
+        .or_else(|| trimmed.strip_prefix("http://"))
+        .unwrap_or(trimmed);
+    let without_www = without_scheme.strip_prefix("www.").unwrap_or(without_scheme);
+    without_www.trim_end_matches('/').to_lowercase()
+}
+
+/// Remove duplicate hits that resolve to the same normalized URL, preserving
+/// first-seen order. Hits without a usable URL are always kept.
+fn dedup_hits(hits: Vec<SearchHit>) -> Vec<SearchHit> {
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut out: Vec<SearchHit> = Vec::with_capacity(hits.len());
+
+    for hit in hits {
+        let key = normalize_url_key(&hit.url);
+        if key.is_empty() || seen.insert(key) {
+            out.push(hit);
+        }
+    }
+
+    out
+}
+
+/// Rerank search hits by cross-encoder relevance to the query.
+///
+/// Scores each hit's `title + snippet` against the query using the in-process
+/// ms-marco cross-encoder (the `grade` task), then sorts by descending
+/// relevance. Scoring is sequential because the cross-encoder serializes on a
+/// single ONNX session anyway, and each pair scores in a few milliseconds.
+///
+/// If the grader model is unavailable (e.g. not installed), the original
+/// DuckDuckGo ordering is preserved so search degrades gracefully.
+async fn rerank_hits(router: &TaskRouter, query: &str, hits: Vec<SearchHit>) -> Vec<SearchHit> {
+    if hits.len() <= 1 {
+        return hits;
+    }
+
+    let mut scored: Vec<(f32, SearchHit)> = Vec::with_capacity(hits.len());
+    let mut any_scored = false;
+
+    for hit in hits {
+        let passage = if hit.snippet.trim().is_empty() {
+            hit.title.clone()
+        } else {
+            format!("{}. {}", hit.title, hit.snippet)
+        };
+
+        let score = if passage.trim().is_empty() {
+            f32::NEG_INFINITY
+        } else {
+            let request = grade_request(query, &passage);
+            match router.route(&request).await {
+                Ok(TaskResponse::Score(s)) => {
+                    any_scored = true;
+                    s
+                }
+                // Wrong response shape or grader unavailable → sink this hit
+                // below any successfully scored ones.
+                _ => f32::NEG_INFINITY,
+            }
+        };
+
+        scored.push((score, hit));
+    }
+
+    if !any_scored {
+        log::warn!("[web_search] Cross-encoder grader unavailable; preserving DDG order");
+        return scored.into_iter().map(|(_, hit)| hit).collect();
+    }
+
+    // Stable-ish descending sort by relevance score.
+    scored.sort_by(|a, b| {
+        b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    if log::log_enabled!(log::Level::Debug) {
+        for (score, hit) in scored.iter().take(5) {
+            log::debug!(
+                "[web_search] rerank {:.3} :: {}",
+                score,
+                truncate_for_log(&hit.title, 70)
+            );
+        }
+    }
+
+    scored.into_iter().map(|(_, hit)| hit).collect()
+}
+
+fn truncate_for_log(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        s.to_string()
+    } else {
+        let truncated: String = s.chars().take(max).collect();
+        format!("{truncated}…")
+    }
+}
+
 // ── Context formatter ─────────────────────────────────────────────────────────
 
 fn format_context(results: &[SearchHit]) -> String {
@@ -238,6 +366,11 @@ fn format_context(results: &[SearchHit]) -> String {
 /// * `max_results` — how many results to return (typically 5 for snippets, 2 for full).
 /// * `fetch_content` — if true, fetches full-page markdown via Jina AI Reader for each result.
 ///
+/// Internally over-fetches a larger candidate pool, deduplicates it, and
+/// reranks by cross-encoder relevance before truncating to `max_results`.
+/// Full-page content (when requested) is fetched only for the surviving
+/// top results.
+///
 /// This command never returns an Err that blocks chat: parse/network failures
 /// produce an empty `results` list with an empty `formatted_context`.
 #[tauri::command]
@@ -245,11 +378,18 @@ pub async fn web_search(
     query: String,
     max_results: u32,
     fetch_content: bool,
+    router: State<'_, TaskRouterState>,
 ) -> Result<WebSearchResult, String> {
     let trimmed_query: String = query.chars().take(150).collect();
     let n = (max_results.min(10)).max(1) as usize;
 
-    let mut results = fetch_ddg_results(&trimmed_query, n).await;
+    // Over-fetch a broad candidate pool so the cross-encoder has room to surface
+    // authoritative pages DuckDuckGo ranked lower, then dedup and rerank.
+    let candidates = fetch_ddg_results(&trimmed_query, OVERFETCH_CANDIDATES).await;
+    let candidates = dedup_hits(candidates);
+    let reranked = rerank_hits(&router.0, &trimmed_query, candidates).await;
+
+    let mut results: Vec<SearchHit> = reranked.into_iter().take(n).collect();
 
     if fetch_content && !results.is_empty() {
         // Enrich each result with full page content

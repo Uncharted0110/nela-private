@@ -171,10 +171,18 @@ impl IntentResolver {
 
         match self.router.route(&request).await {
             Ok(TaskResponse::Classification { label, confidence }) => {
+                // NOTE: The DistilBERT classifier is trained for *RAG over ingested
+                // documents* (no_retrieval / simple_rag / multi_doc / summarization),
+                // NOT for ambient OS file search. Mapping `simple_rag`/`multi_doc`
+                // to `FileSearch` previously hijacked ordinary knowledge questions
+                // into the ambient file-search path (e.g. matching a random local
+                // file and grounding the answer on it). These labels must resolve to
+                // `Chat`; the RAG pipeline decides retrieval separately. Ambient
+                // `FileSearch` is only triggered by explicit Tier 0 deterministic
+                // triggers (slash commands / "search"/"find" keywords).
                 let kind = match label.as_str() {
-                    "no_retrieval" => IntentKind::Chat,
-                    "simple_rag" | "multi_doc" => IntentKind::FileSearch,
                     "summarization" => IntentKind::Summarize,
+                    // no_retrieval, simple_rag, multi_doc, and anything else → Chat.
                     _ => IntentKind::Chat,
                 };
                 Some(IntentDecision {

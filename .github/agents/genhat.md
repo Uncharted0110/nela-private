@@ -423,6 +423,11 @@ Eleven models registered:
 
 All models are **lazily loaded on first request**. Set `auto_start = true` to pre-load at app launch.
 
+**Default download sources** (configured per model in `config/models.toml`):
+- **HuggingFace first** when `hf_repo` is set: single-file models use `hf_file`; multi-file bundles use `[models.hf_files]` (destination path → repo file path).
+- **Google Drive fallback** via `gdrive_id` when HF is missing or fails. `is_zip` applies only to the GDrive payload.
+- **GDrive-only**: `query-router` (custom DistilBERT classifier) and `parakeet-tdt` (NELA-specific ONNX layout).
+
 ---
 
 ## 6. Frontend Architecture

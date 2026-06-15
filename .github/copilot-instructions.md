@@ -17,6 +17,7 @@ The customization files under `.github/` are part of the repository contract.
 - Text chat supports both document-grounding paths: KB-ingested RAG retrieval and direct file-to-prompt attachments, controlled by a RAG on/off toggle (default off = direct prompting).
 - Runtime model parameters panel is hidden by default and opened explicitly by the user.
 - Disk-scanned model sync preserves user-applied runtime params (for example `ctx_size`, `max_tokens`, `flash_attn`) instead of resetting them during model-list refreshes.
+- Default model downloads are configured in `genhat-desktop/src-tauri/src/config/models.toml`. Catalog models with `hf_repo` download from HuggingFace first (`hf_file` for single files, `[models.hf_files]` for bundles); `gdrive_id` is used as fallback when HF fails or is absent. Custom GenHat artifacts (`query-router`, `parakeet-tdt`) remain Google Drive–only.
 - `benchmark/` contains runtime benchmark scripts, plotting tools, and the RAG retrieval quality benchmark CLI.
 - `benchmark/prepare_squad.py` downloads SQuAD 1.1 and produces a corpus and QA-pairs file for `rag-bench`. Each QA pair includes an `answers` array (all acceptable gold answers) for E2E evaluation.
 - `scripts/` contains end-to-end benchmark orchestration:
@@ -26,6 +27,7 @@ The customization files under `.github/` are part of the repository contract.
     - NQ is available as `BeIR/nq` but its 2.68M-doc corpus is impractical; excluded from default BEIR loop.
   - `baseline_llamaindex.py` — LlamaIndex + BGE + llama-server baseline (EM + F1).
   - `baseline_chromadb.py` — ChromaDB + sentence-transformers + llama-server baseline.
+  - `extract_audio_from_frontend_state.py` — decode embedded `data:audio/...;base64,...` entries from a saved `frontend_state.json` into `.wav` files.
   - `generate_paper_assets.py` — read all result JSONs, emit LaTeX tables + matplotlib PDFs.
   - `run_all_benchmarks.sh` — full end-to-end runner (ingest → bench × 2 datasets → BEIR → ablations → baselines → assets). Steps [0/10]–[assets]. TriviaQA steps are soft-skipped if `benchmark/trivia_qa/` is absent.
   - `requirements_benchmark.txt` — pinned Python deps for the above scripts.

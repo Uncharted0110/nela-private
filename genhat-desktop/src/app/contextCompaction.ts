@@ -8,8 +8,58 @@ import type {
 export const CONTEXT_COMPACTION_THRESHOLD = 0.9;
 export const CONTEXT_COMPACTION_KEEP_RECENT = 8;
 
+/**
+ * Marker prefix for the transient "discovered local file" assistant notice.
+ * These notices are shown in the chat UI only and must NOT be sent to the LLM
+ * (they break turn ordering and add noise). Kept here so the producer and the
+ * LLM-normalisation filter agree on the exact string.
+ */
+export const DISCOVERY_NOTICE_PREFIX = "🔍 Discovered matching system file:";
+
 export function toContextMessages(messages: ChatMessage[]): ChatContextMessage[] {
   return messages.map(({ role, content }) => ({ role, content }));
+}
+
+/**
+ * Normalise a message list before sending it to the local LLM.
+ *
+ * Strict chat templates (e.g. Qwen) reject payloads where a `system` message is
+ * not the single first message ("System message must be at the beginning").
+ * Several independent features can each prepend a `system` message (web search
+ * context, ambient file context, auto-compaction summary), which produced
+ * multiple `system` messages and a 500 from llama-server.
+ *
+ * This collapses every `system` message into one leading `system` message
+ * (joined in order) and drops transient UI-only discovery notices.
+ */
+export function normalizeMessagesForLlm(
+  messages: ChatContextMessage[]
+): ChatContextMessage[] {
+  const systemParts: string[] = [];
+  const rest: ChatContextMessage[] = [];
+
+  for (const message of messages) {
+    if (message.role === "system") {
+      const content = message.content.trim();
+      if (content) systemParts.push(content);
+      continue;
+    }
+    // Discovery notices are UI-only; never feed them to the model.
+    if (
+      message.role === "assistant" &&
+      message.content.startsWith(DISCOVERY_NOTICE_PREFIX)
+    ) {
+      continue;
+    }
+    rest.push(message);
+  }
+
+  if (systemParts.length === 0) return rest;
+
+  return [
+    { role: "system", content: systemParts.join("\n\n---\n\n") },
+    ...rest,
+  ];
 }
 
 export function resolveReservedOutputTokens(maxTokens: number | undefined): number {

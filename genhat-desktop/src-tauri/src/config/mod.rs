@@ -35,6 +35,12 @@ struct RawModelDef {
     #[serde(default)]
     pub is_zip: bool,
     #[serde(default)]
+    pub hf_repo: Option<String>,
+    #[serde(default)]
+    pub hf_file: Option<String>,
+    #[serde(default)]
+    pub hf_files: HashMap<String, String>,
+    #[serde(default)]
     params: HashMap<String, String>,
     #[serde(default)]
     task_priorities: HashMap<String, u32>,
@@ -83,6 +89,9 @@ pub fn load_model_definitions() -> Result<Vec<ModelDef>, String> {
                 memory_mb: r.memory_mb,
                 gdrive_id: r.gdrive_id,
                 is_zip: r.is_zip,
+                hf_repo: r.hf_repo,
+                hf_file: r.hf_file,
+                hf_files: r.hf_files,
                 params: r.params,
                 task_priorities,
             })

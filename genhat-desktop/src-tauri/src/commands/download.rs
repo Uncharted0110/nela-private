@@ -426,6 +426,223 @@ async fn ensure_model_registered_from_catalog(
     state.0.register_model(def).await
 }
 
+/// Outcome of attempting to download a single file (with internal retries).
+enum FileDownloadOutcome {
+    Done,
+    Cancelled,
+    Failed(String),
+}
+
+/// Download a single URL to `target_path`, retrying transient failures.
+/// `is_gdrive` enables Google Drive's virus-scan confirmation handling.
+async fn download_file_with_retries(
+    client: &Client,
+    url: &str,
+    is_gdrive: bool,
+    target_path: &Path,
+    model_id: &str,
+    app_handle: &tauri::AppHandle,
+    cancel_flag: &Arc<AtomicBool>,
+) -> FileDownloadOutcome {
+    if let Some(parent) = target_path.parent() {
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            return FileDownloadOutcome::Failed(format!("Failed to create directory: {e}"));
+        }
+    }
+
+    for attempt in 1..=MAX_DOWNLOAD_RETRIES {
+        if cancel_flag.load(Ordering::SeqCst) {
+            let _ = std::fs::remove_file(target_path);
+            return FileDownloadOutcome::Cancelled;
+        }
+
+        let response = if is_gdrive {
+            fetch_gdrive_download_response(client, url).await
+        } else {
+            client.get(url).send().await.map_err(|e| e.to_string())
+        };
+
+        let response = match response {
+            Ok(resp) => resp,
+            Err(err) => {
+                if attempt < MAX_DOWNLOAD_RETRIES {
+                    let retry_in = retry_delay_for_attempt(attempt);
+                    emit_download_progress(
+                        app_handle,
+                        model_id,
+                        0.0,
+                        format!(
+                            "Paused (network issue). Retrying in {retry_in}s (attempt {}/{})...",
+                            attempt + 1,
+                            MAX_DOWNLOAD_RETRIES
+                        ),
+                    );
+                    if let Err(DownloadStreamError::Cancelled) =
+                        sleep_with_cancel(cancel_flag, retry_in).await
+                    {
+                        return FileDownloadOutcome::Cancelled;
+                    }
+                    continue;
+                }
+                return FileDownloadOutcome::Failed(err);
+            }
+        };
+
+        let status = response.status();
+        if !status.is_success() {
+            if should_retry_status(status) && attempt < MAX_DOWNLOAD_RETRIES {
+                let retry_in = retry_delay_for_attempt(attempt);
+                emit_download_progress(
+                    app_handle,
+                    model_id,
+                    0.0,
+                    format!(
+                        "Paused (server error {status}). Retrying in {retry_in}s (attempt {}/{})...",
+                        attempt + 1,
+                        MAX_DOWNLOAD_RETRIES
+                    ),
+                );
+                if let Err(DownloadStreamError::Cancelled) =
+                    sleep_with_cancel(cancel_flag, retry_in).await
+                {
+                    return FileDownloadOutcome::Cancelled;
+                }
+                continue;
+            }
+            return FileDownloadOutcome::Failed(format!("Download failed with status: {status}"));
+        }
+
+        let content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|h| h.to_str().ok())
+            .unwrap_or("");
+        if content_type.starts_with("text/html") {
+            let err = "Download endpoint returned HTML instead of file payload".to_string();
+            if attempt < MAX_DOWNLOAD_RETRIES {
+                let retry_in = retry_delay_for_attempt(attempt);
+                emit_download_progress(
+                    app_handle,
+                    model_id,
+                    0.0,
+                    format!(
+                        "Paused (invalid response). Retrying in {retry_in}s (attempt {}/{})...",
+                        attempt + 1,
+                        MAX_DOWNLOAD_RETRIES
+                    ),
+                );
+                if let Err(DownloadStreamError::Cancelled) =
+                    sleep_with_cancel(cancel_flag, retry_in).await
+                {
+                    return FileDownloadOutcome::Cancelled;
+                }
+                continue;
+            }
+            return FileDownloadOutcome::Failed(err);
+        }
+
+        match stream_response_to_file(response, target_path, model_id, app_handle, cancel_flag).await
+        {
+            Ok(()) => return FileDownloadOutcome::Done,
+            Err(DownloadStreamError::Cancelled) => return FileDownloadOutcome::Cancelled,
+            Err(DownloadStreamError::Fatal(err)) => return FileDownloadOutcome::Failed(err),
+            Err(DownloadStreamError::Retriable(err)) => {
+                if attempt < MAX_DOWNLOAD_RETRIES {
+                    let retry_in = retry_delay_for_attempt(attempt);
+                    emit_download_progress(
+                        app_handle,
+                        model_id,
+                        0.0,
+                        format!(
+                            "Paused (network issue: {err}). Retrying in {retry_in}s (attempt {}/{})...",
+                            attempt + 1,
+                            MAX_DOWNLOAD_RETRIES
+                        ),
+                    );
+                    if let Err(DownloadStreamError::Cancelled) =
+                        sleep_with_cancel(cancel_flag, retry_in).await
+                    {
+                        return FileDownloadOutcome::Cancelled;
+                    }
+                    continue;
+                }
+                return FileDownloadOutcome::Failed(err);
+            }
+        }
+    }
+
+    FileDownloadOutcome::Failed("Download failed before transfer could complete".to_string())
+}
+
+/// Download all required files for a model from its HuggingFace repo.
+///
+/// HuggingFace serves individual files, so multi-file/directory models are
+/// fetched file-by-file (no archive extraction). Returns `Failed` so callers
+/// can fall back to Google Drive.
+async fn download_model_via_hf(
+    client: &Client,
+    def: &crate::registry::types::ModelDef,
+    repo: &str,
+    models_dir: &Path,
+    model_id: &str,
+    app_handle: &tauri::AppHandle,
+    cancel_flag: &Arc<AtomicBool>,
+) -> FileDownloadOutcome {
+    // Build the (destination relative path, source path in repo) work list.
+    let mut files: Vec<(String, String)> = Vec::new();
+    if !def.hf_files.is_empty() {
+        for (dest, src) in &def.hf_files {
+            files.push((dest.clone(), src.clone()));
+        }
+    } else if let Some(hf_file) = def.hf_file.as_ref().filter(|s| !s.trim().is_empty()) {
+        files.push((def.model_file.clone(), hf_file.clone()));
+    } else {
+        return FileDownloadOutcome::Failed(format!(
+            "Model '{}' has hf_repo but no hf_file or hf_files configured",
+            model_id
+        ));
+    }
+
+    let repo_clean = repo.trim().trim_matches('/');
+    let total = files.len();
+
+    for (idx, (dest_rel, src)) in files.iter().enumerate() {
+        if cancel_flag.load(Ordering::SeqCst) {
+            return FileDownloadOutcome::Cancelled;
+        }
+
+        let dest_path = models_dir.join(dest_rel);
+        let src_clean = src.trim().trim_start_matches('/');
+        let url = format!(
+            "https://huggingface.co/{}/resolve/main/{}?download=true",
+            repo_clean, src_clean
+        );
+
+        if total > 1 {
+            emit_download_progress(
+                app_handle,
+                model_id,
+                0.0,
+                format!("Downloading file {}/{} ({})...", idx + 1, total, src_clean),
+            );
+        }
+
+        match download_file_with_retries(
+            client, &url, false, &dest_path, model_id, app_handle, cancel_flag,
+        )
+        .await
+        {
+            FileDownloadOutcome::Done => continue,
+            FileDownloadOutcome::Cancelled => return FileDownloadOutcome::Cancelled,
+            FileDownloadOutcome::Failed(err) => {
+                return FileDownloadOutcome::Failed(format!("{}: {}", src_clean, err));
+            }
+        }
+    }
+
+    FileDownloadOutcome::Done
+}
+
 async fn download_model_internal(
     app_handle: tauri::AppHandle,
     model_id: &str,
@@ -438,11 +655,6 @@ async fn download_model_internal(
         .await
         .ok_or_else(|| format!("Model not found: {}", model_id))?;
         
-    let gdrive_id = def
-        .gdrive_id
-        .as_ref()
-        .ok_or_else(|| format!("Model '{}' does not have a GDrive ID", model_id))?;
-
     let models_dir = crate::paths::resolve_models_dir();
     let model_path = models_dir.join(&def.model_file);
 
@@ -456,6 +668,55 @@ async fn download_model_internal(
         map.insert(model_id.to_string(), cancel_flag.clone());
     }
 
+    emit_download_progress(&app_handle, model_id, 0.0, "Starting download...");
+
+    let client = Client::new();
+
+    // Prefer HuggingFace when configured; fall back to Google Drive on failure.
+    if let Some(repo) = def.hf_repo.as_ref().filter(|r| !r.trim().is_empty()) {
+        match download_model_via_hf(&client, &def, repo, &models_dir, model_id, &app_handle, &cancel_flag).await {
+            FileDownloadOutcome::Done => {
+                emit_download_progress(&app_handle, model_id, 100.0, "Complete");
+                let mut map = download_state.cancellations.lock().await;
+                map.remove(model_id);
+                return Ok(());
+            }
+            FileDownloadOutcome::Cancelled => {
+                let mut map = download_state.cancellations.lock().await;
+                map.remove(model_id);
+                return Err("Download cancelled".to_string());
+            }
+            FileDownloadOutcome::Failed(err) => {
+                if def.gdrive_id.as_ref().map(|s| !s.trim().is_empty()).unwrap_or(false) {
+                    log::warn!(
+                        "[Download] HuggingFace download failed for '{}': {}. Falling back to Google Drive.",
+                        model_id,
+                        err
+                    );
+                    emit_download_progress(
+                        &app_handle,
+                        model_id,
+                        0.0,
+                        "HuggingFace failed — retrying via Google Drive...",
+                    );
+                } else {
+                    let mut map = download_state.cancellations.lock().await;
+                    map.remove(model_id);
+                    return Err(format!("HuggingFace download failed for '{}': {}", model_id, err));
+                }
+            }
+        }
+    }
+
+    let gdrive_id = match def.gdrive_id.as_ref().filter(|s| !s.trim().is_empty()) {
+        Some(id) => id,
+        None => {
+            let mut map = download_state.cancellations.lock().await;
+            map.remove(model_id);
+            return Err(format!("Model '{}' has no download source configured", model_id));
+        }
+    };
+
     let is_zip = def.is_zip;
     let download_target = if is_zip {
         // If it's a zip we might be unpacking either a file or a folder
@@ -464,9 +725,6 @@ async fn download_model_internal(
         model_path.clone()
     };
 
-    emit_download_progress(&app_handle, model_id, 0.0, "Starting download...");
-
-    let client = Client::new();
     let base_url = format!("https://drive.google.com/uc?export=download&id={}", gdrive_id);
     let mut transfer_ok = false;
 
@@ -747,7 +1005,9 @@ pub async fn download_model_category(
     let mut target_ids = Vec::new();
 
     for def in defs {
-        if model_in_advanced_category(&def, category) && def.gdrive_id.is_some() {
+        if model_in_advanced_category(&def, category)
+            && (def.gdrive_id.is_some() || def.hf_repo.is_some())
+        {
             target_ids.push(def.id.clone());
             defs_by_id.insert(def.id.clone(), def);
         }

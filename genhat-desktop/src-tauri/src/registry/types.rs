@@ -118,6 +118,16 @@ pub struct ModelDef {
     pub memory_mb: u32,
     pub gdrive_id: Option<String>,
     pub is_zip: bool,
+    /// HuggingFace repository ID to download from (e.g. `LiquidAI/LFM2-1.2B-GGUF`).
+    /// When set, downloads prefer HuggingFace and fall back to `gdrive_id` on failure.
+    pub hf_repo: Option<String>,
+    /// Single source file path within `hf_repo`, downloaded to `model_file`.
+    /// Used for single-file models (most GGUF weights).
+    pub hf_file: Option<String>,
+    /// Multi-file mapping for bundles: destination path (relative to the models
+    /// directory) → source path within `hf_repo`. Used for models that need
+    /// several files (e.g. ONNX model + tokenizer, TTS model + voices).
+    pub hf_files: HashMap<String, String>,
     /// Backend-specific parameters (all as strings, parsed by each backend).
     pub params: HashMap<String, String>,
     /// Optional per-task priority overrides. If a task is not listed here,

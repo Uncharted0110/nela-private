@@ -24,6 +24,8 @@ import {
   applyCompactionResultToSession,
   CONTEXT_COMPACTION_KEEP_RECENT,
   CONTEXT_COMPACTION_THRESHOLD,
+  DISCOVERY_NOTICE_PREFIX,
+  normalizeMessagesForLlm,
   resolveReservedOutputTokens,
   toContextMessages,
 } from "./contextCompaction";
@@ -756,8 +758,20 @@ export async function executeHandleSend(
     let attachedFile = ctx.directDocumentPaths.length > 0 ? ctx.directDocumentPaths[0] : null;
     let discoveryMsg: ChatMessage | null = null;
 
-    if (ctx.chatMode === "text" && !attachedFile) {
-      if (resolvedIntentKind === "FileSearch" || hasSearchKeywords(text)) {
+    // Only run ambient OS file search when the user clearly wants a local file:
+    // explicit "search"/"find" keywords, or a deterministic FileSearch intent
+    // (Tier 0 slash command / trigger word). The micro-classifier no longer maps
+    // RAG labels (simple_rag/multi_doc) to FileSearch, so general questions no
+    // longer get hijacked into reading a random local file. Additionally, when
+    // web search already supplied context and the user didn't explicitly ask to
+    // search files, skip ambient file search to avoid the two grounding sources
+    // clashing.
+    const explicitFileSearch = hasSearchKeywords(text);
+    const wantsFileSearch = resolvedIntentKind === "FileSearch" || explicitFileSearch;
+    const skipForWebSearch = !!webSearchResult && !explicitFileSearch;
+
+    if (ctx.chatMode === "text" && !attachedFile && wantsFileSearch && !skipForWebSearch) {
+      {
         const searchQuery = extractSearchQuery(text);
         try {
           const results = await Api.searchAmbientFiles(searchQuery);
@@ -779,7 +793,7 @@ export async function executeHandleSend(
 
               discoveryMsg = {
                 role: "assistant" as const,
-                content: `🔍 Discovered matching system file: **${filename}**\nPath: \`${attachedFile}\`\nReading file content...`,
+                content: `${DISCOVERY_NOTICE_PREFIX} **${filename}**\nPath: \`${attachedFile}\`\nReading file content...`,
               };
 
               ctx.updateSession(sid, (prev) => ({
@@ -909,6 +923,12 @@ export async function executeHandleSend(
     } catch (err) {
       console.warn("Context compaction failed; continuing with original context:", err);
     }
+
+    // Collapse every injected `system` message (web search, ambient file context,
+    // auto-compaction summary) into a single leading system message and strip the
+    // UI-only discovery notice. This prevents llama-server's strict chat template
+    // from rejecting the request with "System message must be at the beginning".
+    apiMessages = normalizeMessagesForLlm(apiMessages);
 
     Api.streamChat(
       apiMessages,
@@ -1070,7 +1090,7 @@ async function handleArtifactGeneration(
                 ...prev.messages,
                 {
                   role: "assistant" as const,
-                  content: `🔍 Discovered matching system file: **${filename}**\nPath: \`${attachedFile}\`\nReading schema and metadata...`,
+                  content: `${DISCOVERY_NOTICE_PREFIX} **${filename}**\nPath: \`${attachedFile}\`\nReading schema and metadata...`,
                 },
               ],
             }));

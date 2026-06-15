@@ -294,6 +294,9 @@ fn model_def_from_discovered_unit(unit: &DiscoveredModelUnit) -> ModelDef {
         memory_mb: 1600,
         gdrive_id: None,
         is_zip: false,
+        hf_repo: None,
+        hf_file: None,
+        hf_files: HashMap::new(),
         params,
         task_priorities: HashMap::new(),
     }
@@ -583,6 +586,9 @@ pub async fn switch_model(
         task_priorities: HashMap::new(),
         gdrive_id: None,
         is_zip: false,
+        hf_repo: None,
+        hf_file: None,
+        hf_files: HashMap::new(),
     };
 
     // Register and start the new model
@@ -721,6 +727,9 @@ pub async fn import_downloaded_model(
         task_priorities: HashMap::new(),
         gdrive_id: None,
         is_zip: false,
+        hf_repo: None,
+        hf_file: None,
+        hf_files: HashMap::new(),
     };
 
     state.0.register_model(def).await?;

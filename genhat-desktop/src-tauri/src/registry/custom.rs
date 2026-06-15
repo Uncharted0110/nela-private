@@ -226,6 +226,9 @@ fn entry_to_model_def(entry: CustomModelEntry) -> ModelDef {
         memory_mb: if entry.memory_mb == 0 { 1600 } else { entry.memory_mb },
         gdrive_id: None,
         is_zip: false,
+        hf_repo: None,
+        hf_file: None,
+        hf_files: HashMap::new(),
         params,
         task_priorities: HashMap::new(),
     }

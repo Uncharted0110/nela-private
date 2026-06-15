@@ -17,6 +17,13 @@ applyTo: "genhat-desktop/src-tauri/src/**/*.rs"
 - Preserve local-first behavior and avoid introducing mandatory cloud dependencies for core flows.
 - When reconciling discovered/dynamic models, preserve user-updated runtime params unless the underlying model artifact or task capabilities actually changed.
 
+# Model Downloads
+
+- Catalog download config lives in `config/models.toml` (`hf_repo`, `hf_file`, `[models.hf_files]`, `gdrive_id`, `is_zip`).
+- `commands/download.rs` prefers HuggingFace (`https://huggingface.co/{repo}/resolve/main/{file}`) and falls back to Google Drive when HF fails.
+- `is_zip` applies only to the Google Drive fallback path (archive extract). HF downloads individual files directly.
+- Update `models.toml` mappings when changing default model sources; keep on-disk `model_file` paths stable for backends.
+
 # Verification
 
 - For Rust backend changes, run: `cd genhat-desktop/src-tauri && cargo check`.
