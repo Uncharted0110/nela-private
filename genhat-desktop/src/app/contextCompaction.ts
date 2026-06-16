@@ -15,6 +15,15 @@ export const CONTEXT_COMPACTION_KEEP_RECENT = 8;
  * LLM-normalisation filter agree on the exact string.
  */
 export const DISCOVERY_NOTICE_PREFIX = "🔍 Discovered matching system file:";
+/** Transient UI-only notice when ambient search finds file(s) in standard chat. */
+export const AMBIENT_FOUND_PREFIX = "🔍 Found";
+
+export function isDiscoveryNotice(content: string): boolean {
+  return (
+    content.startsWith(DISCOVERY_NOTICE_PREFIX) ||
+    content.startsWith(AMBIENT_FOUND_PREFIX)
+  );
+}
 
 export function toContextMessages(messages: ChatMessage[]): ChatContextMessage[] {
   return messages.map(({ role, content }) => ({ role, content }));
@@ -45,10 +54,7 @@ export function normalizeMessagesForLlm(
       continue;
     }
     // Discovery notices are UI-only; never feed them to the model.
-    if (
-      message.role === "assistant" &&
-      message.content.startsWith(DISCOVERY_NOTICE_PREFIX)
-    ) {
+    if (message.role === "assistant" && isDiscoveryNotice(message.content)) {
       continue;
     }
     rest.push(message);

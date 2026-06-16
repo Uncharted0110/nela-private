@@ -20,6 +20,7 @@ pub struct Candidate {
     pub is_dir: bool,
     pub size: i64,
     pub mtime: i64,
+    pub location: String, // 2 parent dir names (from files_fts.location)
     pub snippet: String, // query-relevant excerpt from the content column (may be empty)
 }
 
@@ -234,11 +235,28 @@ impl IndexerDb {
         let and_query = terms.join(" AND ");
         let or_query = terms.join(" OR ");
 
+        // Multi-word filename boost: when the user typed 2+ words, also match them as an
+        // adjacent phrase scoped to the `name` column (e.g. "form 1a" -> form-1a.pdf,
+        // whose tokenized name is "form 1a pdf"). Quotes around terms are stripped; the
+        // trailing `*` makes the last token a prefix. This recovers multi-word filenames
+        // that BM25 alone buries behind content matches.
+        let name_phrase_query = if words.len() >= 2 {
+            let phrase = words
+                .iter()
+                .map(|w| w.replace('"', ""))
+                .collect::<Vec<_>>()
+                .join(" ");
+            Some(format!("{{name}} : \"{phrase}\" *"))
+        } else {
+            None
+        };
+
         // bm25 weights map to indexed columns in declared order: name, location, content, path(UNINDEXED).
         // (path is UNINDEXED and contributes nothing.) Lower bm25() = more relevant, so ORDER BY ASC.
         // snippet(files_fts, 2, ...) -> excerpt from the `content` column (index 2).
         let sql = "
             SELECT f.path, f.filename, f.is_dir, f.size, f.mtime,
+                   fts.location AS location,
                    snippet(files_fts, 2, '', '', '…', 24) AS snip
             FROM files_fts fts
             JOIN files f ON f.path = fts.path
@@ -256,7 +274,8 @@ impl IndexerDb {
                         is_dir: row.get::<_, i32>(2)? == 1,
                         size: row.get(3)?,
                         mtime: row.get(4)?,
-                        snippet: row.get::<_, String>(5).unwrap_or_default(),
+                        location: row.get::<_, String>(5).unwrap_or_default(),
+                        snippet: row.get::<_, String>(6).unwrap_or_default(),
                     })
                 })
                 .map_err(|e| format!("FTS query_map failed: {e}"))?;
@@ -265,16 +284,41 @@ impl IndexerDb {
             Ok(out)
         };
 
-        // Try AND, then OR.
+        // Merge results in priority order, deduping by path and capping at `limit`:
+        //   1. exact multi-word filename phrase (strongest signal)
+        //   2. AND of prefix terms (precision)
+        //   3. OR of prefix terms (recall) — only consulted if 1+2 found nothing.
+        let mut out: Vec<Candidate> = Vec::new();
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let merge = |src: Vec<Candidate>, out: &mut Vec<Candidate>, seen: &mut std::collections::HashSet<String>| {
+            for c in src {
+                if out.len() >= limit {
+                    break;
+                }
+                if seen.insert(c.path.clone()) {
+                    out.push(c);
+                }
+            }
+        };
+
+        if let Some(ref np) = name_phrase_query {
+            match run(np) {
+                Ok(v) => merge(v, &mut out, &mut seen),
+                Err(e) => log::warn!("FTS name-phrase query failed: {e}; continuing"),
+            }
+        }
         match run(&and_query) {
-            Ok(v) if !v.is_empty() => return Ok(v),
-            Ok(_) => {} // empty -> fall through to OR
+            Ok(v) => merge(v, &mut out, &mut seen),
             Err(e) => log::warn!("FTS AND query failed: {e}; trying OR"),
         }
-        match run(&or_query) {
-            Ok(v) if !v.is_empty() => return Ok(v),
-            Ok(_) => {}
-            Err(e) => log::warn!("FTS OR query failed: {e}; falling back to LIKE"),
+        if out.is_empty() {
+            match run(&or_query) {
+                Ok(v) => merge(v, &mut out, &mut seen),
+                Err(e) => log::warn!("FTS OR query failed: {e}; falling back to LIKE"),
+            }
+        }
+        if !out.is_empty() {
+            return Ok(out);
         }
 
         // 3. LIKE fallback (filename/path only).
@@ -287,6 +331,7 @@ impl IndexerDb {
             Ok(Candidate {
                 path: row.get(0)?, filename: row.get(1)?,
                 is_dir: row.get::<_, i32>(2)? == 1, size: row.get(3)?, mtime: row.get(4)?,
+                location: String::new(), // files table has no location
                 snippet: String::new(),
             })
         }).map_err(|e| format!("LIKE query_map failed: {e}"))?;

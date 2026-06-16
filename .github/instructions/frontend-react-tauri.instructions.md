@@ -22,6 +22,7 @@ applyTo:
 - Runtime parameter apply actions should resolve to a registered runtime model ID and must fail loudly instead of silently falling back to session-only overrides.
 - When command names or payload contracts change, update frontend call sites and matching Rust commands together.
 - `searchAmbientFiles` returns ranked `FileRecord`s (optionally with `score` and `snippet`). `handleSend.ts` parses the top 2-3 matching records, preferring `rec.snippet` for ambient context building.
+- `Api.searchAmbientFiles` returns up to 5 records ranked best-first with optional `score`/`snippet` (empty array = no relevant file). `handleSend.ts` builds multi-file snippet grounding from the top 2–3 results (standard-chat path) and uses the top-ranked result for the artifact path; an empty result triggers the `FILE_SEARCH_NO_RESULTS` system message.
 
 # Verification
 

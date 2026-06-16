@@ -25,6 +25,7 @@ import {
   CONTEXT_COMPACTION_KEEP_RECENT,
   CONTEXT_COMPACTION_THRESHOLD,
   DISCOVERY_NOTICE_PREFIX,
+  AMBIENT_FOUND_PREFIX,
   normalizeMessagesForLlm,
   resolveReservedOutputTokens,
   toContextMessages,
@@ -758,16 +759,18 @@ export async function executeHandleSend(
     let attachedFile = ctx.directDocumentPaths.length > 0 ? ctx.directDocumentPaths[0] : null;
     let discoveryMsg: ChatMessage | null = null;
 
-    // Only run ambient OS file search when the user clearly wants a local file:
-    // explicit "search"/"find" keywords, or a deterministic FileSearch intent
-    // (Tier 0 slash command / trigger word). The micro-classifier no longer maps
-    // RAG labels (simple_rag/multi_doc) to FileSearch, so general questions no
-    // longer get hijacked into reading a random local file. Additionally, when
-    // web search already supplied context and the user didn't explicitly ask to
-    // search files, skip ambient file search to avoid the two grounding sources
-    // clashing.
-    const explicitFileSearch = hasSearchKeywords(text);
-    const wantsFileSearch = resolvedIntentKind === "FileSearch" || explicitFileSearch;
+    // Decide whether to run the ambient OS file search. Two tiers:
+    //  - explicit: a clear file request (search/find/get the file, a locality cue like
+    //    "from my system", a filename with extension) OR a deterministic FileSearch
+    //    intent. These trigger the search AND, on a miss, a "couldn't find it" notice.
+    //  - soft: a likely file reference ("get form 1a", "what does X say", "contents of X").
+    //    These trigger the search too, but on a miss they silently continue so general
+    //    questions are not hijacked into a false "I couldn't find the file" answer.
+    // When web search already supplied context and the request wasn't an explicit file
+    // request, skip ambient search to avoid the two grounding sources clashing.
+    const explicitFileSearch = resolvedIntentKind === "FileSearch" || hasSearchKeywords(text);
+    const softFileSearch = softFileReference(text);
+    const wantsFileSearch = explicitFileSearch || softFileSearch;
     const skipForWebSearch = !!webSearchResult && !explicitFileSearch;
 
     if (ctx.chatMode === "text" && !attachedFile && wantsFileSearch && !skipForWebSearch) {
@@ -803,25 +806,43 @@ export async function executeHandleSend(
                   }
                 } catch (err) { console.warn("Excel schema read failed:", err); }
               }
-              // Default: use the backend snippet; if missing, read a small slice of the file.
-              if (rec.snippet && rec.snippet.trim().length > 0) {
-                sections.push(`File: "${filename}" (Path: ${rec.path})\nExcerpt: ${rec.snippet}`);
-              } else {
+              // Default: prefer the indexed parsed content (clean extracted text for
+              // pdf/docx/pptx/txt/md), then the query-relevant snippet, then a raw text
+              // slice for plain-text formats not in the content index. Raw byte reads are
+              // skipped for binary documents (pdf/docx/pptx) since they are not readable text.
+              let body = "";
+              try {
+                const cached = await Api.getAmbientFileContent(rec.path);
+                if (cached && cached.trim().length > 0) {
+                  body = cached.substring(0, 8192);
+                }
+              } catch (err) { console.warn("indexed content read failed:", err); }
+              if (!body && rec.snippet && rec.snippet.trim().length > 0) {
+                body = rec.snippet;
+              }
+              if (!body && !/\.(pdf|docx|pptx|doc|ppt)$/i.test(rec.path)) {
                 try {
                   const fileContent = await Api.readFileText(rec.path);
-                  sections.push(`File: "${filename}" (Path: ${rec.path}, first 4KB):\n${fileContent.substring(0, 4096)}`);
+                  body = fileContent.substring(0, 4096);
                 } catch (err) { console.warn("text read failed:", err); }
+              }
+              if (body.trim().length > 0) {
+                sections.push(`File: "${filename}" (Path: ${rec.path})\nContent:\n${body}`);
               }
             }
 
             if (sections.length > 0) {
-              // Surface the best match to the user, like the old discovery message.
+              // Surface the best match in the chat UI only (not sent to the LLM — see
+              // fullSessionMessages below and isDiscoveryNotice in contextCompaction).
               const bestName = top[0].path.split(/[/\\]/).pop() ?? "file";
               attachedFile = top[0].path;
-              const fileUrl = "file:///" + top[0].path.replace(/\\/g, "/").split("/").map(encodeURIComponent).join("/");
+              const normalizedPath = top[0].path.replace(/\\/g, "/");
+              const fileUrl = normalizedPath.startsWith("/")
+                ? `file://${normalizedPath}`
+                : `file:///${normalizedPath}`;
               discoveryMsg = {
                 role: "assistant" as const,
-                content: `🔍 Found ${top.length} matching file(s). Top match: **${bestName}**\nPath: [${top[0].path}](${fileUrl})`,
+                content: `${AMBIENT_FOUND_PREFIX} ${top.length} matching file(s). Top match: **${bestName}**\nPath: [${top[0].path}](${fileUrl})`,
               };
               ctx.updateSession(sid, (prev) => ({ messages: [...prev.messages, discoveryMsg!] }));
               ambientFileContext =
@@ -832,9 +853,10 @@ export async function executeHandleSend(
           console.warn("Ambient search in standard chat failed:", err);
         }
 
-        // If file search intent was detected but no file was found/read,
-        // inject a system message to prevent the model from hallucinating.
-        if (!ambientFileContext && !attachedFile) {
+        // If an EXPLICIT file request found nothing, tell the model the file is missing
+        // so it doesn't hallucinate file contents. For a soft reference that missed, we
+        // leave the context empty and let the model answer the query normally.
+        if (!ambientFileContext && !attachedFile && explicitFileSearch) {
           ambientFileContext = "FILE_SEARCH_NO_RESULTS";
         }
       }
@@ -859,21 +881,44 @@ export async function executeHandleSend(
     const fullSessionMessages: ChatMessage[] = [
       ...sessionMessages,
       newMsg,
-      ...(discoveryMsg ? [discoveryMsg] : []),
+      // discoveryMsg is UI-only; omit it here so the LLM sees user as the last turn.
     ];
     let apiMessages = toContextMessages(fullSessionMessages);
 
-    // Prepend ambient file search context as a system message so the model has the file contents
+    // Inject ambient file search results. The retrieved document text goes into the
+    // FINAL USER message (not a system message): small local models weight the current
+    // user turn far more heavily, and wording like "you have access to local files"
+    // tends to trip their "I can't access your files" guardrail. The document text is
+    // presented inline as the source of truth — mirroring the direct-document path.
     if (ambientFileContext === "FILE_SEARCH_NO_RESULTS") {
       apiMessages = [
-        { role: "system", content: "The user appears to be asking about a specific file on their system. A search of the local file index returned no matching files. Tell the user that you could not find the file they are looking for. Do NOT make up information or pretend to have read the file. Suggest they check the filename or attach the file directly." },
+        { role: "system", content: "The user asked about a specific file, but a search of the indexed files returned no match. Tell the user you could not find that file. Do NOT make up its contents or pretend to have read it. Suggest they check the filename or attach the file directly." },
         ...apiMessages,
       ];
     } else if (ambientFileContext) {
       apiMessages = [
-        { role: "system", content: `You have access to the following local file content retrieved from the user's system:\n\n${ambientFileContext}\n\nUse this information to answer the user's query.` },
+        {
+          role: "system",
+          content:
+            "You are a helpful assistant. The user's message includes the text of one or more documents that were found for them. " +
+            "Treat that document text as the authoritative source and answer the user's request directly from it — summarize or explain its contents in clear prose. " +
+            "Do not say you cannot access files; the relevant text is provided to you below. If the provided text does not contain the answer, say so plainly.",
+        },
         ...apiMessages,
       ];
+      // Fold the document text into the last user message so the model reads it as part
+      // of the current request rather than as background context it might ignore.
+      for (let i = apiMessages.length - 1; i >= 0; i--) {
+        if (apiMessages[i].role === "user") {
+          apiMessages[i] = {
+            ...apiMessages[i],
+            content:
+              `${apiMessages[i].content}\n\n` +
+              `--- Retrieved document text (source of truth) ---\n${ambientFileContext}\n--- End of document text ---`,
+          };
+          break;
+        }
+      }
     }
 
     // Prepend web search context as a system message so the model can cite it
@@ -1054,8 +1099,8 @@ async function handleArtifactGeneration(
 
     let attachedFile = ctx.directDocumentPaths.length > 0 ? ctx.directDocumentPaths[0] : null;
 
-    // Proactive ambient FTS5 search if no file is attached but query requests finding files
-    if (!attachedFile && hasSearchKeywords(text)) {
+    // Proactive ambient FTS5 search if no file is attached but query references a file
+    if (!attachedFile && (hasSearchKeywords(text) || softFileReference(text))) {
       updateArtifactMsg("SearchingDisk");
       const searchQuery = extractSearchQuery(text);
       try {
@@ -1066,7 +1111,6 @@ async function handleArtifactGeneration(
             const best = top[0];
             attachedFile = best.path;
             const filename = attachedFile.split(/[/\\]/).pop() ?? "file";
-            const fileUrl = "file:///" + best.path.replace(/\\/g, "/").split("/").map(encodeURIComponent).join("/");
             ctx.updateSession(sid, (prev) => ({
               messages: [
                 ...prev.messages,
@@ -1112,8 +1156,19 @@ async function handleArtifactGeneration(
           console.warn("Failed to query Excel metadata cache:", err);
         }
       } else {
-        // Plain text files
+        // Documents/plain text: prefer indexed parsed content (handles pdf/docx/pptx),
+        // then a raw text slice for plain-text formats not in the content index.
         if (!ambientFileContent) {
+          try {
+            const cached = await Api.getAmbientFileContent(attachedFile);
+            if (cached && cached.trim().length > 0) {
+              ambientFileContent = cached.substring(0, 10240);
+            }
+          } catch (err) {
+            console.warn("Failed to query indexed content cache:", err);
+          }
+        }
+        if (!ambientFileContent && !/\.(pdf|docx|pptx|doc|ppt)$/i.test(attachedFile)) {
           try {
             const fileContent = await Api.readFileText(attachedFile);
             ambientFileContent = fileContent.substring(0, 10240);
@@ -1786,9 +1841,25 @@ function repairNestedKeys(obj: any): any {
   return repaired;
 }
 
+// Explicit, unambiguous request for a local file. A miss here yields a
+// "couldn't find the file" notice so the model does not invent file contents.
 function hasSearchKeywords(text: string): boolean {
-  const searchKeywordsRegex = /\b(search\w*|find\w*|locat\w+|look\s*up|read\w*|where\s+(is|are)|get\s+(the|file|document)|open\s+file|retriev\w*)\b/i;
-  return searchKeywordsRegex.test(text);
+  const explicitVerb = /\b(search\w*|find\w*|locat\w+|look\s*up|retriev\w*|open\s+(the\s+)?file|(get|read|show|open)\s+(me\s+)?(the\s+)?(file|document|doc|pdf|sheet|spreadsheet|presentation|slides?))\b/i;
+  // Locality cue: the user points at their own machine/storage.
+  const locality = /\b(my\s+(system|files?|computer|laptop|pc|disk|drive|machine|documents?|downloads?|desktop)|on\s+my\s+(system|computer|laptop|pc|machine|disk|drive)|from\s+my\s+(system|files?|computer|laptop|pc|disk|drive)|in\s+my\s+files?)\b/i;
+  // A concrete filename with a known document extension.
+  const filename = /\b[\w-]+\.(pdf|docx?|pptx?|xlsx?|xls|csv|tsv|txt|md|json|rtf|odt|ods)\b/i;
+  return explicitVerb.test(text) || locality.test(text) || filename.test(text);
+}
+
+// Softer signal that the user may be referring to a local file (imperative "get/open X",
+// or content questions like "what does X say", "contents of X"). Triggers a search, but a
+// miss is non-fatal: the model answers normally instead of claiming the file is missing.
+function softFileReference(text: string): boolean {
+  const imperative = /^\s*(get|grab|fetch|pull\s*up|bring\s*up|open|read|access|show|display)\b/i;
+  const askContent = /what('?s| is| does| are)\b[\s\S]*\b(say|says|said|contain|contains|mention|mentions|state|states|about|in\s+it|inside)\b/i;
+  const contents = /\b(what'?s\s+in\b|what\s+is\s+in\b|contents?\s+of\b|summar(?:y|ize|ise|izing|ising)\b)/i;
+  return imperative.test(text) || askContent.test(text) || contents.test(text);
 }
 
 

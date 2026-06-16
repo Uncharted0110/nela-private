@@ -30,6 +30,7 @@ applyTo: "genhat-desktop/src-tauri/src/**/*.rs"
 - The FTS5 table is structured as `files_fts(name, location, content, path UNINDEXED)`.
 - Reranking uses `TaskRouter` and `grade_request` to route passages through the `ms-marco-grader` cross-encoder.
 - The `search_ambient_files` Tauri command takes `TaskRouterState` to retrieve ranked files.
+- `db.rs` `search_candidates` = BM25 with weighted columns `name`/`location`/`content` + AND-first/OR-fallback; `rank.rs` `search_ranked` reranks the top candidates with the in-process `ms-marco-grader` cross-encoder via `router::tasks::grade_request`, deadline-guarded, then thresholds to top-K. The rerank passage feeds the cross-encoder filename + 2-parent-dir `location` + content snippet. Code files index filename + 2 parent dirs only (no body).
 
 # Verification
 

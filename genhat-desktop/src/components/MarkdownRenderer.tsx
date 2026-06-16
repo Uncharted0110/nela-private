@@ -27,6 +27,21 @@ function extractText(node: React.ReactNode): string {
   return "";
 }
 
+/** Normalize a local filesystem path decoded from a file:// href or raw path. */
+function normalizeLocalPath(href: string): string {
+  let path = href;
+  if (path.startsWith("file://")) {
+    path = decodeURIComponent(path.replace(/^file:\/\//, ""));
+    // file:///C:/path on Windows → C:/path
+    if (/^\/[a-zA-Z]:/.test(path)) {
+      path = path.substring(1);
+    }
+  }
+  // Windows paths use backslashes; Unix paths must keep forward slashes.
+  const isWindowsPath = /^[a-zA-Z]:[/\\]/.test(path) || path.includes("\\");
+  return isWindowsPath ? path.replace(/\//g, "\\") : path.replace(/\\/g, "/");
+}
+
 /**
  * Copy-to-clipboard button for code blocks.
  */
@@ -106,22 +121,13 @@ const markdownComponents: Components = {
     const handleClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
       if (isLocalFile && href) {
         e.preventDefault();
-        // Decode file:// URI or clean raw Windows path to standard windows file path
-        let path = href;
-        if (path.startsWith("file://")) {
-          path = decodeURIComponent(path.replace(/^file:\/\/\/?/, ""));
-          // On Windows, "/C:/path" -> "C:/path"
-          if (/^\/[a-zA-Z]:/.test(path)) {
-            path = path.substring(1);
-          }
-        }
-        path = path.replace(/\//g, "\\");
-        
-        Api.revealInExplorer(path).catch((err) => {
-          console.error("Failed to reveal local path:", err);
-          // Fallback to standard openPath in case custom command fails
-          openPath(path).catch((openErr) =>
-            console.error("Failed to open local path fallback:", openErr)
+        const path = normalizeLocalPath(href);
+        // Open the file with the OS default app (PDF viewer, etc.).
+        openPath(path).catch((openErr) => {
+          console.error("Failed to open local file:", openErr);
+          // Fallback: reveal in file manager (select file on Windows/macOS, parent dir on Linux).
+          Api.revealInExplorer(path).catch((err) =>
+            console.error("Failed to reveal local path:", err)
           );
         });
       }
