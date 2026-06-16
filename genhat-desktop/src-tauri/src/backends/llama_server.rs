@@ -89,13 +89,7 @@ impl LlamaServerBackend {
 /// Uses the shared `paths::resolve_bundled_binary` helper which checks both
 /// dev locations (ancestor walk) and production Tauri resource directories.
 fn resolve_llama_exe() -> Result<PathBuf, String> {
-    let os_folder = if cfg!(windows) {
-        "llama-win"
-    } else if cfg!(target_os = "macos") {
-        "llama-mac"
-    } else {
-        "llama-lin"
-    };
+    let os_folder = crate::paths::llama_os_folder();
 
     let exe_names: Vec<&str> = if cfg!(windows) {
         vec!["llama-server.exe"]

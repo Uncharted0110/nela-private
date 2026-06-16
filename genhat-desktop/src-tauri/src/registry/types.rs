@@ -4,7 +4,7 @@
 //! process manager, router, and commands.
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::process::Child;
 use std::sync::Arc;
@@ -241,6 +241,37 @@ impl ModelDef {
     /// Convenience: returns `true` when every required file is present.
     pub fn files_exist(&self, models_dir: &Path) -> bool {
         self.missing_files(models_dir).is_empty()
+    }
+
+    /// Relative paths (under the models directory) owned by this model install.
+    pub fn owned_relative_paths(&self) -> Vec<String> {
+        let mut paths = BTreeSet::new();
+        paths.insert(self.model_file.clone());
+        for dest in self.hf_files.keys() {
+            paths.insert(dest.clone());
+        }
+        for (key, val) in &self.params {
+            if key.ends_with("_file") {
+                paths.insert(val.clone());
+            }
+        }
+        paths.into_iter().collect()
+    }
+
+    /// Whether another model definition references the same relative path.
+    pub fn references_relative_path(&self, rel_path: &str) -> bool {
+        if self.model_file == rel_path {
+            return true;
+        }
+        if self.hf_files.contains_key(rel_path) {
+            return true;
+        }
+        for (key, val) in &self.params {
+            if key.ends_with("_file") && val == rel_path {
+                return true;
+            }
+        }
+        false
     }
 }
 

@@ -81,13 +81,7 @@ fn resolve_mmproj_path(models_dir: &Path, model_file: &str, mmproj_ref: &str) ->
 }
 
 /// Platform-specific constants.
-const OS_FOLDER: &str = if cfg!(target_os = "windows") {
-    "llama-win"
-} else if cfg!(target_os = "macos") {
-    "llama-mac"
-} else {
-    "llama-lin"
-};
+const OS_FOLDER: &str = crate::paths::llama_os_folder();
 
 const EXE_NAME: &str = if cfg!(target_os = "windows") {
     "llama-mtmd-cli.exe"

@@ -134,6 +134,21 @@ fn main() {
             // 2b. Kill stale llama-server processes from previous app runs
             app_lib::backends::llama_server::kill_stale_llama_servers();
 
+            let app_data_dir = app
+                .path()
+                .app_data_dir()
+                .unwrap_or_else(|_| std::path::PathBuf::from(".genhat_data"));
+            let llama_runtime_dir = app_data_dir.join("llama-runtime");
+            app_lib::paths::init_llama_runtime_root(llama_runtime_dir.clone());
+
+            let llama_runtime_for_update = llama_runtime_dir.clone();
+            tauri::async_runtime::spawn(async move {
+                match app_lib::llama_updater::maybe_update_llama(&llama_runtime_for_update).await {
+                    Ok(()) => log::info!("llama.cpp runtime update check finished"),
+                    Err(err) => log::warn!("llama.cpp auto-update skipped: {err}"),
+                }
+            });
+
             // 3. Initialize the process manager
             let process_manager = Arc::new(ProcessManager::new(&registry, models_dir));
 
@@ -178,11 +193,6 @@ fn main() {
             }
 
             // 7. Initialize workspace manager
-            let app_data_dir = app
-                .path()
-                .app_data_dir()
-                .unwrap_or_else(|_| std::path::PathBuf::from(".genhat_data"));
-
             let workspace_manager = Arc::new(
                 WorkspaceManager::new(&app_data_dir)
                     .expect("Failed to initialize workspace manager"),

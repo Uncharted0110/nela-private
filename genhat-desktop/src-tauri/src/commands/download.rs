@@ -1,6 +1,6 @@
 use crate::commands::models::ProcessManagerState;
 use crate::registry::custom;
-use crate::registry::types::TaskType;
+use crate::registry::types::{ModelDef, ModelInfo, TaskType};
 use futures_util::StreamExt;
 use reqwest::Client;
 use std::fs::File;
@@ -63,6 +63,113 @@ pub async fn cancel_download(
     Ok(())
 }
 
+fn resolve_under_models_dir(models_dir: &Path, rel_or_abs: &str) -> PathBuf {
+    let path = Path::new(rel_or_abs);
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        models_dir.join(path)
+    }
+}
+
+fn remove_path_if_exists(path: &Path) {
+    if !path.exists() {
+        return;
+    }
+    if path.is_dir() {
+        let _ = std::fs::remove_dir_all(path);
+    } else {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+fn prune_empty_parents_up_to(child: &Path, stop_at: &Path) {
+    let mut current = match child.parent() {
+        Some(parent) => parent.to_path_buf(),
+        None => return,
+    };
+
+    while current.starts_with(stop_at) && current != stop_at {
+        let mut has_visible_entries = false;
+        if let Ok(entries) = std::fs::read_dir(&current) {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                if !name.starts_with('.') {
+                    has_visible_entries = true;
+                    break;
+                }
+            }
+        }
+
+        if has_visible_entries {
+            break;
+        }
+
+        let parent = match current.parent() {
+            Some(parent) => parent.to_path_buf(),
+            None => break,
+        };
+
+        if std::fs::remove_dir(&current).is_err() {
+            break;
+        }
+        current = parent;
+    }
+}
+
+fn model_info_references_relative_path(info: &ModelInfo, rel_path: &str) -> bool {
+    if info.model_file == rel_path {
+        return true;
+    }
+    for (key, val) in &info.params {
+        if key.ends_with("_file") && val == rel_path {
+            return true;
+        }
+    }
+    false
+}
+
+fn path_referenced_by_other_model(others: &[ModelInfo], rel_path: &str) -> bool {
+    others
+        .iter()
+        .any(|other| model_info_references_relative_path(other, rel_path))
+}
+
+fn delete_model_payload(
+    def: &ModelDef,
+    models_dir: &Path,
+    others: &[ModelInfo],
+) {
+    if let Some(container) = def
+        .params
+        .get("container_path")
+        .filter(|value| !value.trim().is_empty())
+    {
+        let container_path = resolve_under_models_dir(models_dir, container);
+        remove_path_if_exists(&container_path);
+        prune_empty_parents_up_to(&container_path, models_dir);
+        return;
+    }
+
+    let mut owned_paths = def.owned_relative_paths();
+    owned_paths.sort_by_key(|path| std::cmp::Reverse(path.matches('/').count()));
+
+    for rel_path in owned_paths {
+        if path_referenced_by_other_model(others, &rel_path) {
+            continue;
+        }
+
+        let abs_path = resolve_under_models_dir(models_dir, &rel_path);
+        let parent_for_prune = abs_path.parent().map(|p| p.to_path_buf());
+        remove_path_if_exists(&abs_path);
+
+        if let Some(parent) = parent_for_prune {
+            prune_empty_parents_up_to(&parent, models_dir);
+        }
+    }
+}
+
 #[tauri::command]
 pub async fn uninstall_model(
     model_id: String,
@@ -74,19 +181,9 @@ pub async fn uninstall_model(
         .get_model_def(&model_id)
         .await
         .ok_or_else(|| format!("Model not found: {}", model_id))?;
-        
+
     let models_dir = crate::paths::resolve_models_dir();
-    let model_path = models_dir.join(&def.model_file);
-    let name_scope_dir = {
-        let mut comps = std::path::Path::new(&def.model_file).components();
-        match (comps.next(), comps.next()) {
-            (Some(Component::Normal(category)), Some(Component::Normal(name))) => {
-                Some(models_dir.join(category).join(name))
-            }
-            _ => None,
-        }
-    };
-    
+
     let is_custom = custom::is_custom_model(&models_dir, &model_id).unwrap_or(false);
     let is_disk_scanned = def
         .params
@@ -94,42 +191,19 @@ pub async fn uninstall_model(
         .map(|v| v == "disk_scan")
         .unwrap_or(false);
 
+    let other_models: Vec<ModelInfo> = state
+        .0
+        .list_models()
+        .await
+        .into_iter()
+        .filter(|model| model.id != model_id)
+        .collect();
+
     // Attempt to stop the model before deleting
     let _ = state.0.stop_model(&model_id).await;
 
-    // Delete the model at <category>/<name>/... by removing the <name> folder.
-    // This preserves the category folder itself.
-    let mut removed_name_scope = false;
-    if let Some(name_dir) = &name_scope_dir {
-        if name_dir.exists() {
-            let _ = std::fs::remove_dir_all(name_dir);
-            removed_name_scope = true;
-        }
-    }
+    delete_model_payload(&def, &models_dir, &other_models);
 
-    // Fallback for models that do not follow <category>/<name>/... layout.
-    if !removed_name_scope && model_path.exists() {
-        if model_path.is_dir() {
-            let _ = std::fs::remove_dir_all(&model_path);
-        } else {
-            let _ = std::fs::remove_file(&model_path);
-        }
-    }
-    
-    // Delete any additional files specified in params (e.g. mmproj_file)
-    for (key, val) in &def.params {
-        if key.ends_with("_file") {
-            let p = models_dir.join(val);
-            if p.exists() {
-                if p.is_dir() {
-                    let _ = std::fs::remove_dir_all(&p);
-                } else {
-                    let _ = std::fs::remove_file(&p);
-                }
-            }
-        }
-    }
-    
     if is_custom || is_disk_scanned {
         let _ = state.0.unregister_model(&model_id).await;
         if is_custom {
@@ -1296,5 +1370,131 @@ pub fn check_custom_file_exists(
 
     let model_path = models_dir.join(container_rel).join(file_rel);
     model_path.exists()
+}
+
+#[cfg(test)]
+mod uninstall_tests {
+    use super::*;
+    use crate::registry::types::{BackendKind, ModelDef, ModelKind, ModelStatus};
+    use std::collections::HashMap;
+
+    fn minimal_def(model_file: &str, params: HashMap<String, String>) -> ModelDef {
+        ModelDef {
+            id: "test".into(),
+            name: "Test".into(),
+            backend: BackendKind::LlamaServer,
+            kind: ModelKind::ChildProcess,
+            model_file: model_file.into(),
+            tasks: vec![],
+            auto_start: false,
+            max_instances: 1,
+            idle_timeout_s: 0,
+            priority: 1,
+            memory_mb: 1,
+            gdrive_id: None,
+            is_zip: false,
+            hf_repo: None,
+            hf_file: None,
+            hf_files: HashMap::new(),
+            params,
+            task_priorities: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn uninstall_disk_scan_container_preserves_sibling_repos() {
+        let root =
+            std::env::temp_dir().join(format!("genhat-uninstall-container-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        let target = root.join("LLM/unsloth/Qwen3.5-0.8B-GGUF/model.gguf");
+        let sibling = root.join("LLM/unsloth/Qwen3.5-2B-GGUF/model.gguf");
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(sibling.parent().unwrap()).unwrap();
+        std::fs::write(&target, b"target").unwrap();
+        std::fs::write(&sibling, b"sibling").unwrap();
+
+        let mut params = HashMap::new();
+        params.insert(
+            "container_path".into(),
+            "LLM/unsloth/Qwen3.5-0.8B-GGUF".into(),
+        );
+        let def = minimal_def("LLM/unsloth/Qwen3.5-0.8B-GGUF/model.gguf", params);
+
+        delete_model_payload(&def, &root, &[]);
+
+        assert!(!target.exists());
+        assert!(sibling.exists());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn uninstall_registry_model_only_removes_owned_paths() {
+        let root =
+            std::env::temp_dir().join(format!("genhat-uninstall-owned-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        let target = root.join("LLM/LFM-1.2B-INT8.gguf");
+        let sibling = root.join("LLM/Qwen3.5-2B-Q4_K_M.gguf");
+        std::fs::create_dir_all(root.join("LLM")).unwrap();
+        std::fs::write(&target, b"target").unwrap();
+        std::fs::write(&sibling, b"sibling").unwrap();
+
+        let def = minimal_def("LLM/LFM-1.2B-INT8.gguf", HashMap::new());
+        delete_model_payload(&def, &root, &[]);
+
+        assert!(!target.exists());
+        assert!(sibling.exists());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn uninstall_skips_shared_companion_files() {
+        let root =
+            std::env::temp_dir().join(format!("genhat-uninstall-shared-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        let model = root.join("LLM/model.gguf");
+        let mmproj = root.join("LLM/mmproj.gguf");
+        std::fs::create_dir_all(root.join("LLM")).unwrap();
+        std::fs::write(&model, b"model").unwrap();
+        std::fs::write(&mmproj, b"mmproj").unwrap();
+
+        let mut params = HashMap::new();
+        params.insert("mmproj_file".into(), "LLM/mmproj.gguf".into());
+        let def = minimal_def("LLM/model.gguf", params);
+
+        let other = ModelInfo {
+            id: "mmproj-model".into(),
+            name: "mmproj".into(),
+            backend: "llama_cli".into(),
+            kind: "child_process".into(),
+            model_file: "LLM/mmproj.gguf".into(),
+            tasks: vec![],
+            status: ModelStatus::Unloaded,
+            instance_count: 0,
+            memory_mb: 1,
+            gdrive_id: None,
+            is_zip: false,
+            priority: 1,
+            is_downloaded: true,
+            model_source: "builtin".into(),
+            model_profile: None,
+            engine_adapter: None,
+            params: HashMap::new(),
+        };
+
+        delete_model_payload(&def, &root, &[other]);
+
+        assert!(!model.exists());
+        assert!(mmproj.exists());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }
 

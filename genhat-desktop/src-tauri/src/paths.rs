@@ -16,9 +16,32 @@
 //! any ancestor.  This module adds the Tauri resource directory to the search.
 
 use std::path::PathBuf;
+use std::sync::OnceLock;
 
 /// The Tauri product name (must match `productName` in tauri.conf.json).
 const PRODUCT_NAME: &str = "NELA";
+
+static RUNTIME_LLAMA_ROOT: OnceLock<PathBuf> = OnceLock::new();
+
+/// Register the writable llama.cpp runtime directory (typically app data).
+pub fn init_llama_runtime_root(root: PathBuf) {
+    let _ = RUNTIME_LLAMA_ROOT.set(root);
+}
+
+fn runtime_llama_root() -> Option<&'static PathBuf> {
+    RUNTIME_LLAMA_ROOT.get()
+}
+
+/// OS-specific folder name for llama.cpp binaries under a bin root.
+pub const fn llama_os_folder() -> &'static str {
+    if cfg!(windows) {
+        "llama-win"
+    } else if cfg!(target_os = "macos") {
+        "llama-mac"
+    } else {
+        "llama-lin"
+    }
+}
 
 /// Collect all candidate directories that might contain bundled files.
 ///
@@ -31,6 +54,17 @@ const PRODUCT_NAME: &str = "NELA";
 ///   3. All ancestors of `current_exe()` ×  `{src-tauri/bin, bin, resources/bin}`
 pub fn candidate_bin_dirs() -> Vec<PathBuf> {
     let mut dirs = Vec::new();
+
+    if let Ok(custom) = std::env::var("GENHAT_LLAMA_RUNTIME_DIR") {
+        let custom = PathBuf::from(custom);
+        if custom.is_dir() {
+            dirs.push(custom);
+        }
+    } else if let Some(runtime_root) = runtime_llama_root() {
+        if runtime_root.is_dir() {
+            dirs.push(runtime_root.clone());
+        }
+    }
 
     let exe_path = match std::env::current_exe() {
         Ok(p) => p,

@@ -15,6 +15,7 @@
 
 pub mod config;
 pub mod paths;
+pub mod llama_updater;
 pub mod registry;
 pub mod backends;
 pub mod process;
