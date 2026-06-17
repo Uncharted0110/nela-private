@@ -15,6 +15,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import type { ChatSession, IngestionStatus, WatchedPath, ScanProgress } from "../types";
 import { VIEWABLE_EXTS } from "../app/constants";
 import { formatPageLabel } from "../app/mindmapUtils";
+import { COPY } from "../app/copy";
 import {
   addWatchedPath,
   removeWatchedPath,
@@ -35,6 +36,28 @@ interface KnowledgeBaseSidebarProps {
   onDeleteRagDoc: (docId: number) => void;
 }
 
+/** Map internal ingestion phase + placeholder state to a friendly status. */
+function friendlyDocStatus(phase: string, isPlaceholder: boolean): {
+  label: string;
+  tone: "adding" | "ready" | "enhanced";
+} {
+  if (isPlaceholder) return { label: COPY.docStateAdding, tone: "adding" };
+  if (phase.includes("phase2_complete")) return { label: COPY.docStateEnhanced, tone: "enhanced" };
+  if (phase.includes("phase2")) return { label: COPY.docStateReady, tone: "ready" };
+  return { label: COPY.docStateReady, tone: "ready" };
+}
+
+function relevanceLabelFromGradeOrScore(grade: number | null | undefined, score: number): string {
+  if (typeof grade === "number") {
+    if (grade >= 4) return COPY.relevanceHigh;
+    if (grade >= 3) return COPY.relevanceMedium;
+    return COPY.relevanceLow;
+  }
+  if (score >= 0.03) return COPY.relevanceHigh;
+  if (score >= 0.015) return COPY.relevanceMedium;
+  return COPY.relevanceLow;
+}
+
 export default function KnowledgeBaseSidebar({
   docPanelOpen,
   ragIngesting,
@@ -51,7 +74,6 @@ export default function KnowledgeBaseSidebar({
   const [scanProgress, setScanProgress] = useState<ScanProgress | null>(null);
   const [scanning, setScanning] = useState(false);
 
-  // Load watched paths when the panel opens
   useEffect(() => {
     if (!docPanelOpen) return;
     listWatchedPaths()
@@ -61,7 +83,6 @@ export default function KnowledgeBaseSidebar({
       });
   }, [docPanelOpen]);
 
-  // Subscribe to scan progress events
   useEffect(() => {
     const unlistenPromise = listen<ScanProgress>("rag:scan_progress", (event) => {
       setScanProgress(event.payload);
@@ -123,12 +144,13 @@ export default function KnowledgeBaseSidebar({
               <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
               <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
             </svg>
-            Knowledge Base
+            {COPY.libraryTitle}
           </div>
           <button
             className="glass-btn bg-transparent! border border-transparent! text-txt-muted! cursor-pointer p-1.5! rounded-lg! flex items-center justify-center transition-all duration-200 hover:text-txt! hover:border-glass-border! hover:bg-void-700!"
             onClick={onClosePanel}
             title="Close panel"
+            aria-label="Close document library"
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <line x1="18" y1="6" x2="6" y2="18" />
@@ -141,29 +163,31 @@ export default function KnowledgeBaseSidebar({
           <button
             onClick={onIngestFile}
             disabled={ragIngesting}
+            aria-label={COPY.addDocumentsTitle}
             className="glass-btn inline-flex items-center gap-1.5 py-1.5 px-3 text-[0.78rem] font-medium rounded-lg cursor-pointer text-txt-secondary border border-glass-border transition-all duration-200 hover:text-txt hover:border-neon hover:shadow-[0_0_12px_rgba(0,212,255,0.1)] disabled:opacity-45 disabled:cursor-not-allowed"
           >
-            <FileText size={14} /> Add Files
+            <FileText size={14} /> {COPY.addDocumentsTitle}
           </button>
           <button
             onClick={onIngestDir}
             disabled={ragIngesting}
+            aria-label={COPY.addFolderTitle}
             className="glass-btn inline-flex items-center gap-1.5 py-1.5 px-3 text-[0.78rem] font-medium rounded-lg cursor-pointer text-txt-secondary border border-glass-border transition-all duration-200 hover:text-txt hover:border-neon hover:shadow-[0_0_12px_rgba(0,212,255,0.1)] disabled:opacity-45 disabled:cursor-not-allowed"
           >
-            <FolderOpen size={14} /> Add Folder
+            <FolderOpen size={14} /> {COPY.addFolderTitle}
           </button>
         </div>
 
         {(ragIngesting || enrichmentStatus) && (
           <div className="flex items-center gap-2 py-2 px-4 shrink-0">
             {ragIngesting && (
-              <span className="inline-flex items-center gap-1.5 py-0.5 px-2.5 rounded-full text-[0.72rem] font-medium bg-[rgba(251,191,36,0.1)] text-warning">
-                <Loader2 size={12} className="spin" /> Ingesting...
+              <span className="inline-flex items-center gap-1.5 py-0.5 px-2.5 rounded-full text-[0.78rem] font-medium bg-[rgba(251,191,36,0.1)] text-warning">
+                <Loader2 size={12} className="spin" /> {COPY.processing}
               </span>
             )}
             {enrichmentStatus && (
-              <span className="inline-flex items-center gap-1.5 py-0.5 px-2.5 rounded-full text-[0.72rem] font-medium bg-[rgba(34,197,94,0.1)] text-success">
-                <CheckCircle2 size={12} /> {enrichmentStatus}
+              <span className="inline-flex items-center gap-1.5 py-0.5 px-2.5 rounded-full text-[0.78rem] font-medium bg-[rgba(34,197,94,0.1)] text-success">
+                <CheckCircle2 size={12} /> {COPY.docStateEnhanced}
               </span>
             )}
           </div>
@@ -172,7 +196,7 @@ export default function KnowledgeBaseSidebar({
         <div className="kb-sidebar-docs flex-1 overflow-y-auto p-2">
           {ragDocs.length === 0 ? (
             <p className="text-txt-muted text-[0.82rem] m-1">
-              No documents ingested yet. Use the buttons above to add files.
+              {COPY.libraryEmpty}
             </p>
           ) : (
             <div className="flex flex-col gap-1">
@@ -180,22 +204,26 @@ export default function KnowledgeBaseSidebar({
                 const ext = doc.file_path?.split(".").pop()?.toLowerCase() || "";
                 const isViewable = ext === "pdf" || VIEWABLE_EXTS.has(ext);
                 const isPlaceholder = doc.doc_id < 0;
+                const status = friendlyDocStatus(doc.phase, isPlaceholder);
+                const statusClass =
+                  status.tone === "adding"
+                    ? "bg-[rgba(251,191,36,0.15)] text-warning"
+                    : status.tone === "enhanced"
+                      ? "bg-[rgba(34,197,94,0.15)] text-success"
+                      : "bg-[rgba(0,212,255,0.1)] text-neon";
                 return (
                   <div
                     key={doc.doc_id}
-                    className={`flex items-center gap-2 py-2 px-2.5 bg-void-700 rounded-lg text-[0.78rem] border border-transparent transition-colors duration-150 flex-wrap hover:border-glass-border ${isViewable ? "cursor-pointer hover:bg-[rgba(0,212,255,0.06)] hover:border-[rgba(0,212,255,0.2)]" : ""}`}
+                    className={`flex items-center gap-2 py-2 px-2.5 bg-void-700 rounded-lg text-[0.78rem] border border-transparent transition-colors duration-150 flex-wrap hover:border-glass-border ${isViewable ? "cursor-pointer hover:bg-neon-subtle hover:border-neon/20" : ""}`}
                     onClick={() => isViewable && onOpenDocViewer(doc)}
                     title={isViewable ? `Click to view ${ext.toUpperCase()}` : doc.title}
                   >
                     <FileText size={14} className="text-txt-muted shrink-0" />
                     <span className="flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-txt font-medium text-[0.78rem]">{doc.title}</span>
-                    {!isPlaceholder && (
-                      <span className="text-txt-muted text-[0.7rem] whitespace-nowrap">{doc.total_chunks} chunks</span>
-                    )}
-                    <span className={`py-0.5 px-2 rounded-full text-[0.65rem] font-semibold whitespace-nowrap capitalize ${doc.phase.includes("phase2_complete") ? "bg-[rgba(34,197,94,0.15)] text-success" : "bg-[rgba(0,212,255,0.1)] text-[#66e5ff]"}`}>
-                      {isPlaceholder ? (
-                        <span className="inline-flex items-center gap-1"><Loader2 size={10} className="animate-spin" /> ingesting</span>
-                      ) : doc.phase.replace(/_/g, " ")}
+                    <span className={`inline-flex items-center gap-1 py-0.5 px-2 rounded-full text-[0.78rem] font-semibold whitespace-nowrap ${statusClass}`}>
+                      {status.tone === "adding" && <Loader2 size={10} className="animate-spin" />}
+                      {status.tone === "enhanced" && <CheckCircle2 size={10} />}
+                      {status.label}
                     </span>
                     {!isPlaceholder && (
                       <button
@@ -205,6 +233,7 @@ export default function KnowledgeBaseSidebar({
                         }}
                         className="p-1! bg-transparent! text-txt-muted! border-none! rounded! cursor-pointer flex items-center justify-center transition-all duration-150 hover:text-danger! hover:bg-[rgba(239,68,68,0.1)]!"
                         title="Remove document"
+                        aria-label="Remove document"
                       >
                         <Trash2 size={12} />
                       </button>
@@ -220,27 +249,29 @@ export default function KnowledgeBaseSidebar({
           <div className="kb-sidebar-sources border-t border-glass-border py-3 px-3 shrink-0 max-h-[250px] overflow-y-auto">
             <div className="flex items-center gap-1.5 mb-2 text-[0.82rem] text-txt-secondary">
               <FileText size={14} />
-              <strong>Sources ({activeSession.ragResult.sources.length})</strong>
+              <strong>{COPY.sourcesTitle} ({activeSession.ragResult.sources.length})</strong>
             </div>
             {activeSession.ragResult.sources.map((src, i) => (
               <details key={src.chunk_id} className="mb-1 text-[0.78rem]">
-                <summary className="cursor-pointer text-[#66e5ff] py-1 transition-colors duration-150 hover:text-[#99eeff]">
+                <summary className="cursor-pointer text-neon py-1 transition-colors duration-150 hover:text-neon-hover">
                   [Source {i + 1}] {src.doc_title}
                   {src.page_info ? `, ${formatPageLabel(src.page_info)}` : ""}{" "}
-                  (score: {src.score.toFixed(4)})
+                  ({relevanceLabelFromGradeOrScore(src.grade, src.score)})
                 </summary>
-                <pre className="whitespace-pre-wrap text-[0.72rem] text-txt-secondary p-2.5 bg-void-900 border border-glass-border rounded-lg mt-1 max-h-[150px] overflow-y-auto">{src.text}</pre>
+                <pre className="whitespace-pre-wrap text-[0.78rem] text-txt-secondary p-2.5 bg-void-900 border border-glass-border rounded-lg mt-1 max-h-[150px] overflow-y-auto">{src.text}</pre>
               </details>
             ))}
           </div>
         )}
 
-        {/* ── Watched Paths ─────────────────────────────────────── */}
         <div className="border-t border-glass-border mt-auto shrink-0">
           <div className="flex items-center justify-between px-3 pt-3 pb-1">
-            <div className="flex items-center gap-1.5 text-[0.82rem] font-semibold text-txt-secondary">
-              <FolderSearch size={14} />
-              Auto-scan Folders
+            <div>
+              <div className="flex items-center gap-1.5 text-[0.82rem] font-semibold text-txt-secondary">
+                <FolderSearch size={14} />
+                {COPY.syncFolderTitle}
+              </div>
+              <p className="text-[0.78rem] text-txt-muted mt-0.5 m-0">{COPY.syncFolderReassure}</p>
             </div>
             <div className="flex items-center gap-1">
               <button
@@ -248,13 +279,15 @@ export default function KnowledgeBaseSidebar({
                 onClick={handleScan}
                 disabled={scanning}
                 title="Re-scan watched folders"
+                aria-label="Re-scan folders"
               >
                 <RefreshCw size={12} className={scanning ? "animate-spin" : ""} />
               </button>
               <button
-                className="glass-btn bg-transparent! border border-transparent! text-[#66e5ff]! cursor-pointer p-1! rounded! flex items-center justify-center transition-all duration-200 hover:text-[#99eeff]! hover:bg-void-700!"
+                className="glass-btn bg-transparent! border border-transparent! text-neon! cursor-pointer p-1! rounded! flex items-center justify-center transition-all duration-200 hover:text-neon-hover! hover:bg-void-700!"
                 onClick={handleAddPath}
                 title="Add folder to watch"
+                aria-label="Add a folder to keep in sync"
               >
                 <PlusCircle size={13} />
               </button>
@@ -262,13 +295,13 @@ export default function KnowledgeBaseSidebar({
           </div>
 
           {watchedPaths.length === 0 ? (
-            <p className="text-[0.74rem] text-txt-muted px-3 pb-2 italic">
-              No folders watched. Add a folder to auto-ingest files.
+            <p className="text-[0.78rem] text-txt-muted px-3 pb-2 italic">
+              {COPY.syncFolderEmpty}
             </p>
           ) : (
             <ul className="px-3 pb-1 space-y-0.5 max-h-[120px] overflow-y-auto">
               {watchedPaths.map((wp) => (
-                <li key={wp.id} className="flex items-center justify-between gap-1 text-[0.75rem] text-txt-secondary group">
+                <li key={wp.id} className="flex items-center justify-between gap-1 text-[0.78rem] text-txt-secondary group">
                   <span className="truncate flex-1" title={wp.path}>
                     {wp.path.split(/[\\/]/).pop() || wp.path}
                   </span>
@@ -276,6 +309,7 @@ export default function KnowledgeBaseSidebar({
                     className="opacity-0 group-hover:opacity-100 transition-opacity text-txt-muted hover:text-red-400 p-0.5 rounded"
                     onClick={() => handleRemovePath(wp.path)}
                     title={`Remove ${wp.path}`}
+                    aria-label={`Remove folder ${wp.path.split(/[\\/]/).pop() || wp.path}`}
                   >
                     <X size={11} />
                   </button>
@@ -286,13 +320,13 @@ export default function KnowledgeBaseSidebar({
 
           {scanProgress && (
             <div className="px-3 pb-2">
-              <p className={`text-[0.72rem] truncate ${scanProgress.done ? "text-[#66e5ff]" : "text-txt-muted"}`}>
+              <p className={`text-[0.78rem] truncate ${scanProgress.done ? "text-neon" : "text-txt-muted"}`}>
                 {scanProgress.status}
               </p>
               {!scanProgress.done && scanProgress.found > 0 && (
                 <div className="w-full bg-void-900 rounded-full h-1 mt-1">
                   <div
-                    className="bg-[#66e5ff] h-1 rounded-full transition-all duration-300"
+                    className="bg-neon h-1 rounded-full transition-all duration-300"
                     style={{ width: `${Math.round(((scanProgress.ingested + scanProgress.skipped + scanProgress.errors) / scanProgress.found) * 100)}%` }}
                   />
                 </div>

@@ -140,6 +140,8 @@ export interface SourceChunk {
   doc_title: string;
   text: string;
   score: number;
+  /** Optional relevance grade (1-5) from the backend. */
+  grade?: number | null;
   /** Page/slide provenance from the original document (e.g. "page:3", "slide:2"). */
   page_info?: string;
 }
@@ -153,6 +155,7 @@ export interface SearchHit {
   title: string;
   snippet: string;
   url: string;
+  image_url?: string | null;
 }
 
 export interface WebSearchResult {

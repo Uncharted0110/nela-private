@@ -18,107 +18,63 @@ export const TOURS: TourDefinition[] = [
   {
     id: "getting-started",
     name: "Getting Started (Overview)",
-    version: 1,
+    version: 2,
     steps: [
       {
-        id: "sidebar",
-        title: "Navigate the app",
+        id: "privacy",
+        title: "Your data stays here",
         body: (
           <span>
-            Use the sidebar to switch between chats, audio files, and mindmaps.
+            Everything you do in NELA happens on this computer. Your documents and chats are never uploaded.
           </span>
         ),
-        target: '[data-tour="sidebar-chats"]',
-        placement: "right",
+        target: '[data-tour="privacy-indicator"]',
+        placement: "bottom",
       },
       {
         id: "workspaces",
-        title: "Workspaces",
+        title: "Create a private space",
         body: (
           <span>
-            Workspaces keep your sessions and files organized. Create one to begin, or switch between existing ones.
+            Workspaces keep each project&apos;s documents and chats separate and organized.
           </span>
         ),
         target: '[data-tour="workspace-selector"]',
         placement: "bottom",
       },
       {
-        id: "chat-tabs",
-        title: "Multiple chats",
+        id: "attach",
+        title: "Add your documents",
         body: (
           <span>
-            You can open multiple chat sessions and switch between them with tabs.
+            Add PDFs, Word files, and more. NELA reads them on this device so you can ask questions about them.
           </span>
         ),
-        target: '[data-tour="chat-tabs"]',
-        placement: "bottom",
+        target: '[data-tour="attach-button"]',
+        placement: "top",
       },
       {
         id: "chat-input",
-        title: "Ask Nela anything",
+        title: "Ask in plain language",
         body: (
           <span>
-            Type your question here and press Enter to send. Use Shift+Enter for a new line.
+            Type a question and press Enter. NELA answers using your documents and shows you its sources.
           </span>
         ),
         target: '[data-tour="chat-input"]',
         placement: "top",
       },
       {
-        id: "mode-switch",
-        title: "Switch modes",
+        id: "sources",
+        title: "Check the sources",
         body: (
           <span>
-            Nela supports different modes (Chat, Vision, Audio, Podcast, Mindmap). Use this menu to switch.
+            Every answer lists the documents it came from, so you can verify it.
           </span>
         ),
-        target: '[data-tour="mode-switch"]',
-        placement: "top",
-      },
-      {
-        id: "models",
-        title: "Models",
-        body: (
-          <span>
-            You can install and switch models depending on the mode you’re using.
-          </span>
-        ),
-        target: '[data-tour="model-selector-llm"]',
-        placement: "bottom",
-      },
-      {
-        id: "settings",
-        title: "Settings",
-        body: (
-          <span>
-            Settings lets you manage models, downloads, and advanced parameters.
-          </span>
-        ),
-        target: '[data-tour="sidebar-settings"]',
-        placement: "right",
-      },
-      {
-        id: "parameter-help",
-        title: "Parameter help",
-        body: (
-          <span>
-            Not sure what a model parameter means? Click the small <strong>?</strong> next to a parameter name for a plain-language explanation.
-          </span>
-        ),
-        target: '[data-tour="runtime-param-help"]',
+        target: '[data-tour="kb-sidebar"]',
         placement: "left",
-        centerTooltip: true,
-      },
-      {
-        id: "help-tours",
-        title: "Feature tours",
-        body: (
-          <span>
-            You can revisit tours anytime from Help → Tours.
-          </span>
-        ),
-        target: '[data-tour="sidebar-help-tours"]',
-        placement: "right",
+        onBeforeStep: openDocPanelFromBindings(),
       },
     ],
   },

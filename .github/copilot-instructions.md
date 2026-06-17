@@ -56,3 +56,13 @@ The customization files under `.github/` are part of the repository contract.
 - Keep changes minimal and scoped to the request.
 - Prefer updating existing patterns in nearby code instead of introducing new conventions.
 - Verify changed files with targeted checks before finalizing.
+
+## UX (non-technical mode)
+
+- Simple mode is the default (`useAdvancedMode`); advanced mode exposes RAG toggle, reasoning, and the full parameter dock.
+- User-facing copy lives in `genhat-desktop/src/app/copy.ts`; avoid jargon (RAG, ingest, chunks, etc.) in simple-mode UI.
+- Professional (light) theme is the default (`useTheme`); Classic restores the dark neon theme.
+- Privacy indicator in the top bar shows offline-by-default; it switches during model downloads only.
+- Document Library sidebar uses friendly status labels (Adding… / Ready / Enhanced) and relevance words instead of raw scores.
+- Simple mode shows Response style (Precise/Balanced/Creative) instead of the technical parameter dock.
+- The `+` attach menu always offers Add documents / Add a folder in simple mode (RAG is effectively always on for retrieval).

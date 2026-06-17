@@ -5,6 +5,8 @@ import { KITTEN_TTS_VOICES } from "../types";
 import { Api, type CompatibilityRating } from "../api";
 import InstallModelModal from "./InstallModelModal";
 import { DropdownSelect } from "./DropdownSelect";
+import { useAdvancedMode } from "../hooks/useAdvancedMode";
+import { useTheme, type ThemeName } from "../hooks/useTheme";
 import "./ModelsSettingsModal.css";
 
 interface ModelsSettingsModalProps {
@@ -317,6 +319,8 @@ const ModelsSettingsModal: React.FC<ModelsSettingsModalProps> = ({
   workspaceId,
   onModelsUpdated,
 }) => {
+  const { advanced, setAdvanced } = useAdvancedMode();
+  const { theme, setTheme } = useTheme();
   const [ragPrefs, setRagPrefs] = useState<RagModelPreferences>({
     embed_model_id: null,
     llm_model_id: null,
@@ -570,20 +574,72 @@ const ModelsSettingsModal: React.FC<ModelsSettingsModalProps> = ({
         <div className="settings-modal-header">
           <div className="settings-title">
             <Sparkles size={18} />
-            <span>Advanced Models</span>
+            <span>Settings</span>
           </div>
-          <button className="settings-close" onClick={onClose}>
+          <button className="settings-close" onClick={onClose} aria-label="Close settings">
             <X size={16} />
           </button>
         </div>
 
         <div className="settings-modal-body">
+          <div className="px-4 py-3 border-b border-glass-border space-y-3">
+            <div className="flex items-center justify-between gap-3 py-1">
+              <div>
+                <div className="text-[0.85rem] font-semibold text-txt">Advanced mode</div>
+                <div className="text-[0.78rem] text-txt-muted">
+                  Show technical controls like model parameters and document search options.
+                  Most people can leave this off.
+                </div>
+              </div>
+              <button
+                role="switch"
+                aria-checked={advanced}
+                aria-label="Advanced mode"
+                onClick={() => setAdvanced(!advanced)}
+                className={[
+                  "relative inline-flex h-5 w-9 rounded-full transition-colors outline-none",
+                  "focus-visible:ring-2 focus-visible:ring-sky-300/50",
+                  advanced ? "bg-sky-500" : "bg-void-700 border border-glass-border",
+                ].join(" ")}
+              >
+                <span
+                  className={[
+                    "absolute top-0.5 h-4 w-4 rounded-full bg-white transition-transform",
+                    advanced ? "translate-x-4" : "translate-x-0.5",
+                  ].join(" ")}
+                />
+              </button>
+            </div>
+            <div className="flex items-center justify-between gap-3 py-1">
+              <div>
+                <div className="text-[0.85rem] font-semibold text-txt">Appearance</div>
+                <div className="text-[0.78rem] text-txt-muted">
+                  Professional (light) is the default. Classic restores the dark neon look.
+                </div>
+              </div>
+              <div className="inline-flex rounded-lg border border-glass-border overflow-hidden text-[0.78rem]">
+                {(["professional", "neon"] as ThemeName[]).map((option) => (
+                  <button
+                    key={option}
+                    type="button"
+                    aria-pressed={theme === option}
+                    onClick={() => setTheme(option)}
+                    className={`px-3 py-1.5 transition-colors ${
+                      theme === option
+                        ? "bg-neon-subtle text-neon"
+                        : "bg-glass-bg text-txt-muted hover:text-txt"
+                    }`}
+                  >
+                    {option === "professional" ? "Professional" : "Classic"}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
           <div className="settings-layout">
             <div className="settings-main">
               <div className="settings-summary">
-                <div>
-                  Optional models improve retrieval, grading, and routing quality.
-                </div>
+                <div>{advanced ? "Optional models improve quality for advanced features." : "Manage downloads and appearance."}</div>
                 <button
                   className="settings-primary"
                   onClick={onDownloadMissingOptional}
@@ -661,8 +717,8 @@ const ModelsSettingsModal: React.FC<ModelsSettingsModalProps> = ({
                 )}
               </div>
 
-              {/* RAG Pipeline Settings Section */}
-              {workspaceId && (
+              {/* RAG Pipeline Settings Section (advanced only) */}
+              {advanced && workspaceId && (
                 <div className="settings-group">
                   <div className="settings-group-title">RAG Pipeline Settings</div>
                   <div className="settings-rag-prefs">

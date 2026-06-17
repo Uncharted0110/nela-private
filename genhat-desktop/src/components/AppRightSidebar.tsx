@@ -2,6 +2,7 @@ import type { ChatSession, IngestionStatus } from "../types";
 import type { RuntimeParamsTarget } from "./ActiveModelParamsDock";
 import ActiveModelParamsDock from "./ActiveModelParamsDock";
 import KnowledgeBaseSidebar from "./KnowledgeBaseSidebar";
+import { useAdvancedMode } from "../hooks/useAdvancedMode";
 
 interface AppRightSidebarProps {
   showRightSidebar: boolean;
@@ -38,6 +39,8 @@ export default function AppRightSidebar({
   onOpenDocViewer,
   onDeleteRagDoc,
 }: AppRightSidebarProps) {
+  const { advanced } = useAdvancedMode();
+
   if (!showRightSidebar) return null;
 
   return (
@@ -46,7 +49,7 @@ export default function AppRightSidebar({
         showParamsDock && docPanelOpen ? "w-160 min-w-160" : "w-[320px] min-w-[320px]"
       } border-l border-glass-border`}
     >
-      {showParamsDock && activeRuntimeParamTarget && (
+      {advanced && showParamsDock && activeRuntimeParamTarget && (
         <div className="w-[320px] min-w-[320px] h-full">
           <ActiveModelParamsDock
             target={activeRuntimeParamTarget}

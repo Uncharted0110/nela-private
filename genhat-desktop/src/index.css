@@ -32,7 +32,51 @@
   --color-scrollbar-thumb: rgba(0, 212, 255, 0.25);
 }
 
-/* ── Light Mode Overrides ── */
+/* ── Professional light theme (default for non-technical users) ── */
+html[data-theme="professional"] {
+  --color-void-950: #f4f4f8;
+  --color-void-900: #ffffff;
+  --color-void-800: #f7f8fa;
+  --color-void-700: #eef1f5;
+  --color-void-600: #e4e8ee;
+  --color-void-500: #d8dee7;
+
+  --color-glass-bg: #ffffff;
+  --color-glass-border: #d8dee7;
+  --color-glass-hover: #eef1f5;
+
+  --color-neon: #0b6bcb;
+  --color-neon-hover: #095aa8;
+  --color-neon-subtle: rgba(11, 107, 203, 0.08);
+  --color-neon-glow: rgba(11, 107, 203, 0.15);
+
+  --color-coral: #e05050;
+  --color-coral-subtle: rgba(224, 80, 80, 0.10);
+
+  --color-txt: #1a2230;
+  --color-txt-secondary: #3a4658;
+  --color-txt-muted: #5d6b7e;
+
+  --color-success: #15803d;
+  --color-warning: #b45309;
+  --color-danger: #b91c1c;
+
+  --color-scrollbar-thumb: rgba(11, 107, 203, 0.3);
+}
+
+:root[data-theme="professional"] .welcome-orb,
+:root[data-theme="professional"] .startup-waves {
+  display: none;
+}
+
+:root[data-theme="professional"] .send-btn,
+:root[data-theme="professional"] .glass-strong,
+:root[data-theme="professional"] .glass {
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+}
+
+/* Legacy alias: keep light theme working for older stored preferences */
 html[data-theme="light"] {
   --color-void-950: #eeeef5;
   --color-void-900: #f4f4f8;
