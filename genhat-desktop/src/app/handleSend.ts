@@ -30,6 +30,7 @@ import {
   resolveReservedOutputTokens,
   toContextMessages,
 } from "./contextCompaction";
+import { parseSlashCommands, slashPromptForSend } from "./slashCommands";
 
 export interface MindmapOverlayState {
   sessionId: string;
@@ -96,10 +97,16 @@ export async function executeHandleSend(
   const session = ctx.sessions.find((s) => s.id === sid);
   if (!session || session.loading) return;
 
+  const slash = parseSlashCommands(text);
+  const promptText = slashPromptForSend(slash);
+  const effectiveWebEnabled = ctx.webEnabled || slash.web;
+  const effectiveRagEnabled = ctx.ragEnabled || slash.rag;
+  const slashFileSearch = slash.files;
+
   const currentVisionImagePath = ctx.chatMode === "vision" ? ctx.imagePath : null;
   const ragDocPaths = ctx.ragDocs.map((doc) => doc.file_path).filter((path) => !!path);
   const promptDocumentPaths =
-    ctx.chatMode === "text" && !ctx.ragEnabled
+    ctx.chatMode === "text" && !effectiveRagEnabled
       ? (ctx.directDocumentPaths.length > 0 ? ctx.directDocumentPaths : ragDocPaths)
       : ctx.directDocumentPaths;
 
@@ -121,7 +128,7 @@ export async function executeHandleSend(
 
   const newMsg: ChatMessage = {
     role: "user",
-    content: text,
+    content: promptText,
     ...(visionAttachment ? { visionImage: visionAttachment } : {}),
     ...(directDocAttachments && directDocAttachments.length > 0
       ? { directDocuments: directDocAttachments }
@@ -129,7 +136,7 @@ export async function executeHandleSend(
   };
 
   const isFirstMessage = session.messages.length === 0;
-  const titlePatch = isFirstMessage ? { title: deriveTitleFromMessage(text) } : {};
+  const titlePatch = isFirstMessage ? { title: deriveTitleFromMessage(promptText) } : {};
 
   ctx.updateSession(sid, (prev) => ({
     messages: [...prev.messages, newMsg],
@@ -156,20 +163,50 @@ export async function executeHandleSend(
   ctx.abortControllersRef.current.set(sid, ctrl);
   const generationOptions = ctx.getChatGenerationOptions(ctx.selectedModel);
 
-  let resolvedIntentKind = "";
+  let resolvedIntentKind = slashFileSearch ? "FileSearch" : "";
+  const artifactOptions = {
+    webEnabled: effectiveWebEnabled,
+    webDepth: ctx.webDepth,
+    ragEnabled: effectiveRagEnabled,
+    forceFileSearch: slashFileSearch,
+  };
+
+  // ── Slash-command routing (explicit user intent) ─────────────────────────
+  if (ctx.chatMode === "text" && slash.artifact) {
+    const { tool, schemaId } = slash.artifact;
+    await handleArtifactGeneration(
+      promptText,
+      tool,
+      schemaId,
+      sid,
+      ctx,
+      ctrl,
+      artifactOptions
+    );
+    return;
+  }
+
   // ── Intent Resolution (Revamp P3/P5) ──────────────────────────────────────
   if (ctx.chatMode === "text") {
     try {
-      const intent = await Api.resolveIntent(text);
+      const intent = await Api.resolveIntent(promptText);
       resolvedIntentKind = intent.kind.kind;
       if (intent.kind.kind === "Artifact") {
         const { tool, schema_id } = intent.kind;
-        await handleArtifactGeneration(text, tool, schema_id, sid, ctx, ctrl);
+        await handleArtifactGeneration(
+          promptText,
+          tool,
+          schema_id,
+          sid,
+          ctx,
+          ctrl,
+          artifactOptions
+        );
         return;
       }
       if (intent.kind.kind === "Patch") {
         const { artifact_path } = intent.kind;
-        await handlePatchApplication(text, artifact_path || "", sid, ctx, ctrl);
+        await handlePatchApplication(promptText, artifact_path || "", sid, ctx, ctrl);
         return;
       }
     } catch (err) {
@@ -184,7 +221,7 @@ export async function executeHandleSend(
           sessionId: sid,
           mindmapId: null,
           isGenerating: true,
-          query: text,
+          query: promptText,
         });
         ctx.setGeneralGenerating(true);
         ctx.setGeneralElapsedTime(0);
@@ -203,7 +240,7 @@ export async function executeHandleSend(
 
         if (ctx.ragDocs.length > 0) {
           try {
-            const setup = await Api.queryRagStream(text);
+            const setup = await Api.queryRagStream(promptText);
             ctx.updateSession(sid, { ragResult: { answer: "", sources: setup.sources } });
             if (!setup.no_retrieval && setup.sources.length > 0) {
               generatedFrom = "documents";
@@ -219,7 +256,7 @@ export async function executeHandleSend(
 
         const prompt = generatedFrom === "documents"
           ? [
-              `User query: ${text}`,
+              `User query: ${promptText}`,
               "Build a concise mindmap grounded ONLY in the provided sources.",
               "Return ONLY valid JSON and no markdown/code fences.",
               "Schema:",
@@ -233,7 +270,7 @@ export async function executeHandleSend(
               sourceContext,
             ].join("\n")
           : [
-              `User query: ${text}`,
+              `User query: ${promptText}`,
               "Create a concise conceptual mindmap from your own knowledge.",
               "Return ONLY valid JSON and no markdown/code fences.",
               "Schema:",
@@ -251,7 +288,7 @@ export async function executeHandleSend(
           try {
             const raw = await Api.routeRequest("mindmap", prompt, ctx.selectedModel || undefined);
             const modelText = extractTaskText(raw);
-            graph = parseMindMapGraph(modelText, text, generatedFrom, sourceCount);
+            graph = parseMindMapGraph(modelText, promptText, generatedFrom, sourceCount);
             break;
           } catch (e) {
             console.warn(`Mindmap generation attempt ${attempt} failed:`, e);
@@ -272,7 +309,7 @@ export async function executeHandleSend(
           sessionId: sid,
           mindmapId: graph.id,
           isGenerating: false,
-          query: text,
+          query: promptText,
         });
 
         if (ctx.generalIntervalRef.current) clearInterval(ctx.generalIntervalRef.current);
@@ -316,7 +353,7 @@ export async function executeHandleSend(
       return;
     }
 
-    if (ctx.chatMode === "text" && !ctx.ragEnabled && promptDocumentPaths.length > 0) {
+    if (ctx.chatMode === "text" && !effectiveRagEnabled && promptDocumentPaths.length > 0) {
       try {
         ctx.setGeneralGenerating(true);
         ctx.setGeneralElapsedTime(0);
@@ -340,7 +377,7 @@ export async function executeHandleSend(
         );
 
         const directSetup = await Api.prepareDirectDocumentPrompt(
-          text,
+          promptText,
           promptDocumentPaths,
           {
             maxCharsPerDocument,
@@ -455,7 +492,7 @@ export async function executeHandleSend(
       }
     }
 
-    if (ctx.chatMode === "text" && ctx.ragEnabled && ctx.ragDocs.length > 0) {
+    if (ctx.chatMode === "text" && effectiveRagEnabled && ctx.ragDocs.length > 0) {
       try {
         ctx.setGeneralGenerating(true);
         ctx.setGeneralElapsedTime(0);
@@ -468,7 +505,7 @@ export async function executeHandleSend(
           ctx.setGeneralElapsedTime(elapsed);
         }, 100);
 
-        const setup = await Api.queryRagStream(text);
+        const setup = await Api.queryRagStream(promptText);
         ctx.updateSession(sid, { ragResult: { answer: "", sources: setup.sources } });
 
         if (!setup.prompt || setup.sources.length === 0) {
@@ -714,7 +751,7 @@ export async function executeHandleSend(
         ctx.visionUnlistenRef.current = unlisten;
 
         const visionPrompt =
-          text ||
+          promptText ||
           (currentVisionImagePath ? "What's in this image?" : "Hello! Let's chat.");
 
         await Api.visionChatStream(
@@ -741,11 +778,11 @@ export async function executeHandleSend(
 
     // ── Web search context injection ───────────────────────────────────────
     let webSearchResult: WebSearchResult | null = null;
-    if (ctx.chatMode === "text" && ctx.webEnabled) {
+    if (ctx.chatMode === "text" && effectiveWebEnabled) {
       try {
         const fetchContent = ctx.webDepth === "full";
         const maxResults = fetchContent ? 2 : 5;
-        const result = await Api.webSearch(text.slice(0, 150), maxResults, fetchContent);
+        const result = await Api.webSearch(promptText.slice(0, 150), maxResults, fetchContent);
         if (result.results.length > 0) {
           webSearchResult = result;
         }
@@ -768,14 +805,15 @@ export async function executeHandleSend(
     //    questions are not hijacked into a false "I couldn't find the file" answer.
     // When web search already supplied context and the request wasn't an explicit file
     // request, skip ambient search to avoid the two grounding sources clashing.
-    const explicitFileSearch = resolvedIntentKind === "FileSearch" || hasSearchKeywords(text);
-    const softFileSearch = softFileReference(text);
+    const explicitFileSearch =
+      resolvedIntentKind === "FileSearch" || slashFileSearch || hasSearchKeywords(promptText);
+    const softFileSearch = softFileReference(promptText);
     const wantsFileSearch = explicitFileSearch || softFileSearch;
     const skipForWebSearch = !!webSearchResult && !explicitFileSearch;
 
     if (ctx.chatMode === "text" && !attachedFile && wantsFileSearch && !skipForWebSearch) {
       {
-        const searchQuery = extractSearchQuery(text);
+        const searchQuery = extractSearchQuery(promptText);
         try {
           const results = await Api.searchAmbientFiles(searchQuery);
           if (results && results.length > 0) {
@@ -1052,7 +1090,13 @@ async function handleArtifactGeneration(
   schemaId: string,
   sid: string,
   ctx: SendHandlerContext,
-  ctrl: AbortController
+  ctrl: AbortController,
+  options?: {
+    webEnabled?: boolean;
+    webDepth?: "snippets" | "full";
+    ragEnabled?: boolean;
+    forceFileSearch?: boolean;
+  }
 ): Promise<void> {
   ctx.updateSession(sid, (prev) => ({
     loading: true,
@@ -1099,8 +1143,11 @@ async function handleArtifactGeneration(
 
     let attachedFile = ctx.directDocumentPaths.length > 0 ? ctx.directDocumentPaths[0] : null;
 
+    const wantsAmbientFileSearch =
+      options?.forceFileSearch || hasSearchKeywords(text) || softFileReference(text);
+
     // Proactive ambient FTS5 search if no file is attached but query references a file
-    if (!attachedFile && (hasSearchKeywords(text) || softFileReference(text))) {
+    if (!attachedFile && wantsAmbientFileSearch) {
       updateArtifactMsg("SearchingDisk");
       const searchQuery = extractSearchQuery(text);
       try {
@@ -1181,7 +1228,38 @@ async function handleArtifactGeneration(
 
     updateArtifactMsg("CrunchingMetrics");
 
-    let dataContext = "";
+    let supplementalContext = "";
+
+    if (options?.ragEnabled && ctx.ragDocs.length > 0) {
+      try {
+        const setup = await Api.queryRagStream(text);
+        if (setup.sources.length > 0) {
+          supplementalContext +=
+            "Knowledge base sources:\n" +
+            setup.sources
+              .map((source, index) => `Source ${index + 1} (${source.doc_title}):\n${source.text}`)
+              .join("\n\n") +
+            "\n\n";
+        }
+      } catch (err) {
+        console.warn("RAG grounding for artifact generation failed:", err);
+      }
+    }
+
+    if (options?.webEnabled) {
+      try {
+        const fetchContent = (options.webDepth ?? ctx.webDepth) === "full";
+        const maxResults = fetchContent ? 2 : 5;
+        const result = await Api.webSearch(text.slice(0, 150), maxResults, fetchContent);
+        if (result.formatted_context) {
+          supplementalContext += `${result.formatted_context}\n\n`;
+        }
+      } catch (err) {
+        console.warn("Web grounding for artifact generation failed:", err);
+      }
+    }
+
+    let dataContext = supplementalContext;
     if (headers && headers.length > 0) {
       dataContext = `Source data columns: [${headers.join(", ")}].\n` +
         `Number of rows: ${rows ? rows.length : 0}.\n\n`;

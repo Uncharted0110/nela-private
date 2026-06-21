@@ -43,6 +43,9 @@ export const COPY = {
   privacyPrivate: "Private \u00B7 on this device",
   privacyPrivateTooltip:
     "Everything you do stays on this computer. Nothing is sent anywhere. The only time NELA uses the internet is when you choose to download a model.",
+  privacyPublic: "Public \u00B7 uses the web",
+  privacyPublicTooltip:
+    "Web search is enabled. NELA may fetch pages from the internet to help answer your question.",
   privacyNetwork: "Downloading model\u2026",
   privacyNetworkTooltip:
     "NELA is downloading a model from the internet right now. This is the only time it goes online. Your documents and chats are never uploaded.",
@@ -50,16 +53,22 @@ export const COPY = {
   // Response style (Task 4)
   responseStyleLabel: "Response style",
   responseStylePrecise: "Precise",
-  responseStylePreciseHint: "Focused, consistent answers. Best for facts and analysis.",
+  responseStylePreciseHint:
+    "Focused, consistent answers. Best for facts and analysis. (Lower temperature.)",
   responseStyleBalanced: "Balanced",
-  responseStyleBalancedHint: "A mix of accuracy and flexibility. Good default.",
+  responseStyleBalancedHint:
+    "A mix of accuracy and flexibility. Good default. (Medium temperature.)",
   responseStyleCreative: "Creative",
-  responseStyleCreativeHint: "More varied, imaginative answers.",
+  responseStyleCreativeHint:
+    "More varied, imaginative answers. (Higher temperature and sampling.)",
 
   // Generic errors (Task 10)
   errorNotReady: "NELA is still getting ready. Please try again in a moment.",
   errorGeneric: "Something went wrong. Please try again.",
   retry: "Try again",
+
+  // Slash commands
+  slashCommandsHint: "Type / for commands (ppt, excel, html, web, rag, files)",
 } as const;
 
 export type CopyKey = keyof typeof COPY;

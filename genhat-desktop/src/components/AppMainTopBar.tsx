@@ -24,6 +24,7 @@ interface AppMainTopBarProps {
   contextUsage: ChatContextUsage | null;
   modeControls: ReactNode;
   networkActive?: boolean;
+  webEnabled?: boolean;
 }
 
 export default function AppMainTopBar({
@@ -38,13 +39,14 @@ export default function AppMainTopBar({
   modelLoadingStatus,
   modeControls,
   networkActive = false,
+  webEnabled = false,
 }: AppMainTopBarProps) {
   const CurrentModeIcon = currentModeConfig.icon;
 
   return (
     <header className="min-h-14 py-2 flex items-center justify-between px-6 border-b border-glass-border bg-void-800/80 backdrop-blur-xl shrink-0 z-20">
       <div className="flex flex-col items-start gap-1.5">
-        <PrivacyIndicator networkActive={networkActive} />
+        <PrivacyIndicator networkActive={networkActive} webEnabled={webEnabled} />
         <div className="flex items-center gap-2.5">
           <CurrentModeIcon size={18} strokeWidth={1.8} className="text-neon" />
           <h1 className="text-[0.95rem] font-semibold m-0 text-txt">{currentModeConfig.label}</h1>

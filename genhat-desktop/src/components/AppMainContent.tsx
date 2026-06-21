@@ -240,6 +240,7 @@ export default function AppMainContent({
         modelLoadingStatus={modelLoadingStatus}
         contextUsage={contextUsage}
         networkActive={networkActive}
+        webEnabled={webEnabled}
         modeControls={(
           <AppMainModeControls
             chatMode={chatMode}

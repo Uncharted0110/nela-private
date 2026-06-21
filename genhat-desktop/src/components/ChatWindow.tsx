@@ -11,6 +11,8 @@ import type { ChatMessage, MediaAsset, IngestionStatus, ChatMode, ChatSession, W
 import { COPY } from "../app/copy";
 import { friendlyError } from "../app/friendlyError";
 import { useAdvancedMode } from "../hooks/useAdvancedMode";
+import { useSlashCommandInput } from "../hooks/useSlashCommandInput";
+import SlashCommandMenu from "./SlashCommandMenu";
 
 const MODE_ICON_MAP: Record<ChatMode, React.ElementType> = {
   text: MessageSquare,
@@ -248,7 +250,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
   onSend,
   onCancel,
   cancelled = false,
-  placeholder = "Message NELA...",
+  placeholder = COPY.slashCommandsHint,
   mediaAssets = {},
   chatMode = "text",
   ttsGenerating = false,
@@ -296,6 +298,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
   const attachMenuRef = useRef<HTMLDivElement>(null);
   const modeMenuRef = useRef<HTMLDivElement>(null);
   const toolsMenuRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
 
   /** Tracks the number of messages that have already been rendered and animated.
@@ -336,18 +339,50 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [showAttachMenu, showModeMenu, showToolsMenu]);
 
+  const slash = useSlashCommandInput({
+    value: inputObj,
+    onChange: setInputObj,
+    textareaRef,
+    enabled: chatMode === "text",
+  });
+
   const handleSend = () => {
     if (!inputObj.trim() || isLoading) return;
     onSend(inputObj);
     setInputObj("");
+    slash.closeMenu();
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    slash.handleKeyDown(e, () => {
       if (!isLoading) handleSend();
-    }
+    });
   };
+
+  const renderChatTextarea = () => (
+    <div className="relative flex-1 min-w-0">
+      {slash.showMenu && (
+        <SlashCommandMenu
+          commands={slash.filteredCommands}
+          activeIndex={slash.activeIndex}
+          onSelect={slash.applyCommand}
+        />
+      )}
+      <textarea
+        ref={textareaRef}
+        value={inputObj}
+        onChange={(e) => slash.handleChange(e.target.value)}
+        onKeyDown={handleKeyDown}
+        onClick={slash.syncCursor}
+        onSelect={slash.syncCursor}
+        onKeyUp={slash.syncCursor}
+        placeholder={placeholder}
+        rows={1}
+        className="w-full bg-transparent border-none outline-none text-txt text-[0.92rem] py-2 px-1 min-h-[40px] max-h-[200px] resize-none leading-relaxed font-inherit placeholder:text-txt-muted"
+        data-tour="chat-input"
+      />
+    </div>
+  );
 
   const hasMessages = messages.length > 0 || isLoading;
   const showAttachButton = showRagControls || chatMode === "vision";
@@ -803,15 +838,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
               </div>
             )}
 
-            <textarea
-              value={inputObj}
-              onChange={(e) => setInputObj(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder={placeholder}
-              rows={1}
-              className="flex-1 bg-transparent border-none outline-none text-txt text-[0.92rem] py-2 px-1 min-h-[40px] max-h-[200px] resize-none leading-relaxed font-inherit placeholder:text-txt-muted"
-              data-tour="chat-input"
-            />
+            {renderChatTextarea()}
             {/* Voice input button - allows speaking instead of typing */}
             <VoiceInputButton
               onTranscript={(text) => {
@@ -1163,15 +1190,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
             </div>
           )}
 
-          <textarea
-            value={inputObj}
-            onChange={(e) => setInputObj(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder={placeholder}
-            rows={1}
-            className="flex-1 bg-transparent border-none outline-none text-txt text-[0.92rem] py-2 px-1 min-h-[40px] max-h-[200px] resize-none leading-relaxed font-inherit placeholder:text-txt-muted"
-            data-tour="chat-input"
-          />
+          {renderChatTextarea()}
           {/* Voice input button - allows speaking instead of typing */}
           <VoiceInputButton
             onTranscript={(text) => {

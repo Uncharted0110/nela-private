@@ -31,9 +31,10 @@ function PaletteItem({ entry }: { entry: PaletteEntry }) {
       draggable
       onDragStart={onDragStart}
       className="
-        flex flex-col gap-0.5 px-3 py-2 rounded-lg cursor-grab
-        bg-white/5 hover:bg-white/10 border border-white/10
-        hover:border-white/20 transition-colors text-xs select-none
+        flex flex-col gap-0.5 px-3 py-2 rounded-xl cursor-grab
+        bg-glass-bg hover:bg-glass-hover border border-glass-border
+        hover:border-neon/30 hover:shadow-[0_8px_22px_rgba(0,0,0,0.18)]
+        transition-all duration-150 text-xs select-none
       "
       title={entry.description}
     >
@@ -85,7 +86,7 @@ export default function PlaygroundNodePalette() {
     <aside
       className="
         w-52 shrink-0 flex flex-col gap-3 overflow-y-auto
-        border-r border-white/10 bg-void-950 px-2 py-3
+        border-r border-glass-border bg-void-950 px-2 py-3
       "
     >
       <p className="px-2 text-[10px] font-semibold text-txt-muted uppercase tracking-widest">

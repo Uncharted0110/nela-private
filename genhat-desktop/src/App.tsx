@@ -39,6 +39,7 @@ import {
   executeHandleSend,
   type MindmapOverlayState,
 } from "./app/handleSend";
+import { parseSlashCommands } from "./app/slashCommands";
 import {
   createNewWorkspaceAction,
   deleteWorkspaceByIdAction,
@@ -1922,6 +1923,10 @@ function App() {
 
   const handleSend = useCallback(
     async (text: string) => {
+      const slash = parseSlashCommands(text);
+      if (slash.web) setWebEnabled(true);
+      if (slash.rag && advanced) setRagEnabled(true);
+
       await executeHandleSend(text, {
         activeSessionId,
         sessions,
@@ -1980,6 +1985,7 @@ function App() {
       ttsVoice,
       ttsSpeed,
       effectiveThinkingEnabled,
+      advanced,
       updateSession,
       clearImage,
       clearDirectDocuments,
