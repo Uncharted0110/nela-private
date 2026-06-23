@@ -37,9 +37,14 @@ workspace/
 # Script results
 results.zip
 RESEARCH_PAPER_PLAN.md
+scripts/
+classifier/
+datasets/
 
 # Added by Spec Kitty CLI (auto-managed)
 .claude/
+.venv/
+.vscode/
 .codex/
 .vibe/
 .opencode/
