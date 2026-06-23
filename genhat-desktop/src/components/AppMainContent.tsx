@@ -45,6 +45,8 @@ interface AppMainContentProps {
     modelId: string;
     message: string;
   };
+  modelSwitching?: boolean;
+  modelSwitchingLabel?: string;
   models: ModelFile[];
   selectedModel: string;
   onModelChange: (path: string) => void;
@@ -145,6 +147,8 @@ export default function AppMainContent({
   onRenameWorkspace,
   workspaceBusy,
   modelLoadingStatus,
+  modelSwitching = false,
+  modelSwitchingLabel = "",
   models,
   selectedModel,
   onModelChange,
@@ -240,6 +244,8 @@ export default function AppMainContent({
             chatMode={chatMode}
             models={models}
             selectedModel={selectedModel}
+            modelSwitching={modelSwitching}
+            modelSwitchingLabel={modelSwitchingLabel}
             onModelChange={onModelChange}
             onAddModel={onAddModel}
             onDownloadModel={onDownloadModel}

@@ -39,6 +39,8 @@ interface AppMainModeControlsProps {
   onCompactContext: () => void;
   canCompactContext: boolean;
   isCompactingContext: boolean;
+  modelSwitching?: boolean;
+  modelSwitchingLabel?: string;
 }
 
 export default function AppMainModeControls({
@@ -66,6 +68,8 @@ export default function AppMainModeControls({
   onCompactContext,
   canCompactContext,
   isCompactingContext,
+  modelSwitching = false,
+  modelSwitchingLabel = "",
 }: AppMainModeControlsProps) {
   return (
     <div className="flex items-center gap-3">
@@ -73,6 +77,8 @@ export default function AppMainModeControls({
         <ModelSelector
           models={models}
           selectedModel={selectedModel}
+          switching={modelSwitching}
+          switchingLabel={modelSwitchingLabel}
           onSelect={onModelChange}
           type="llm"
           onAdd={onAddModel}

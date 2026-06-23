@@ -7,6 +7,8 @@ import "./ModelSelector.css";
 interface ModelSelectorProps {
   models: ModelFile[];
   selectedModel: string;
+  switching?: boolean;
+  switchingLabel?: string;
   onDownload?: (path: string) => void;
   onCancelDownload?: (path: string) => void;
   onUninstall?: (path: string) => void;
@@ -20,6 +22,8 @@ interface ModelSelectorProps {
 const ModelSelector: React.FC<ModelSelectorProps> = ({
   models,
   selectedModel,
+  switching = false,
+  switchingLabel = "",
   onSelect,
   type,
   onDownload,
@@ -53,6 +57,9 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
     (type === "audio" && selectedModel === "None" ? "No Audio" : "Select Model");
   const currentModelLabel =
     currentModelName.length > 26 ? `${currentModelName.slice(0, 26)}....` : currentModelName;
+  const switchingDisplay =
+    switchingLabel.length > 26 ? `${switchingLabel.slice(0, 26)}...` : switchingLabel;
+  const buttonLabel = switching ? `Switching: ${switchingDisplay}` : currentModelLabel;
 
   const installedModels = models.filter(m => m.is_downloaded || downloads[m.path] !== undefined || !m.gdrive_id);
   const missingModelsCount = models.filter(m => !m.is_downloaded && m.gdrive_id).length;
@@ -61,16 +68,30 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
   return (
     <div className="model-selector-container" ref={containerRef} data-tour={`model-selector-${type}`}>
       <button
-        className={`model-selector-btn ${isOpen ? "active" : ""}`}
-        onClick={() => setIsOpen(!isOpen)}
-        title={type === "llm" ? "Switch LLM Model" : type === "vision" ? "Switch Vision Model" : "Switch Audio Model"}
+        className={`model-selector-btn ${isOpen ? "active" : ""} ${switching ? "switching" : ""}`}
+        onClick={() => {
+          if (switching) return;
+          setIsOpen(!isOpen);
+        }}
+        disabled={switching}
+        title={switching ? `Switching to ${switchingLabel}` : type === "llm" ? "Switch LLM Model" : type === "vision" ? "Switch Vision Model" : "Switch Audio Model"}
       >
-        {type === "llm" ? <MessageSquare size={16} /> : type === "vision" ? <MessageSquare size={16} /> : <Music size={16} />}
-        <span className="model-name" title={currentModelName}>{currentModelLabel}</span>
-        <ChevronDown size={14} className="chevron" />
+        {switching ? (
+          <Loader2 size={16} className="animate-spin text-amber-400" />
+        ) : type === "llm" ? (
+          <MessageSquare size={16} />
+        ) : type === "vision" ? (
+          <MessageSquare size={16} />
+        ) : (
+          <Music size={16} />
+        )}
+        <span className="model-name" title={switching ? switchingLabel : currentModelName}>
+          {buttonLabel}
+        </span>
+        {!switching && <ChevronDown size={14} className="chevron" />}
       </button>
 
-      {isOpen && (
+      {isOpen && !switching && (
         <div className="model-dropdown">
           <div className="dropdown-header">
             <span>{type === "llm" ? "Text Models" : type === "vision" ? "Vision Models" : "Voice Models"}</span>

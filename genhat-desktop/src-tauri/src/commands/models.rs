@@ -523,27 +523,42 @@ pub async fn stop_model(
     state.0.stop_model(&model_id).await
 }
 
-/// Switch to a different LLM model by file path or registry ID.
-/// If it's a registered ID, it uses the config from models.toml.
-/// Otherwise, it falls back to dynamically registering the model from the file path.
-#[tauri::command]
-pub async fn switch_model(
-    model_identifier: String,
-    state: State<'_, ProcessManagerState>,
-) -> Result<String, String> {
-    // Keep the previous model warm instead of stopping on every switch.
+fn emit_model_loading(app: &AppHandle, model_id: &str, status: &str, message: &str) {
+    let _ = app.emit(
+        "model-loading",
+        serde_json::json!({
+            "model_id": model_id,
+            "status": status,
+            "message": message,
+        }),
+    );
+}
 
-    // First check if the identifier is a registered model ID
-    if let Some(def) = state.0.get_model_def(&model_identifier).await {
-        let instance_id = state.0.ensure_running(&def.id, false).await?;
-        if let Some(evict) = state.0.rotate_active_llm_keep_previous(&def.id).await {
-            let _ = state.0.stop_model(&evict).await;
-        }
-        return Ok(format!("server started (instance: {})", &instance_id[..8]));
+/// Resolve a frontend model identifier (registry id or file path) to a runtime model id.
+async fn resolve_switch_target_id(
+    pm: &Arc<ProcessManager>,
+    model_identifier: &str,
+) -> Result<String, String> {
+    sync_discovered_models_internal(pm).await?;
+
+    if pm.get_model_def(model_identifier).await.is_some() {
+        return Ok(model_identifier.to_string());
     }
 
-    // Fallback: assume it's a file path for dynamic registration
-    let path = PathBuf::from(&model_identifier);
+    let models_dir = get_models_dir();
+    let normalized = model_identifier.replace('\\', "/");
+    for unit in discover_local_units(&models_dir) {
+        let abs = unit.llm_abs_path.replace('\\', "/");
+        let rel = unit.llm_rel_path.replace('\\', "/");
+        if abs == normalized || rel == normalized {
+            let id = build_discovered_model_id(&unit.category, &unit.repo_id, &unit.llm_rel_path);
+            if pm.get_model_def(&id).await.is_some() {
+                return Ok(id);
+            }
+        }
+    }
+
+    let path = PathBuf::from(model_identifier);
     if !path.exists() {
         return Err(format!("Model file or ID not found: {model_identifier}"));
     }
@@ -556,18 +571,25 @@ pub async fn switch_model(
         .to_string();
     let model_id = file_name
         .chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c.to_ascii_lowercase() } else { '-' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
         .collect::<String>();
 
-    // Build a ModelDef for the new model.
-    // Use the absolute path as model_file — Path::join with an absolute path
-    // ignores the base, so the backend will use it directly.
+    if pm.get_model_def(&model_id).await.is_some() {
+        return Ok(model_id);
+    }
+
     let def = ModelDef {
         id: model_id.clone(),
         name: file_name.clone(),
         backend: BackendKind::LlamaServer,
         kind: ModelKind::ChildProcess,
-        model_file: model_identifier.clone(),
+        model_file: model_identifier.to_string(),
         tasks: vec![
             TaskType::Chat,
             TaskType::Summarize,
@@ -591,14 +613,69 @@ pub async fn switch_model(
         hf_files: HashMap::new(),
     };
 
-    // Register and start the new model
-    state.0.register_model(def).await?;
-    let instance_id = state.0.ensure_running(&model_id, false).await?;
-    if let Some(evict) = state.0.rotate_active_llm_keep_previous(&model_id).await {
-        let _ = state.0.stop_model(&evict).await;
-    }
+    pm.register_model(def).await?;
+    Ok(model_id)
+}
 
-    Ok(format!("server started (instance: {})", &instance_id[..8]))
+/// Switch to a different LLM model by file path or registry ID.
+/// Stops the currently running model first so the new one has memory to load.
+#[tauri::command]
+pub async fn switch_model(
+    app: AppHandle,
+    model_identifier: String,
+    state: State<'_, ProcessManagerState>,
+) -> Result<String, String> {
+    let target_id = resolve_switch_target_id(&state.0, &model_identifier).await?;
+    let display_name = state
+        .0
+        .get_model_def(&target_id)
+        .await
+        .map(|def| def.name)
+        .unwrap_or_else(|| target_id.clone());
+
+    // Free RAM/VRAM by stopping the outgoing model(s) before loading the new one.
+    state.0.prepare_llm_switch(&target_id).await?;
+
+    emit_model_loading(
+        &app,
+        &target_id,
+        "starting",
+        &format!("Switching to {display_name}..."),
+    );
+    log::info!("Switching active LLM to '{target_id}' ({display_name})");
+
+    let start = std::time::Instant::now();
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(180),
+        state.0.ensure_running(&target_id, false),
+    )
+    .await
+    {
+        Ok(Ok(_)) => {
+            let elapsed = start.elapsed().as_secs();
+            emit_model_loading(
+                &app,
+                &target_id,
+                "ready",
+                &format!("{display_name} ready ({elapsed}s)"),
+            );
+            Ok(target_id)
+        }
+        Ok(Err(e)) => {
+            emit_model_loading(
+                &app,
+                &target_id,
+                "error",
+                &format!("Failed to start {display_name}: {e}"),
+            );
+            Err(e)
+        }
+        Err(_) => {
+            let message = format!("{display_name} timed out after 180s");
+            emit_model_loading(&app, &target_id, "timeout", &message);
+            Err(message)
+        }
+    }
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -801,36 +878,22 @@ pub async fn get_llama_port(
     state: State<'_, ProcessManagerState>,
 ) -> Result<u16, String> {
     let active_id = state.0.active_llm_id().await;
-    let mut candidates = Vec::new();
+    // Strict behavior: if an active model is set, only ever start/return that model.
+    // This avoids confusing UI states where the renderer selected a model but
+    // `get_llama_port` silently falls back to a different one.
     if !active_id.is_empty() {
-        candidates.push(active_id);
-    }
-
-    for id in state.0.find_models_for_task(&TaskType::Chat).await {
-        if !candidates.contains(&id) {
-            candidates.push(id);
-        }
-    }
-
-    if candidates.is_empty() {
-        return Err("No chat-capable model is registered".to_string());
-    }
-
-    let mut errors = Vec::new();
-    for id in candidates {
-        if let Some(port) = state.0.get_llama_port(&id).await {
+        if let Some(port) = state.0.get_llama_port(&active_id).await {
             return Ok(port);
         }
 
-        // Emit loading event before starting model
+        let id = active_id;
         let _ = app.emit("model-loading", serde_json::json!({
             "model_id": &id,
             "status": "starting",
             "message": format!("Loading model {}...", &id)
         }));
-        log::info!("Starting model {} for chat...", &id);
+        log::info!("Starting active model {} for chat...", &id);
 
-        // Increased timeout to 150s to account for large model loading
         let start = std::time::Instant::now();
         match tokio::time::timeout(
             std::time::Duration::from_secs(150),
@@ -848,7 +911,7 @@ pub async fn get_llama_port(
                 if let Some(port) = state.0.get_llama_port(&id).await {
                     return Ok(port);
                 }
-                errors.push(format!("{id}: started but no port assigned"));
+                return Err(format!("{id}: started but no port assigned"));
             }
             Ok(Err(e)) => {
                 let _ = app.emit("model-loading", serde_json::json!({
@@ -856,7 +919,7 @@ pub async fn get_llama_port(
                     "status": "error",
                     "message": format!("Failed to start {}: {}", &id, &e)
                 }));
-                errors.push(format!("{id}: {e}"));
+                return Err(format!("{id}: {e}"));
             }
             Err(_) => {
                 let _ = app.emit("model-loading", serde_json::json!({
@@ -864,15 +927,49 @@ pub async fn get_llama_port(
                     "status": "timeout",
                     "message": format!("{} timed out after 150s", &id)
                 }));
-                errors.push(format!("{id}: timed out while starting"));
+                return Err(format!("{id}: timed out while starting"));
             }
         }
     }
 
-    Err(format!(
-        "No runnable chat model available: {}",
-        errors.join(" | ")
-    ))
+    // No active model set: choose the highest-priority chat model and start it.
+    let mut candidates = state.0.find_models_for_task(&TaskType::Chat).await;
+    if candidates.is_empty() {
+        return Err("No chat-capable model is registered".to_string());
+    }
+    let id = candidates.remove(0);
+    state.0.set_active_llm(&id).await;
+    if let Some(port) = state.0.get_llama_port(&id).await {
+        return Ok(port);
+    }
+
+    let _ = app.emit("model-loading", serde_json::json!({
+        "model_id": &id,
+        "status": "starting",
+        "message": format!("Loading model {}...", &id)
+    }));
+    log::info!("Starting default model {} for chat...", &id);
+    let start = std::time::Instant::now();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(150),
+        state.0.ensure_running(&id, false),
+    )
+    .await
+    .map_err(|_| format!("{id}: timed out while starting"))?
+    .map_err(|e| format!("{id}: {e}"))?;
+
+    let elapsed = start.elapsed().as_secs();
+    let _ = app.emit("model-loading", serde_json::json!({
+        "model_id": &id,
+        "status": "ready",
+        "message": format!("Model {} ready ({}s)", &id, elapsed)
+    }));
+
+    state
+        .0
+        .get_llama_port(&id)
+        .await
+        .ok_or_else(|| format!("{id}: started but no port assigned"))
 }
 
 /// Get estimated total memory usage of all loaded models (MB).

@@ -198,8 +198,8 @@ export const Api = {
   },
 
   /** Switch to a different LLM model by registry ID or file path. */
-  async switchModel(modelIdentifier: string): Promise<void> {
-    await invoke("switch_model", { modelIdentifier });
+  async switchModel(modelIdentifier: string): Promise<string> {
+    return invoke<string>("switch_model", { modelIdentifier });
   },
 
   /** Stop the currently active LLM server. */

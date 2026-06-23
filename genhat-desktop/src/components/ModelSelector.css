@@ -28,6 +28,18 @@
     box-shadow: 0 0 0 1px rgba(0, 212, 255, 0.15);
 }
 
+.model-selector-btn.switching {
+    border-color: rgba(251, 191, 36, 0.55);
+    color: #fcd34d;
+    cursor: wait;
+    opacity: 0.95;
+}
+
+.model-selector-btn:disabled {
+    cursor: wait;
+    pointer-events: none;
+}
+
 .model-selector-btn .model-name {
     flex: 1;
     text-align: left;

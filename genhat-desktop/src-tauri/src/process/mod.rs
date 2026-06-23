@@ -149,6 +149,28 @@ impl ProcessManager {
         *self.active_llm_id.write().await = id.to_string();
     }
 
+    /// Stop running LLM instances and point active state at `target_id` before loading it.
+    /// Used for explicit user-initiated switches so the new model has full RAM/VRAM.
+    pub async fn prepare_llm_switch(&self, target_id: &str) -> Result<(), String> {
+        let active_id = self.active_llm_id().await;
+        let prev_id = self.previous_llm_id().await;
+
+        if !active_id.is_empty() && active_id != target_id {
+            log::info!("Switch: stopping active model '{active_id}' before loading '{target_id}'");
+            self.stop_model(&active_id).await?;
+        }
+        if let Some(prev) = prev_id {
+            if prev != target_id && prev != active_id {
+                log::info!("Switch: stopping warm previous model '{prev}'");
+                let _ = self.stop_model(&prev).await;
+            }
+        }
+
+        *self.active_llm_id.write().await = target_id.to_string();
+        *self.previous_llm_id.write().await = None;
+        Ok(())
+    }
+
     /// Rotate the active LLM, keeping the previous model warm.
     /// Returns an optional model id that should be stopped (to cap warm models to 2).
     pub async fn rotate_active_llm_keep_previous(&self, new_active: &str) -> Option<String> {

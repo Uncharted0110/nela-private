@@ -177,6 +177,10 @@ function App() {
     modelId: string;
     message: string;
   }>({ loading: false, modelId: "", message: "" });
+  const [modelSwitching, setModelSwitching] = useState<{
+    active: boolean;
+    targetLabel: string;
+  }>({ active: false, targetLabel: "" });
   const [sessionStoreReady, setSessionStoreReady] = useState(false);
   const [sessions, setSessions] = useState<ChatSession[]>(() => [createEmptySession()]);
   const [openSessionIds, setOpenSessionIds] = useState<string[]>([]);
@@ -1666,18 +1670,39 @@ function App() {
   }, [selectedTtsEngine, registeredModels, parseModelParamNumber]);
 
   const handleModelChange = async (path: string) => {
+    if (modelSwitching.active) return;
+    if (path === selectedModel) return;
+
+    const label =
+      models.find((m) => m.path === path)?.name ??
+      registeredModels.find((m) => m.id === path)?.name ??
+      path;
+
+    setModelSwitching({ active: true, targetLabel: label });
+    setModelLoadingStatus({
+      loading: true,
+      modelId: path,
+      message: `Switching to ${label}...`,
+    });
+
     try {
-      setSelectedModel(path);
-      await Api.switchModel(path);
+      const activeId = await Api.switchModel(path);
 
       const refreshed = await refreshModels();
-      const resolved = findRegisteredModelByIdentifier(refreshed, path);
+      const resolved =
+        findRegisteredModelByIdentifier(refreshed, activeId) ??
+        findRegisteredModelByIdentifier(refreshed, path);
       if (resolved) {
         setSelectedModel(resolved.id);
+      } else {
+        setSelectedModel(activeId);
       }
     } catch (err) {
       console.error(err);
-      showError("Failed to switch model");
+      const msg = err instanceof Error ? err.message : String(err);
+      showError(`Failed to switch model: ${msg}`);
+    } finally {
+      setModelSwitching({ active: false, targetLabel: "" });
     }
   };
 
@@ -2351,6 +2376,8 @@ function App() {
         onRenameWorkspace={renameWorkspaceById}
         workspaceBusy={workspaceBusy}
         modelLoadingStatus={modelLoadingStatus}
+        modelSwitching={modelSwitching.active}
+        modelSwitchingLabel={modelSwitching.targetLabel}
         models={models}
         selectedModel={selectedModel}
         onModelChange={handleModelChange}
