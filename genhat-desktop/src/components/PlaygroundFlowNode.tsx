@@ -51,24 +51,24 @@ const KIND_ICON: Record<NodeKind, LucideIcon> = {
 };
 
 const KIND_COLOR: Record<NodeKind, string> = {
-  Schedule: "bg-indigo-500/20 border-indigo-500/40 text-indigo-300",
-  Manual: "bg-emerald-500/20 border-emerald-500/40 text-emerald-300",
-  LlmChat: "bg-violet-500/20 border-violet-500/40 text-violet-300",
-  Summarize: "bg-violet-500/20 border-violet-500/40 text-violet-300",
-  Transcribe: "bg-blue-500/20 border-blue-500/40 text-blue-300",
-  Tts: "bg-blue-500/20 border-blue-500/40 text-blue-300",
-  RagQuery: "bg-cyan-500/20 border-cyan-500/40 text-cyan-300",
-  FileRead: "bg-amber-500/20 border-amber-500/40 text-amber-300",
-  FileWrite: "bg-amber-500/20 border-amber-500/40 text-amber-300",
-  EmailFetch: "bg-orange-500/20 border-orange-500/40 text-orange-300",
-  Condition: "bg-rose-500/20 border-rose-500/40 text-rose-300",
-  Template: "bg-teal-500/20 border-teal-500/40 text-teal-300",
-  Notification: "bg-sky-500/20 border-sky-500/40 text-sky-300",
-  Script: "bg-pink-500/20 border-pink-500/40 text-pink-300",
-  HttpRequest: "bg-lime-500/20 border-lime-500/40 text-lime-300",
-  RssReader: "bg-orange-500/20 border-orange-500/40 text-orange-300",
-  JsonPath: "bg-yellow-500/20 border-yellow-500/40 text-yellow-300",
-  SetVariable: "bg-teal-500/20 border-teal-500/40 text-teal-300",
+  Schedule: "bg-indigo-500/20 border-indigo-500/40",
+  Manual: "bg-emerald-500/20 border-emerald-500/40",
+  LlmChat: "bg-violet-500/20 border-violet-500/40",
+  Summarize: "bg-violet-500/20 border-violet-500/40",
+  Transcribe: "bg-blue-500/20 border-blue-500/40",
+  Tts: "bg-blue-500/20 border-blue-500/40",
+  RagQuery: "bg-cyan-500/20 border-cyan-500/40",
+  FileRead: "bg-amber-500/20 border-amber-500/40",
+  FileWrite: "bg-amber-500/20 border-amber-500/40",
+  EmailFetch: "bg-orange-500/20 border-orange-500/40",
+  Condition: "bg-rose-500/20 border-rose-500/40",
+  Template: "bg-teal-500/20 border-teal-500/40",
+  Notification: "bg-sky-500/20 border-sky-500/40",
+  Script: "bg-pink-500/20 border-pink-500/40",
+  HttpRequest: "bg-lime-500/20 border-lime-500/40",
+  RssReader: "bg-orange-500/20 border-orange-500/40",
+  JsonPath: "bg-yellow-500/20 border-yellow-500/40",
+  SetVariable: "bg-teal-500/20 border-teal-500/40",
 };
 
 interface PlaygroundFlowNodeProps {
@@ -78,12 +78,12 @@ interface PlaygroundFlowNodeProps {
 
 function PlaygroundFlowNode({ data, selected }: PlaygroundFlowNodeProps) {
   const Icon = KIND_ICON[data.kind] ?? Play;
-  const colorClass = KIND_COLOR[data.kind] ?? "bg-white/10 border-white/20 text-white";
+  const colorClass = KIND_COLOR[data.kind] ?? "bg-glass-bg border-glass-border";
 
   return (
     <div
       className={`
-        min-w-[140px] max-w-[200px] rounded-xl border backdrop-blur-sm
+        min-w-[140px] max-w-[200px] rounded-xl border backdrop-blur-sm text-txt
         ${colorClass}
         ${selected ? "ring-2 ring-white/40 shadow-lg" : ""}
         transition-shadow

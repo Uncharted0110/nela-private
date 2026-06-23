@@ -39,6 +39,7 @@ import {
   executeHandleSend,
   type MindmapOverlayState,
 } from "./app/handleSend";
+import { parseSlashCommands } from "./app/slashCommands";
 import {
   createNewWorkspaceAction,
   deleteWorkspaceByIdAction,
@@ -63,6 +64,9 @@ import AppMainContent from "./components/AppMainContent";
 import AppDialogsLayer from "./components/AppDialogsLayer";
 import AppRightSidebar from "./components/AppRightSidebar";
 import { useTour } from "./hooks/useTour";
+import { useNetworkActivity } from "./hooks/useNetworkActivity";
+import { useTheme } from "./hooks/useTheme";
+import { useAdvancedMode } from "./hooks/useAdvancedMode";
 import {
   applyCompactionResultToSession,
   CONTEXT_COMPACTION_KEEP_RECENT,
@@ -74,16 +78,11 @@ import "./App.css";
 
 function App() {
   // ── Theme ──────────────────────────────────────────────────────────────────
-  const [theme, setTheme] = useState<"dark" | "light">(() => {
-    return (localStorage.getItem("nela-theme") as "dark" | "light") ?? "dark";
-  });
+  const { theme, setTheme } = useTheme();
+  const networkActive = useNetworkActivity();
+  const { advanced } = useAdvancedMode();
 
-  useEffect(() => {
-    document.documentElement.setAttribute("data-theme", theme);
-    localStorage.setItem("nela-theme", theme);
-  }, [theme]);
-
-  const toggleTheme = () => setTheme((t) => (t === "dark" ? "light" : "dark"));
+  const toggleTheme = () => setTheme(theme === "neon" ? "professional" : "neon");
 
   // ── Model state ────────────────────────────────────────────────────────────
   const [models, setModels] = useState<ModelFile[]>([]);
@@ -202,6 +201,8 @@ function App() {
 
   // ── RAG state ──────────────────────────────────────────────────────────────
   const [ragEnabled, setRagEnabled] = useState(false);
+  const effectiveRagEnabled = advanced ? ragEnabled : true;
+  const effectiveThinkingEnabled = advanced ? thinkingEnabled : false;
   const [ragDocs, setRagDocs] = useState<IngestionStatus[]>([]);
   const [ragIngesting, setRagIngesting] = useState(false);
   const [enrichmentStatus, setEnrichmentStatus] = useState<string | null>(null);
@@ -1947,11 +1948,15 @@ function App() {
 
   const handleSend = useCallback(
     async (text: string) => {
+      const slash = parseSlashCommands(text);
+      if (slash.web) setWebEnabled(true);
+      if (slash.rag && advanced) setRagEnabled(true);
+
       await executeHandleSend(text, {
         activeSessionId,
         sessions,
         chatMode,
-        ragEnabled,
+        ragEnabled: effectiveRagEnabled,
         webEnabled,
         webDepth,
         imagePath,
@@ -1962,7 +1967,7 @@ function App() {
         selectedTtsEngine,
         ttsVoice,
         ttsSpeed,
-        thinkingEnabled,
+        thinkingEnabled: effectiveThinkingEnabled,
         abortControllersRef,
         visionUnlistenRef,
         generalIntervalRef,
@@ -1993,7 +1998,7 @@ function App() {
       activeSessionId,
       sessions,
       chatMode,
-      ragEnabled,
+      effectiveRagEnabled,
       webEnabled,
       webDepth,
       imagePath,
@@ -2004,7 +2009,8 @@ function App() {
       selectedTtsEngine,
       ttsVoice,
       ttsSpeed,
-      thinkingEnabled,
+      effectiveThinkingEnabled,
+      advanced,
       updateSession,
       clearImage,
       clearDirectDocuments,
@@ -2065,18 +2071,12 @@ function App() {
         return "What topic should the podcast cover?";
       case "mindmap":
         return ragDocs.length > 0
-          ? "Ask for a mindmap (auto-grounds on relevant documents)..."
-          : "Describe a topic to generate a mindmap...";
+          ? "Ask for a mindmap from your documents…"
+          : "Describe a topic to generate a mindmap…";
       default:
-        if (ragEnabled) {
-          return ragDocs.length > 0
-            ? "RAG is ON: ask about your ingested documents..."
-            : "RAG is ON: ingest documents or chat freely...";
-        }
-
-        return directDocumentPaths.length > 0 || ragDocs.length > 0
-          ? "RAG is OFF: documents will be sent directly to the model..."
-          : "RAG is OFF: attach documents or chat freely...";
+        if (ragDocs.length > 0) return "Ask a question about your documents…";
+        if (directDocumentPaths.length > 0) return "Ask a question about the attached documents…";
+        return "Ask a question, or add documents with + …";
     }
   };
 
@@ -2252,7 +2252,7 @@ function App() {
 
   // Show startup modal if no active workspace yet (unless we're running the tour from it)
   const showStartupModal = !activeWorkspace && !suppressStartupModal;
-  const showParamsDock = !!activeRuntimeParamTarget && paramsDockOpen;
+  const showParamsDock = advanced && !!activeRuntimeParamTarget && paramsDockOpen;
   const showRightSidebar = showParamsDock || docPanelOpen;
 
   return (
@@ -2397,6 +2397,7 @@ function App() {
         activeRuntimeParamTarget={activeRuntimeParamTarget}
         paramsDockOpen={paramsDockOpen}
         onToggleParamsDock={() => setParamsDockOpen((open) => !open)}
+        onApplyRuntimeParams={handleApplyRuntimeParams}
         contextUsage={activeContextUsage}
         onCompactContext={() => {
           void handleManualContextCompaction();
@@ -2404,7 +2405,7 @@ function App() {
         canCompactContext={canManualCompactContext}
         isCompactingContext={contextCompacting}
         ragDocs={ragDocs}
-        ragEnabled={ragEnabled}
+        ragEnabled={effectiveRagEnabled}
         modeOptions={MODE_CONFIG.map(({ mode, label }) => ({ mode, label }))}
         onSelectMode={handleModeSwitch}
         onToggleRagEnabled={handleRagToggle}
@@ -2443,7 +2444,7 @@ function App() {
         modeSwitchNotice={modeSwitchNotice}
         onSaveAudioToSidebar={handleSaveAudioToSidebar}
         streamingThinking={streamingThinking}
-        thinkingEnabled={thinkingEnabled}
+        thinkingEnabled={effectiveThinkingEnabled}
         onToggleThinking={() => setThinkingEnabled(!thinkingEnabled)}
         activeMindmapOverlay={activeMindmapOverlay}
         activeMindmapGraph={activeMindmapGraph}
@@ -2455,6 +2456,7 @@ function App() {
         onCloseDocViewer={closeDocViewer}
         onExitPlayground={handleExitPlayground}
         onCloseArtifact={handleCloseArtifact}
+        networkActive={networkActive}
       />
 
       <StartupModelToast

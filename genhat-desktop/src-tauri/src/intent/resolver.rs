@@ -95,25 +95,11 @@ impl IntentResolver {
 
         let trimmed = prompt.trim();
 
-        // Slash commands: /excel, /ppt, /search, /summarize, …
-        if let Some(cmd) = trimmed.strip_prefix('/') {
-            let cmd_word = cmd.split_whitespace().next().unwrap_or("").to_lowercase();
-            return Some(match cmd_word.as_str() {
-                "excel" | "xlsx" | "spreadsheet" | "sheet" => {
-                    IntentDecision::artifact("mcp-server-excel", "spreadsheet_synthesis")
-                }
-                "ppt" | "slides" | "presentation" | "deck" | "slide" => {
-                    IntentDecision::artifact("mcp-server-presentation", "presentation_synthesis")
-                }
-                "html" | "webpage" | "web" | "page" | "website" => {
-                    IntentDecision::artifact("mcp-server-html", "html_synthesis")
-                }
-                "search" | "find" | "locate" | "lookup" => {
-                    IntentDecision::file_search(0, 1.0)
-                }
-                "summarize" | "summary" | "tldr" => IntentDecision::summarize(0, 1.0),
-                _ => IntentDecision::chat_deterministic(),
-            });
+        // Slash commands: /web /excel /ppt /html /rag /files (combinable at start)
+        if trimmed.starts_with('/') {
+            if let Some(decision) = Self::parse_slash_commands(&trimmed) {
+                return Some(decision);
+            }
         }
 
         // High-signal natural-language triggers (only the most unambiguous phrases).
@@ -148,13 +134,86 @@ impl IntentResolver {
             "presentation" | "slides" | "ppt" => {
                 IntentDecision::artifact("mcp-server-presentation", "presentation_synthesis")
             }
-            "html" | "webpage" | "web" | "page" | "website" => {
+            "html" | "webpage" | "page" | "website" => {
                 IntentDecision::artifact("mcp-server-html", "html_synthesis")
             }
-            "file_search" | "search" | "find" => IntentDecision::file_search(0, 1.0),
+            "file_search" | "search" | "find" | "files" | "file" => {
+                IntentDecision::file_search(0, 1.0)
+            }
+            "rag" | "docs" | "documents" => IntentDecision::chat_deterministic(),
+            "web" | "internet" | "online" => IntentDecision::chat_deterministic(),
             "summarize" | "summarization" => IntentDecision::summarize(0, 1.0),
             _ => IntentDecision::chat_deterministic(),
         }
+    }
+
+    /// Parse one or more leading slash tokens. Returns the highest-priority route:
+    /// artifact > file_search > summarize > chat.
+    fn parse_slash_commands(trimmed: &str) -> Option<IntentDecision> {
+        let mut remaining: &str = trimmed;
+        let mut artifact: Option<IntentDecision> = None;
+        let mut file_search = false;
+        let mut summarize = false;
+        let mut parsed_any = false;
+
+        while let Some(rest) = remaining.strip_prefix('/') {
+            let token = rest
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .to_lowercase();
+            if token.is_empty() {
+                break;
+            }
+
+            let consumed = token.len() + 1; // slash + token
+            remaining = rest[consumed..].trim_start();
+            parsed_any = true;
+
+            match token.as_str() {
+                "excel" | "xlsx" | "spreadsheet" | "sheet" | "csv" => {
+                    artifact = Some(IntentDecision::artifact(
+                        "mcp-server-excel",
+                        "spreadsheet_synthesis",
+                    ));
+                }
+                "ppt" | "slides" | "presentation" | "deck" | "slide" => {
+                    artifact = Some(IntentDecision::artifact(
+                        "mcp-server-presentation",
+                        "presentation_synthesis",
+                    ));
+                }
+                "html" | "webpage" | "page" | "website" => {
+                    artifact = Some(IntentDecision::artifact(
+                        "mcp-server-html",
+                        "html_synthesis",
+                    ));
+                }
+                "web" | "internet" | "online" => {}
+                "rag" | "docs" | "documents" | "kb" | "library" => {}
+                "files" | "file" | "search" | "find" | "locate" | "lookup" => {
+                    file_search = true;
+                }
+                "summarize" | "summary" | "tldr" => summarize = true,
+                _ => break,
+            }
+        }
+
+        if artifact.is_some() {
+            return artifact;
+        }
+        if file_search {
+            return Some(IntentDecision::file_search(0, 1.0));
+        }
+        if summarize {
+            return Some(IntentDecision::summarize(0, 1.0));
+        }
+
+        // Only modifiers like /web with no artifact route — not a Tier 0 hit.
+        if parsed_any {
+            return None;
+        }
+        None
     }
 
     // ── Tier 1: ONNX DistilBERT classifier ───────────────────────────────────

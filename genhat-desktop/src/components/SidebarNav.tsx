@@ -1,4 +1,4 @@
-import React from "react";
+import type { ThemeName } from "../hooks/useTheme";
 import {
   MessageSquare,
   Volume2,
@@ -22,7 +22,7 @@ interface SidebarNavProps {
   onOpenHuggingFaceSearch?: () => void;
   workspaceBusy?: boolean;
   canExport?: boolean;
-  theme?: "dark" | "light";
+  theme?: ThemeName;
   onToggleTheme?: () => void;
 }
 
@@ -36,7 +36,7 @@ const SidebarNav: React.FC<SidebarNavProps> = ({
   onOpenHuggingFaceSearch,
   workspaceBusy = false,
   canExport = false,
-  theme = "dark",
+  theme = "neon",
   onToggleTheme,
 }) => {
   return (
@@ -89,10 +89,11 @@ const SidebarNav: React.FC<SidebarNavProps> = ({
         </button>
         <button
           className="flex flex-col items-center gap-1 px-2 py-2 rounded-lg transition-colors text-txt-secondary hover:text-neon"
-          title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+          title={theme === "neon" ? "Switch to Professional (light) theme" : "Switch to Classic (dark) theme"}
+          aria-label={theme === "neon" ? "Switch to Professional theme" : "Switch to Classic theme"}
           onClick={onToggleTheme}
         >
-          {theme === "dark" ? <Sun size={22} /> : <Moon size={22} />}
+          {theme === "neon" ? <Sun size={22} /> : <Moon size={22} />}
         </button>
         <button
           className="flex flex-col items-center gap-1 px-2 py-2 rounded-lg transition-colors text-txt-secondary hover:text-neon"

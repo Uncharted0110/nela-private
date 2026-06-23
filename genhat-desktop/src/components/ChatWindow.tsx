@@ -8,6 +8,11 @@ import SpeakButton from "./SpeakButton";
 import { Api } from "../api";
 import InlineArtifact from "./InlineArtifact";
 import type { ChatMessage, MediaAsset, IngestionStatus, ChatMode, ChatSession, WebSearchResult } from "../types";
+import { COPY } from "../app/copy";
+import { friendlyError } from "../app/friendlyError";
+import { useAdvancedMode } from "../hooks/useAdvancedMode";
+import { useSlashCommandInput } from "../hooks/useSlashCommandInput";
+import SlashCommandMenu from "./SlashCommandMenu";
 
 const MODE_ICON_MAP: Record<ChatMode, React.ElementType> = {
   text: MessageSquare,
@@ -39,7 +44,7 @@ const CopyMsgButton: React.FC<{ text: string }> = ({ text }) => {
   };
 
   return (
-    <button className="p-1.5 glass border border-glass-border text-txt-muted cursor-pointer rounded-lg transition-all duration-200 hover:text-neon hover:border-neon/30 hover:shadow-[0_0_8px_rgba(0,212,255,0.1)]" onClick={handleCopy} title="Copy response">
+    <button className="p-1.5 glass border border-glass-border text-txt-muted cursor-pointer rounded-lg transition-colors duration-150 hover:text-neon hover:border-glass-border" onClick={handleCopy} title="Copy response" aria-label="Copy response">
       {copied ? (
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
           <path d="M20 6L9 17L4 12" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
@@ -182,11 +187,11 @@ const MediaGallery: React.FC<{ assets: MediaAsset[] }> = ({ assets }) => {
             ) : (
               <div className="flex items-center justify-center w-[160px] h-[120px] text-txt-muted text-[0.75rem] bg-void-800">Loading…</div>
             )}
-            <span className="absolute top-1 right-1 text-[0.7rem] bg-black/60 rounded px-1 py-0.5 leading-none">
+            <span className="absolute top-1 right-1 text-[0.78rem] bg-black/60 rounded px-1 py-0.5 leading-none">
               {asset.asset_type === "table" ? "📊" : "🖼️"}
             </span>
             {expanded === asset.id && asset.caption && (
-              <div className="p-1.5 px-2 text-[0.72rem] text-txt-muted bg-void-800 leading-snug max-h-[100px] overflow-y-auto">{asset.caption}</div>
+              <div className="p-1.5 px-2 text-[0.78rem] text-txt-muted bg-void-800 leading-snug max-h-[100px] overflow-y-auto">{asset.caption}</div>
             )}
           </div>
         ))}
@@ -228,9 +233,9 @@ const VisionMessageImage: React.FC<{
       {previewSrc ? (
         <img src={previewSrc} alt={imageName} className="w-full h-[130px] object-cover" />
       ) : (
-        <div className="w-full h-[130px] flex items-center justify-center text-[0.72rem] text-txt-muted">Loading image...</div>
+        <div className="w-full h-[130px] flex items-center justify-center text-[0.78rem] text-txt-muted">Loading image...</div>
       )}
-      <div className="px-2.5 py-1.5 text-[0.72rem] text-txt-secondary truncate text-left group-hover:text-txt">
+      <div className="px-2.5 py-1.5 text-[0.78rem] text-txt-secondary truncate text-left group-hover:text-txt">
         {imageName}
       </div>
     </button>
@@ -245,7 +250,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
   onSend,
   onCancel,
   cancelled = false,
-  placeholder = "Message NELA...",
+  placeholder = COPY.slashCommandsHint,
   mediaAssets = {},
   chatMode = "text",
   ttsGenerating = false,
@@ -284,6 +289,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
   thinkingEnabled = false,
   onToggleThinking,
 }) => {
+  const { advanced } = useAdvancedMode();
   const [inputObj, setInputObj] = useState("");
   const [showAttachMenu, setShowAttachMenu] = useState(false);
   const [showModeMenu, setShowModeMenu] = useState(false);
@@ -292,6 +298,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
   const attachMenuRef = useRef<HTMLDivElement>(null);
   const modeMenuRef = useRef<HTMLDivElement>(null);
   const toolsMenuRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
 
   /** Tracks the number of messages that have already been rendered and animated.
@@ -332,18 +339,50 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [showAttachMenu, showModeMenu, showToolsMenu]);
 
+  const slash = useSlashCommandInput({
+    value: inputObj,
+    onChange: setInputObj,
+    textareaRef,
+    enabled: chatMode === "text",
+  });
+
   const handleSend = () => {
     if (!inputObj.trim() || isLoading) return;
     onSend(inputObj);
     setInputObj("");
+    slash.closeMenu();
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    slash.handleKeyDown(e, () => {
       if (!isLoading) handleSend();
-    }
+    });
   };
+
+  const renderChatTextarea = () => (
+    <div className="relative flex-1 min-w-0">
+      {slash.showMenu && (
+        <SlashCommandMenu
+          commands={slash.filteredCommands}
+          activeIndex={slash.activeIndex}
+          onSelect={slash.applyCommand}
+        />
+      )}
+      <textarea
+        ref={textareaRef}
+        value={inputObj}
+        onChange={(e) => slash.handleChange(e.target.value)}
+        onKeyDown={handleKeyDown}
+        onClick={slash.syncCursor}
+        onSelect={slash.syncCursor}
+        onKeyUp={slash.syncCursor}
+        placeholder={placeholder}
+        rows={1}
+        className="w-full bg-transparent border-none outline-none text-txt text-[0.92rem] py-2 px-1 min-h-[40px] max-h-[200px] resize-none leading-relaxed font-inherit placeholder:text-txt-muted"
+        data-tour="chat-input"
+      />
+    </div>
+  );
 
   const hasMessages = messages.length > 0 || isLoading;
   const showAttachButton = showRagControls || chatMode === "vision";
@@ -354,21 +393,42 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
     if (!result || result.results.length === 0) return null;
     return (
       <div className="mt-3 pt-2.5 border-t border-glass-border">
-        <div className="text-[0.72rem] text-txt-muted mb-2">Web sources</div>
-        <ul className="space-y-1.5 max-h-48 overflow-y-auto">
+        <div className="text-[0.78rem] text-txt-muted mb-2">Web sources</div>
+        <ul className="space-y-2 max-h-64 overflow-y-auto">
           {result.results.map((hit, i) => (
-            <li key={`${hit.url}-${i}`} className="text-[0.7rem] leading-snug">
-              <button
-                type="button"
-                onClick={() => { void openUrl(hit.url); }}
-                className="text-neon hover:underline font-medium block truncate text-left w-full"
-                title={hit.url}
-              >
-                {hit.title || hit.url}
-              </button>
-              {hit.snippet && (
-                <p className="text-txt-muted mt-0.5 line-clamp-2">{hit.snippet}</p>
+            <li key={`${hit.url}-${i}`} className="flex gap-2.5 text-[0.78rem] leading-snug">
+              {hit.image_url && (
+                <button
+                  type="button"
+                  onClick={() => { void openUrl(hit.url); }}
+                  className="shrink-0 rounded-md overflow-hidden border border-glass-border bg-void-700/40 hover:border-neon/30 transition-colors"
+                  title={hit.title || hit.url}
+                >
+                  <img
+                    src={hit.image_url}
+                    alt=""
+                    className="h-14 w-14 object-cover"
+                    loading="lazy"
+                    referrerPolicy="no-referrer"
+                    onError={(e) => {
+                      (e.currentTarget.parentElement as HTMLElement | null)?.remove();
+                    }}
+                  />
+                </button>
               )}
+              <div className="min-w-0 flex-1">
+                <button
+                  type="button"
+                  onClick={() => { void openUrl(hit.url); }}
+                  className="text-neon hover:underline font-medium block truncate text-left w-full"
+                  title={hit.url}
+                >
+                  {hit.title || hit.url}
+                </button>
+                {hit.snippet && (
+                  <p className="text-txt-muted mt-0.5 line-clamp-2">{hit.snippet}</p>
+                )}
+              </div>
             </li>
           ))}
         </ul>
@@ -384,32 +444,35 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
     return (
       <div className="animate-attach-menu absolute bottom-full right-0 mb-2 w-[220px] rounded-xl bg-void-700/90 backdrop-blur-xl border border-glass-border shadow-[0_8px_32px_rgba(0,0,0,0.5)] p-2 z-50">
         <div className="flex flex-col gap-2">
-          <button
-            className={`w-full flex items-center justify-between gap-2 py-2 px-2.5 rounded-lg text-sm transition-all duration-150 ${
-              ragEnabled
-                ? "bg-neon-subtle text-neon"
-                : "text-txt-secondary hover:bg-glass-hover hover:text-txt"
-            } ${canToggleRag ? "" : "opacity-50 cursor-not-allowed"}`}
-            onClick={() => {
-              if (!canToggleRag) return;
-              onToggleRagEnabled?.(!ragEnabled);
-            }}
-            title={canToggleRag ? "Toggle RAG retrieval" : "RAG is available in Chat mode"}
-            disabled={!canToggleRag}
-          >
-            <span className="text-[0.78rem] font-medium">RAG</span>
-            <span
-              className={`relative inline-flex h-4 w-8 rounded-full transition-colors ${
-                ragEnabled ? "bg-neon" : "bg-void-700"
-              }`}
+          {advanced && (
+            <button
+              className={`w-full flex items-center justify-between gap-2 py-2 px-2.5 rounded-lg text-sm transition-all duration-150 ${
+                ragEnabled
+                  ? "bg-neon-subtle text-neon"
+                  : "text-txt-secondary hover:bg-glass-hover hover:text-txt"
+              } ${canToggleRag ? "" : "opacity-50 cursor-not-allowed"}`}
+              onClick={() => {
+                if (!canToggleRag) return;
+                onToggleRagEnabled?.(!ragEnabled);
+              }}
+              title={canToggleRag ? COPY.toolSearchDocsHint : "Available when chatting"}
+              disabled={!canToggleRag}
+              aria-label={COPY.toolSearchDocs}
             >
+              <span className="text-[0.78rem] font-medium">{COPY.toolSearchDocs}</span>
               <span
-                className={`absolute top-0.5 h-3 w-3 rounded-full bg-white transition-transform ${
-                  ragEnabled ? "translate-x-4" : "translate-x-0.5"
+                className={`relative inline-flex h-4 w-8 rounded-full transition-colors ${
+                  ragEnabled ? "bg-neon" : "bg-void-700"
                 }`}
-              />
-            </span>
-          </button>
+              >
+                <span
+                  className={`absolute top-0.5 h-3 w-3 rounded-full bg-white transition-transform ${
+                    ragEnabled ? "translate-x-4" : "translate-x-0.5"
+                  }`}
+                />
+              </span>
+            </button>
+          )}
 
           <div className={`w-full rounded-lg ${canToggleWeb ? "" : "opacity-50 cursor-not-allowed"}`}>
             <button
@@ -422,10 +485,11 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
                 if (!canToggleWeb) return;
                 onToggleWebEnabled?.(!webEnabled);
               }}
-              title={canToggleWeb ? "Toggle web search" : "Web search is available in Chat mode"}
+              title={canToggleWeb ? COPY.toolSearchWebHint : "Available when chatting"}
               disabled={!canToggleWeb}
+              aria-label={COPY.toolSearchWeb}
             >
-              <span className="text-[0.78rem] font-medium">Web search</span>
+              <span className="text-[0.78rem] font-medium">{COPY.toolSearchWeb}</span>
               <span
                 className={`relative inline-flex h-4 w-8 rounded-full transition-colors ${
                   webEnabled ? "bg-neon" : "bg-void-700"
@@ -440,7 +504,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
             </button>
             {webEnabled && canToggleWeb && (
               <div className="flex items-center justify-between gap-2 px-2.5 pb-2">
-                <div className="inline-flex rounded-full border border-glass-border overflow-hidden text-[0.68rem]">
+                <div className="inline-flex rounded-full border border-glass-border overflow-hidden text-[0.78rem]">
                   <button
                     className={`px-2 py-0.5 transition-colors ${
                       webDepth === "snippets"
@@ -448,8 +512,9 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
                         : "bg-glass-bg text-txt-muted hover:text-txt"
                     }`}
                     onClick={() => onWebDepthChange?.("snippets")}
+                    aria-label="Quick web results"
                   >
-                    Snippets
+                    Quick
                   </button>
                   <button
                     className={`px-2 py-0.5 transition-colors ${
@@ -458,40 +523,44 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
                         : "bg-glass-bg text-txt-muted hover:text-txt"
                     }`}
                     onClick={() => onWebDepthChange?.("full")}
+                    aria-label="Thorough web results"
                   >
-                    Full
+                    Thorough
                   </button>
                 </div>
               </div>
             )}
           </div>
 
-          <button
-            className={`w-full flex items-center justify-between gap-2 py-2 px-2.5 rounded-lg text-sm transition-all duration-150 ${
-              thinkingEnabled
-                ? "bg-neon-subtle text-neon"
-                : "text-txt-secondary hover:bg-glass-hover hover:text-txt"
-            } ${canToggleThinking ? "" : "opacity-50 cursor-not-allowed"}`}
-            onClick={() => {
-              if (!canToggleThinking) return;
-              onToggleThinking?.();
-            }}
-            title={canToggleThinking ? "Toggle thinking" : "Thinking is unavailable"}
-            disabled={!canToggleThinking}
-          >
-            <span className="text-[0.78rem] font-medium">Thinking</span>
-            <span
-              className={`relative inline-flex h-4 w-8 rounded-full transition-colors ${
-                thinkingEnabled ? "bg-neon" : "bg-void-700"
-              }`}
+          {advanced && (
+            <button
+              className={`w-full flex items-center justify-between gap-2 py-2 px-2.5 rounded-lg text-sm transition-all duration-150 ${
+                thinkingEnabled
+                  ? "bg-neon-subtle text-neon"
+                  : "text-txt-secondary hover:bg-glass-hover hover:text-txt"
+              } ${canToggleThinking ? "" : "opacity-50 cursor-not-allowed"}`}
+              onClick={() => {
+                if (!canToggleThinking) return;
+                onToggleThinking?.();
+              }}
+              title={canToggleThinking ? COPY.toolShowReasoningHint : "Available when chatting"}
+              disabled={!canToggleThinking}
+              aria-label={COPY.toolShowReasoning}
             >
+              <span className="text-[0.78rem] font-medium">{COPY.toolShowReasoning}</span>
               <span
-                className={`absolute top-0.5 h-3 w-3 rounded-full bg-white transition-transform ${
-                  thinkingEnabled ? "translate-x-4" : "translate-x-0.5"
+                className={`relative inline-flex h-4 w-8 rounded-full transition-colors ${
+                  thinkingEnabled ? "bg-neon" : "bg-void-700"
                 }`}
-              />
-            </span>
-          </button>
+              >
+                <span
+                  className={`absolute top-0.5 h-3 w-3 rounded-full bg-white transition-transform ${
+                    thinkingEnabled ? "translate-x-4" : "translate-x-0.5"
+                  }`}
+                />
+              </span>
+            </button>
+          )}
         </div>
       </div>
     );
@@ -513,14 +582,14 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
             <path d="M21 15l-5-5L5 21" />
           </svg>
           <div className="flex flex-col items-start">
-            <span className="font-medium">Upload Image</span>
-            <span className="text-[0.68rem] text-txt-muted">JPG, PNG, WEBP, GIF, BMP</span>
+            <span className="font-medium">{COPY.uploadImageTitle}</span>
+            <span className="text-[0.78rem] text-txt-muted">{COPY.uploadImageHint}</span>
           </div>
         </button>
       );
     }
 
-    if (chatMode === "text" && !ragEnabled) {
+    if (advanced && chatMode === "text" && !ragEnabled) {
       return (
         <button
           className="w-full flex items-center gap-2.5 py-2 px-3 rounded-lg text-sm text-txt-secondary bg-transparent border-none cursor-pointer transition-all duration-150 hover:bg-glass-hover hover:text-txt"
@@ -534,8 +603,8 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
             <polyline points="14 2 14 8 20 8" />
           </svg>
           <div className="flex flex-col items-start">
-            <span className="font-medium">Attach Files</span>
-            <span className="text-[0.68rem] text-txt-muted">Send directly to model</span>
+            <span className="font-medium">{COPY.addDocumentsTitle}</span>
+            <span className="text-[0.78rem] text-txt-muted">{COPY.addDocumentsHint}</span>
           </div>
         </button>
       );
@@ -555,8 +624,8 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
             <polyline points="14 2 14 8 20 8" />
           </svg>
           <div className="flex flex-col items-start">
-            <span className="font-medium">Add Files</span>
-            <span className="text-[0.68rem] text-txt-muted">PDF, DOCX, TXT, code...</span>
+            <span className="font-medium">{COPY.addDocumentsTitle}</span>
+            <span className="text-[0.78rem] text-txt-muted">{COPY.addDocumentsHint}</span>
           </div>
         </button>
         <button
@@ -570,13 +639,16 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
             <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
           </svg>
           <div className="flex flex-col items-start">
-            <span className="font-medium">Add Folder</span>
-            <span className="text-[0.68rem] text-txt-muted">Ingest entire directory</span>
+            <span className="font-medium">{COPY.addFolderTitle}</span>
+            <span className="text-[0.78rem] text-txt-muted">{COPY.addFolderHint}</span>
           </div>
         </button>
       </>
     );
   };
+
+  const attachButtonLabel =
+    chatMode === "vision" ? COPY.uploadImageTitle : COPY.addDocumentsTitle;
 
   const renderVisionAttachment = () => {
     if (chatMode !== "vision" || !visionImagePreview) return null;
@@ -594,7 +666,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
             <img src={visionImagePreview} alt="Vision attachment" className="w-full h-full object-cover" />
           </button>
           <button
-            className="text-[0.74rem] text-txt-secondary max-w-[180px] truncate text-left hover:text-txt"
+            className="text-[0.8rem] text-txt-secondary max-w-[180px] truncate text-left hover:text-txt"
             onClick={() => {
               setPreviewModal({ src: visionImagePreview, title: visionFileName });
             }}
@@ -622,13 +694,14 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
     return (
       <div className="w-full mb-2">
         <div className="flex items-start gap-2 mb-1.5">
-          <span className="text-[0.7rem] text-txt-muted">
-            Direct docs ({directDocumentPaths.length})
+          <span className="text-[0.78rem] text-txt-muted">
+            Attached documents ({directDocumentPaths.length})
           </span>
           <button
-            className="text-[0.68rem] text-txt-muted hover:text-danger"
+            className="text-[0.78rem] text-txt-muted hover:text-danger"
             onClick={onClearDirectDocuments}
             title="Clear all attached documents"
+            aria-label="Clear all attached documents"
           >
             Clear all
           </button>
@@ -639,7 +712,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
             return (
               <span
                 key={path}
-                className="inline-flex items-center gap-1 py-1 px-2 rounded-lg bg-void-700 border border-glass-border text-[0.68rem] text-txt-secondary max-w-55"
+                className="inline-flex items-center gap-1 py-1 px-2 rounded-lg bg-void-700 border border-glass-border text-[0.78rem] text-txt-secondary max-w-55"
                 title={path}
               >
                 <span className="truncate">{name}</span>
@@ -647,6 +720,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
                   className="w-4 h-4 inline-flex items-center justify-center rounded text-txt-muted hover:text-danger"
                   onClick={() => onRemoveDirectDocument?.(path)}
                   title="Remove document"
+                  aria-label={`Remove ${name}`}
                 >
                   <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <line x1="18" y1="6" x2="6" y2="18" />
@@ -663,6 +737,12 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
 
   // ─── Centered Welcome State (Claude/Copilot style) ───
   if (!hasMessages) {
+    const SUGGESTIONS: Array<{ title: string; prompt: string }> = [
+      { title: "Summarize a document", prompt: "Summarize the key points in my document." },
+      { title: "Find an answer", prompt: "Answer this question using my documents: " },
+      { title: "Draft an email", prompt: "Draft a professional email about: " },
+    ];
+
     return (
       <div className="h-full flex-1 flex flex-col items-center justify-center relative px-6">
         {/* Animated orb */}
@@ -673,60 +753,74 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
           <img
             src="/logo-dark.png"
             alt="NELA"
-            className="w-14 h-14 rounded-2xl object-contain shadow-[0_4px_30px_rgba(0,212,255,0.3)] mb-4"
+            className="w-14 h-14 rounded-2xl object-contain mb-4"
             draggable={false}
           />
-          <h2 className="text-2xl font-bold text-txt m-0 mb-1">What can I help with?</h2>
-          <p className="text-sm text-txt-muted m-0">Ask anything — chat, analyze images, or explore your documents</p>
+          <h2 className="text-2xl font-bold text-txt m-0 mb-1">What would you like to do?</h2>
+          <p className="text-[0.95rem] text-txt-muted m-0">
+            Ask a question, or add documents with the <strong>+</strong> button.
+          </p>
         </div>
 
         {/* Centered Input */}
         <div className="relative z-10 w-full max-w-2xl">
+          <div className="flex flex-wrap justify-center gap-2 mb-3">
+              {SUGGESTIONS.map((s) => (
+              <button
+                key={s.title}
+                type="button"
+                className="px-3 py-1.5 rounded-full border border-glass-border bg-glass-bg text-[0.82rem] text-txt-secondary hover:text-txt hover:bg-glass-hover transition-colors"
+                onClick={() => {
+                  setInputObj(s.prompt);
+                }}
+                aria-label={s.title}
+                title={s.title}
+              >
+                {s.title}
+              </button>
+            ))}
+          </div>
+
           {/* RAG doc indicators */}
           {showRagControls && (
             <div className="flex items-center gap-2 mb-2 justify-center">
               <button
-                className={`glass-btn inline-flex items-center gap-1.5 py-1 px-3 text-[0.78rem] font-medium rounded-full cursor-pointer transition-all duration-200 border backdrop-blur-md ${docPanelOpen ? "bg-neon-subtle text-neon border-neon/30 shadow-[0_0_12px_rgba(0,212,255,0.12)]" : "bg-glass-bg text-txt-secondary border-glass-border hover:border-neon hover:text-neon hover:shadow-[0_0_12px_rgba(0,212,255,0.08)]"}`}
+                className={`glass-btn inline-flex items-center gap-1.5 py-1 px-3 text-[0.78rem] font-medium rounded-full cursor-pointer transition-colors duration-150 border ${docPanelOpen ? "bg-neon-subtle text-neon border-neon/30" : "bg-glass-bg text-txt-secondary border-glass-border hover:text-txt"}`}
                 onClick={onToggleDocPanel}
-                title="Toggle knowledge base panel"
+                title="Show or hide your documents"
               >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
                   <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
                 </svg>
-                {ragDocs.length > 0 ? `${ragDocs.length} file${ragDocs.length !== 1 ? "s" : ""} loaded` : "Knowledge Base"}
+                {ragDocs.length > 0 ? `${ragDocs.length} file${ragDocs.length !== 1 ? "s" : ""} loaded` : COPY.libraryTitle}
               </button>
               {ragIngesting && (
-                <span className="inline-flex items-center gap-1 text-[0.72rem] text-warning">
+                <span className="inline-flex items-center gap-1 text-[0.78rem] text-warning">
                   <svg className="spin" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 1 1-6.219-8.56" /></svg>
-                  Ingesting...
+                  {COPY.processing}
                 </span>
               )}
               {enrichmentStatus && (
-                <span className="inline-flex items-center gap-1 text-[0.72rem] text-success">
+                <span className="inline-flex items-center gap-1 text-[0.78rem] text-success">
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5" /></svg>
-                  {enrichmentStatus}
+                  {COPY.docStateEnhanced}
                 </span>
               )}
             </div>
           )}
 
-          <div className="input-wrapper glass-strong flex flex-col gap-2 rounded-2xl px-2 py-2 transition-all duration-200 shadow-[0_4px_24px_rgba(0,0,0,0.3)] focus-within:border-neon focus-within:shadow-[0_0_24px_rgba(0,212,255,0.15),0_4px_24px_rgba(0,0,0,0.3)]">
+          <div className="input-wrapper glass-strong flex flex-col gap-2 rounded-2xl px-2 py-2 transition-colors duration-150 focus-within:border-neon">
             {renderVisionAttachment()}
             {renderDirectDocumentAttachments()}
             <div className="flex items-center gap-2">
             {showAttachButton && (
               <div className="relative" ref={attachMenuRef}>
                 <button
-                  className="glass-btn flex items-center justify-center w-10 h-10 bg-glass-bg border border-glass-border text-txt-muted cursor-pointer rounded-lg transition-all duration-200 backdrop-blur-sm hover:text-neon hover:border-neon/30 hover:shadow-[0_0_8px_rgba(0,212,255,0.1)] disabled:opacity-40"
+                  className="glass-btn flex items-center justify-center w-10 h-10 bg-glass-bg border border-glass-border text-txt-muted cursor-pointer rounded-lg transition-colors duration-150 hover:text-txt disabled:opacity-40"
                   onClick={() => setShowAttachMenu(!showAttachMenu)}
-                  title={
-                    chatMode === "vision"
-                      ? "Upload image"
-                      : chatMode === "text" && !ragEnabled
-                        ? "Attach documents directly to the model"
-                        : "Add documents to knowledge base"
-                  }
+                  title={attachButtonLabel}
+                  aria-label={attachButtonLabel}
                   disabled={isLoading}
                   data-tour="attach-button"
                 >
@@ -744,15 +838,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
               </div>
             )}
 
-            <textarea
-              value={inputObj}
-              onChange={(e) => setInputObj(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder={placeholder}
-              rows={1}
-              className="flex-1 bg-transparent border-none outline-none text-txt text-[0.92rem] py-2 px-1 min-h-[40px] max-h-[200px] resize-none leading-relaxed font-inherit placeholder:text-txt-muted"
-              data-tour="chat-input"
-            />
+            {renderChatTextarea()}
             {/* Voice input button - allows speaking instead of typing */}
             <VoiceInputButton
               onTranscript={(text) => {
@@ -762,9 +848,10 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
             />
             <div className="relative" ref={toolsMenuRef}>
               <button
-                className="glass-btn flex items-center justify-center w-10 h-10 rounded-lg bg-glass-bg border border-glass-border text-txt-muted cursor-pointer transition-all duration-200 hover:text-neon hover:border-neon/30 hover:shadow-[0_0_10px_rgba(0,212,255,0.12)]"
+                className="glass-btn flex items-center justify-center w-10 h-10 rounded-lg bg-glass-bg border border-glass-border text-txt-muted cursor-pointer transition-colors duration-150 hover:text-txt"
                 onClick={() => setShowToolsMenu((v) => !v)}
                 title="Tools"
+                aria-label="Tools"
                 disabled={isLoading}
               >
                 <Wrench size={16} strokeWidth={1.9} />
@@ -774,14 +861,15 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
             </div>
             <div className="relative" ref={modeMenuRef}>
               <button
-                className="glass-btn flex items-center gap-1.5 h-10 px-2 rounded-lg bg-glass-bg border border-glass-border text-txt-muted cursor-pointer transition-all duration-200 hover:text-neon hover:border-neon/30 hover:shadow-[0_0_10px_rgba(0,212,255,0.12)]"
+                className="glass-btn flex items-center gap-1.5 h-10 px-2 rounded-lg bg-glass-bg border border-glass-border text-txt-muted cursor-pointer transition-colors duration-150 hover:text-txt"
                 onClick={() => setShowModeMenu((v) => !v)}
                 title="Switch mode"
+                aria-label="Switch mode"
                 disabled={isLoading}
                 data-tour="mode-switch"
               >
                 <CurrentModeIcon size={16} strokeWidth={1.9} />
-                <span className="text-[0.74rem] font-medium leading-none">{currentModeLabel}</span>
+                <span className="text-[0.8rem] font-medium leading-none">{currentModeLabel}</span>
               </button>
 
               {showModeMenu && (
@@ -808,7 +896,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
                 </div>
               )}
             </div>
-            <button className="send-btn flex items-center justify-center w-10 h-10 rounded-lg bg-neon text-void-900 border border-neon/50 cursor-pointer transition-all duration-200 shadow-[0_0_16px_rgba(0,212,255,0.2)] hover:bg-neon-hover hover:shadow-[0_0_24px_rgba(0,212,255,0.35)] disabled:opacity-30 disabled:cursor-not-allowed disabled:shadow-none shrink-0" onClick={handleSend} disabled={!inputObj.trim()}>
+            <button className="send-btn flex items-center justify-center w-10 h-10 rounded-lg bg-neon text-void-900 border border-neon/50 cursor-pointer transition-colors duration-150 hover:bg-neon-hover disabled:opacity-30 disabled:cursor-not-allowed shrink-0" onClick={handleSend} disabled={!inputObj.trim()} aria-label="Send message">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <path d="M5 12H19M19 12L12 5M19 12L12 19" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
@@ -852,7 +940,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
                 {msg.role === "user" ? (
                   <>
                     <div className="flex flex-col items-end flex-1 min-w-0">
-                      <div className="py-3 px-4 rounded-2xl rounded-tr-sm text-[0.9rem] leading-relaxed text-txt max-w-[85%] bg-[rgba(0,212,255,0.04)] backdrop-blur-lg border border-[rgba(0,212,255,0.1)] shadow-[0_4px_20px_rgba(0,0,0,0.25),inset_0_1px_0_rgba(255,255,255,0.04)]">
+                      <div className="py-3 px-4 rounded-2xl rounded-tr-sm text-[0.9rem] leading-relaxed text-txt max-w-[85%] bg-glass-bg border border-glass-border">
                         {msg.visionImage && (
                           <div className="mb-2.5">
                             <VisionMessageImage
@@ -869,7 +957,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
                             {msg.directDocuments.map((doc, docIdx) => (
                               <span
                                 key={`${doc.path}-${docIdx}`}
-                                className="inline-flex items-center gap-1 py-0.5 px-2 rounded-md bg-void-800/70 border border-glass-border text-[0.68rem] text-txt-secondary"
+                                className="inline-flex items-center gap-1 py-0.5 px-2 rounded-md bg-void-800/70 border border-glass-border text-[0.78rem] text-txt-secondary"
                                 title={doc.path}
                               >
                                 <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -884,7 +972,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
                         {msg.content}
                       </div>
                     </div>
-                    <div className="w-8 h-8 rounded-xl bg-neon-subtle text-neon flex items-center justify-center shrink-0 border border-neon/15 shadow-[0_2px_8px_rgba(0,212,255,0.1)]">
+                    <div className="w-8 h-8 rounded-xl bg-neon-subtle text-neon flex items-center justify-center shrink-0 border border-neon/15">
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                         <path d="M12 12c2.761 0 5-2.239 5-5s-2.239-5-5-5-5 2.239-5 5 2.239 5 5 5z" fill="currentColor" />
                         <path d="M4 20c0-3.3137 2.6863-6 6-6h4c3.3137 0 6 2.6863 6 6v1H4v-1z" fill="currentColor" />
@@ -896,12 +984,12 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
                     <img
                       src="/logo-dark.png"
                       alt="NELA"
-                      className="w-8 h-8 rounded-xl object-contain shrink-0 shadow-[0_2px_12px_rgba(0,212,255,0.25)]"
+                      className="w-8 h-8 rounded-xl object-contain shrink-0"
                       draggable={false}
                     />
                     <div className="flex-1 min-w-0">
-                      <div className="text-[0.9rem] leading-relaxed text-txt glass rounded-2xl rounded-tl-sm py-3 px-4 shadow-[0_4px_20px_rgba(0,0,0,0.2),inset_0_1px_0_rgba(255,255,255,0.03)]">
-                        {msg.thinking && <ThinkingBox thinking={msg.thinking} />}
+                      <div className="text-[0.9rem] leading-relaxed text-txt glass rounded-2xl rounded-tl-sm py-3 px-4">
+                        {advanced && msg.thinking && <ThinkingBox thinking={msg.thinking} />}
                         <MarkdownRenderer content={msg.content} />
                         {renderInlineWebSources(msg.webSearchResult)}
                         {mediaAssets[idx] && <MediaGallery assets={mediaAssets[idx]} />}
@@ -911,16 +999,33 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
                               key={`artifact-${idx}-${msg.artifactPath ?? "pending"}`}
                               artifactPath={msg.artifactPath}
                               artifactStage={msg.artifactStage as any}
-                              errorMessage={msg.artifactStage === "Error" ? msg.content : undefined}
+                              errorMessage={msg.artifactStage === "Error" ? friendlyError(msg.content) : undefined}
                             />
+                            {msg.artifactStage === "Error" && (
+                              <button
+                                type="button"
+                                className="mt-2 text-[0.78rem] text-neon hover:text-neon-hover underline-offset-2 hover:underline"
+                                onClick={() => {
+                                  for (let i = idx - 1; i >= 0; i--) {
+                                    const prior = messages[i];
+                                    if (prior?.role === "user" && prior.content.trim()) {
+                                      onSend(prior.content);
+                                      return;
+                                    }
+                                  }
+                                }}
+                              >
+                                {COPY.retry}
+                              </button>
+                            )}
                           </div>
                         )}
                         <div className="flex items-center gap-1 mt-2 pt-1.5">
                           <CopyMsgButton text={msg.content} />
                           {/* Read response aloud button */}
                           <SpeakButton text={msg.content} compact />
-                          {msg.generateTime !== undefined && (
-                            <span className="text-[0.7rem] text-txt-muted ml-1" title={msg.firstTokenTime !== undefined ? `Generated in ${msg.generateTime}s\nFirst token in ${msg.firstTokenTime}s` : `Generated in ${msg.generateTime}s`}>
+                        {advanced && msg.generateTime !== undefined && (
+                            <span className="text-[0.78rem] text-txt-muted ml-1" title={msg.firstTokenTime !== undefined ? `Generated in ${msg.generateTime}s\nFirst token in ${msg.firstTokenTime}s` : `Generated in ${msg.generateTime}s`}>
                               Generated in {msg.generateTime}s {msg.firstTokenTime !== undefined && `• First token in ${msg.firstTokenTime}s`}
                             </span>
                           )}
@@ -957,7 +1062,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
               draggable={false}
             />
             <div className="flex-1 min-w-0 text-[0.9rem] leading-relaxed text-txt glass rounded-2xl rounded-tl-sm py-3 px-4">
-              {streamingThinking && (
+              {advanced && streamingThinking && (
                 <div className="mb-3 p-3 rounded-lg bg-black/20 border border-white/5 text-xs text-txt-muted leading-relaxed opacity-70">
                   <div className="flex items-center gap-2 mb-2">
                     <span className="font-medium">Thinking...</span>
@@ -967,7 +1072,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
               )}
               {streamingContent ? (
                 <MarkdownRenderer content={streamingContent} />
-              ) : !streamingThinking ? (
+              ) : !advanced || !streamingThinking ? (
                 <div className="typing-dots flex gap-1.5 py-2">
                   <span></span><span></span><span></span>
                 </div>
@@ -1000,9 +1105,9 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
 
         {/* Audio Player (legacy block removed; now only rendered inline after assistant messages) */}
 
-        {/* Response time completion */}
-        {chatMode !== "audio" && generalGenerationTime !== null && !generalGenerating && (
-          <div className="flex items-center gap-1.5 py-1 px-3 rounded-full max-w-3xl mx-auto text-[0.72rem] text-success">
+        {/* Response time completion (advanced only; keeps simple mode calmer) */}
+        {advanced && chatMode !== "audio" && generalGenerationTime !== null && !generalGenerating && (
+          <div className="flex items-center gap-1.5 py-1 px-3 rounded-full max-w-3xl mx-auto text-[0.78rem] text-success">
             <span>✓</span>
             <span>
               {chatMode === "vision" && `Analyzed in ${generalGenerationTime.toFixed(1)}s`}
@@ -1034,24 +1139,24 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
             <button
               className={`glass-btn inline-flex items-center gap-1.5 py-1 px-3 text-[0.78rem] font-medium rounded-full cursor-pointer transition-all duration-200 border backdrop-blur-md ${docPanelOpen ? "bg-neon-subtle text-neon border-neon/30 shadow-[0_0_12px_rgba(0,212,255,0.12)]" : "bg-glass-bg text-txt-secondary border-glass-border hover:border-neon hover:text-neon hover:shadow-[0_0_12px_rgba(0,212,255,0.08)]"}`}
               onClick={onToggleDocPanel}
-              title="Toggle knowledge base panel"
+              title="Show or hide your documents"
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
                 <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
               </svg>
-              {ragDocs.length > 0 ? `${ragDocs.length} file${ragDocs.length !== 1 ? "s" : ""} loaded` : "Knowledge Base"}
+              {ragDocs.length > 0 ? `${ragDocs.length} file${ragDocs.length !== 1 ? "s" : ""} loaded` : COPY.libraryTitle}
             </button>
             {ragIngesting && (
-              <span className="inline-flex items-center gap-1 text-[0.72rem] text-warning">
+              <span className="inline-flex items-center gap-1 text-[0.78rem] text-warning">
                 <svg className="spin" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 1 1-6.219-8.56" /></svg>
-                Ingesting...
+                {COPY.processing}
               </span>
             )}
             {enrichmentStatus && (
-              <span className="inline-flex items-center gap-1 text-[0.72rem] text-success">
+              <span className="inline-flex items-center gap-1 text-[0.78rem] text-success">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5" /></svg>
-                {enrichmentStatus}
+                {COPY.docStateEnhanced}
               </span>
             )}
           </div>
@@ -1066,13 +1171,8 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
               <button
                 className="glass-btn flex items-center justify-center w-10 h-10 bg-glass-bg border border-glass-border text-txt-muted cursor-pointer rounded-lg transition-all duration-200 backdrop-blur-sm hover:text-neon hover:border-neon/30 hover:shadow-[0_0_8px_rgba(0,212,255,0.1)] disabled:opacity-40"
                 onClick={() => setShowAttachMenu(!showAttachMenu)}
-                title={
-                  chatMode === "vision"
-                    ? "Upload image"
-                    : chatMode === "text" && !ragEnabled
-                      ? "Attach documents directly to the model"
-                      : "Add documents to knowledge base"
-                }
+                title={attachButtonLabel}
+                aria-label={attachButtonLabel}
                 disabled={isLoading}
                 data-tour="attach-button"
               >
@@ -1090,15 +1190,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
             </div>
           )}
 
-          <textarea
-            value={inputObj}
-            onChange={(e) => setInputObj(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder={placeholder}
-            rows={1}
-            className="flex-1 bg-transparent border-none outline-none text-txt text-[0.92rem] py-2 px-1 min-h-[40px] max-h-[200px] resize-none leading-relaxed font-inherit placeholder:text-txt-muted"
-            data-tour="chat-input"
-          />
+          {renderChatTextarea()}
           {/* Voice input button - allows speaking instead of typing */}
           <VoiceInputButton
             onTranscript={(text) => {
@@ -1111,11 +1203,12 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
               className="glass-btn flex items-center gap-1.5 h-10 px-2 rounded-lg bg-glass-bg border border-glass-border text-txt-muted cursor-pointer transition-all duration-200 hover:text-neon hover:border-neon/30 hover:shadow-[0_0_10px_rgba(0,212,255,0.12)]"
               onClick={() => setShowModeMenu((v) => !v)}
               title="Switch mode"
+              aria-label="Switch mode"
               disabled={isLoading}
               data-tour="mode-switch"
             >
               <CurrentModeIcon size={16} strokeWidth={1.9} />
-              <span className="text-[0.74rem] font-medium leading-none">{currentModeLabel}</span>
+              <span className="text-[0.8rem] font-medium leading-none">{currentModeLabel}</span>
             </button>
 
             {showModeMenu && (
@@ -1147,6 +1240,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
               className="glass-btn flex items-center justify-center w-10 h-10 rounded-lg bg-glass-bg border border-glass-border text-txt-muted cursor-pointer transition-all duration-200 hover:text-neon hover:border-neon/30 hover:shadow-[0_0_10px_rgba(0,212,255,0.12)]"
               onClick={() => setShowToolsMenu((v) => !v)}
               title="Tools"
+              aria-label="Tools"
               disabled={isLoading}
             >
               <Wrench size={16} strokeWidth={1.9} />
@@ -1155,11 +1249,11 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
             {showToolsMenu && renderToolsMenu()}
           </div>
           {isLoading ? (
-            <button className="flex items-center justify-center w-10 h-10 rounded-lg bg-danger/80 backdrop-blur-sm text-white border border-danger/30 cursor-pointer transition-all duration-200 shadow-[0_0_12px_rgba(248,113,113,0.2)] hover:bg-danger hover:shadow-[0_0_20px_rgba(248,113,113,0.3)] shrink-0" onClick={onCancel} title="Stop generation">
+            <button className="flex items-center justify-center w-10 h-10 rounded-lg bg-danger/80 backdrop-blur-sm text-white border border-danger/30 cursor-pointer transition-all duration-200 shadow-[0_0_12px_rgba(248,113,113,0.2)] hover:bg-danger hover:shadow-[0_0_20px_rgba(248,113,113,0.3)] shrink-0" onClick={onCancel} title="Stop generation" aria-label="Stop response">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2" /></svg>
             </button>
           ) : (
-            <button className="send-btn flex items-center justify-center w-10 h-10 rounded-lg bg-neon text-void-900 border border-neon/50 cursor-pointer transition-all duration-200 shadow-[0_0_16px_rgba(0,212,255,0.2)] hover:bg-neon-hover hover:shadow-[0_0_24px_rgba(0,212,255,0.35)] disabled:opacity-30 disabled:cursor-not-allowed disabled:shadow-none shrink-0" onClick={handleSend} disabled={!inputObj.trim()}>
+            <button className="send-btn flex items-center justify-center w-10 h-10 rounded-lg bg-neon text-void-900 border border-neon/50 cursor-pointer transition-all duration-200 shadow-[0_0_16px_rgba(0,212,255,0.2)] hover:bg-neon-hover hover:shadow-[0_0_24px_rgba(0,212,255,0.35)] disabled:opacity-30 disabled:cursor-not-allowed disabled:shadow-none shrink-0" onClick={handleSend} disabled={!inputObj.trim()} aria-label="Send message">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <path d="M5 12H19M19 12L12 5M19 12L12 19" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
               </svg>

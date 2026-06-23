@@ -71,6 +71,7 @@ interface AppMainContentProps {
   activeRuntimeParamTarget: RuntimeParamsTarget | null;
   paramsDockOpen: boolean;
   onToggleParamsDock: () => void;
+  onApplyRuntimeParams: (nextParams: Record<string, string>) => Promise<void>;
   contextUsage: ChatContextUsage | null;
   onCompactContext: () => void;
   canCompactContext: boolean;
@@ -128,6 +129,7 @@ interface AppMainContentProps {
   onCloseDocViewer: () => void;
   onExitPlayground?: () => void;
   onCloseArtifact?: () => void;
+  networkActive?: boolean;
 }
 
 export default function AppMainContent({
@@ -168,6 +170,7 @@ export default function AppMainContent({
   activeRuntimeParamTarget,
   paramsDockOpen,
   onToggleParamsDock,
+  onApplyRuntimeParams,
   contextUsage,
   onCompactContext,
   canCompactContext,
@@ -214,6 +217,7 @@ export default function AppMainContent({
   onCloseDocViewer,
   onExitPlayground,
   onCloseArtifact,
+  networkActive = false,
 }: AppMainContentProps) {
   return (
     <main className="flex-1 flex flex-col bg-void-900 min-w-0 relative">
@@ -239,6 +243,8 @@ export default function AppMainContent({
         workspaceBusy={workspaceBusy}
         modelLoadingStatus={modelLoadingStatus}
         contextUsage={contextUsage}
+        networkActive={networkActive}
+        webEnabled={webEnabled}
         modeControls={(
           <AppMainModeControls
             chatMode={chatMode}
@@ -263,6 +269,9 @@ export default function AppMainContent({
             activeRuntimeParamTarget={activeRuntimeParamTarget}
             paramsDockOpen={paramsDockOpen}
             onToggleParamsDock={onToggleParamsDock}
+            onApplyRuntimeParams={onApplyRuntimeParams}
+            webEnabled={webEnabled}
+            onToggleWebEnabled={onToggleWebEnabled}
             contextUsage={contextUsage}
             onCompactContext={onCompactContext}
             canCompactContext={canCompactContext}

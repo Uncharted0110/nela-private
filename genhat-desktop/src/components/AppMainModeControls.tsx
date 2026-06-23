@@ -1,4 +1,5 @@
-import { Loader2, Scissors, SlidersHorizontal } from "lucide-react";
+import { Globe, Loader2, Scissors, SlidersHorizontal } from "lucide-react";
+import { useEffect, useState } from "react";
 import type {
   ChatContextUsage,
   ChatMode,
@@ -7,7 +8,15 @@ import type {
 } from "../types";
 import type { DownloadStateMap } from "../app/types";
 import type { RuntimeParamsTarget } from "./ActiveModelParamsDock";
+import GlassDropdown from "./GlassDropdown";
 import ModelSelector from "./ModelSelector";
+import { useAdvancedMode } from "../hooks/useAdvancedMode";
+import {
+  inferStyle,
+  RESPONSE_STYLE_OPTIONS,
+  RESPONSE_STYLE_PRESETS,
+  type ResponseStyle,
+} from "../app/responseStylePresets";
 
 interface AppMainModeControlsProps {
   chatMode: ChatMode;
@@ -35,6 +44,9 @@ interface AppMainModeControlsProps {
   activeRuntimeParamTarget: RuntimeParamsTarget | null;
   paramsDockOpen: boolean;
   onToggleParamsDock: () => void;
+  onApplyRuntimeParams: (nextParams: Record<string, string>) => Promise<void>;
+  webEnabled?: boolean;
+  onToggleWebEnabled?: (enabled: boolean) => void;
   contextUsage: ChatContextUsage | null;
   onCompactContext: () => void;
   canCompactContext: boolean;
@@ -64,6 +76,9 @@ export default function AppMainModeControls({
   activeRuntimeParamTarget,
   paramsDockOpen,
   onToggleParamsDock,
+  onApplyRuntimeParams,
+  webEnabled = false,
+  onToggleWebEnabled,
   contextUsage,
   onCompactContext,
   canCompactContext,
@@ -71,6 +86,17 @@ export default function AppMainModeControls({
   modelSwitching = false,
   modelSwitchingLabel = "",
 }: AppMainModeControlsProps) {
+  const { advanced } = useAdvancedMode();
+  const disabledStyle = !!activeRuntimeParamTarget && activeRuntimeParamTarget.backend !== "LlamaServer";
+  const inferredStyle = activeRuntimeParamTarget ? inferStyle(activeRuntimeParamTarget.params) : "balanced";
+  const [styleValue, setStyleValue] = useState<ResponseStyle>(inferredStyle);
+
+  useEffect(() => {
+    setStyleValue(inferredStyle);
+  }, [inferredStyle]);
+
+  const canToggleWeb = chatMode === "text" && typeof onToggleWebEnabled === "function";
+
   return (
     <div className="flex items-center gap-3">
       {(chatMode === "text" || chatMode === "mindmap") && (
@@ -134,13 +160,63 @@ export default function AppMainModeControls({
       )}
 
       {activeRuntimeParamTarget && (
+        advanced ? (
+          <button
+            type="button"
+            className={`glass-btn inline-flex items-center gap-1.5 py-1.5 px-3 text-[0.78rem] font-medium rounded-lg cursor-pointer transition-all duration-200 border backdrop-blur-md ${paramsDockOpen ? "bg-neon-subtle text-neon border-neon/30 shadow-[0_0_12px_rgba(0,212,255,0.12)]" : "bg-glass-bg text-txt-secondary border-glass-border hover:border-neon hover:text-neon hover:shadow-[0_0_12px_rgba(0,212,255,0.08)]"}`}
+            onClick={onToggleParamsDock}
+            title="Model parameters"
+            aria-label="Model parameters"
+          >
+            <SlidersHorizontal size={14} />
+            Parameters
+          </button>
+        ) : (
+          <div className="min-w-[180px]">
+            <GlassDropdown
+              value={styleValue}
+              options={RESPONSE_STYLE_OPTIONS.map((o) => ({
+                value: o.key,
+                label: o.label,
+                disabled: disabledStyle,
+              }))}
+              onChange={(value) => {
+                const style = value as ResponseStyle;
+                setStyleValue(style);
+                void (async () => {
+                  try {
+                    await onApplyRuntimeParams(RESPONSE_STYLE_PRESETS[style]);
+                  } catch {
+                    // If apply fails, revert to what the model is actually using.
+                    setStyleValue(inferredStyle);
+                  }
+                })();
+              }}
+              disabled={disabledStyle}
+              placeholder="Response style"
+              buttonClassName="glass-btn inline-flex items-center gap-1.5 py-1.5 px-3 text-[0.78rem] font-medium rounded-lg cursor-pointer transition-all duration-200 border backdrop-blur-md bg-glass-bg text-txt-secondary border-glass-border hover:border-neon hover:text-neon hover:shadow-[0_0_12px_rgba(0,212,255,0.08)]"
+            />
+          </div>
+        )
+      )}
+
+      {chatMode === "text" && (
         <button
-          className={`glass-btn inline-flex items-center gap-1.5 py-1.5 px-3 text-[0.78rem] font-medium rounded-lg cursor-pointer transition-all duration-200 border backdrop-blur-md ${paramsDockOpen ? "bg-neon-subtle text-neon border-neon/30 shadow-[0_0_12px_rgba(0,212,255,0.12)]" : "bg-glass-bg text-txt-secondary border-glass-border hover:border-neon hover:text-neon hover:shadow-[0_0_12px_rgba(0,212,255,0.08)]"}`}
-          onClick={onToggleParamsDock}
-          title="Toggle runtime parameter panel"
+          type="button"
+          className={`glass-btn inline-flex items-center justify-center w-10 h-10 rounded-lg border transition-colors duration-150 ${
+            webEnabled
+              ? "bg-neon-subtle text-neon border-neon/30"
+              : "bg-glass-bg text-txt-muted border-glass-border hover:text-txt"
+          } ${canToggleWeb ? "" : "opacity-50 cursor-not-allowed"}`}
+          onClick={() => {
+            if (!canToggleWeb) return;
+            onToggleWebEnabled?.(!webEnabled);
+          }}
+          title={webEnabled ? "Web search is on" : "Web search is off"}
+          aria-label={webEnabled ? "Turn off web search" : "Turn on web search"}
+          disabled={!canToggleWeb}
         >
-          <SlidersHorizontal size={14} />
-          {paramsDockOpen ? "Hide Params" : "Show Params"}
+          <Globe size={16} strokeWidth={1.9} />
         </button>
       )}
 

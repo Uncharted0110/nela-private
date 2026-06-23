@@ -107,6 +107,9 @@ pub struct SourceChunk {
     pub doc_title: String,
     pub text: String,
     pub score: f64,
+    /// Optional cross-encoder relevance grade (1-5). None if grading was unavailable.
+    #[serde(default)]
+    pub grade: Option<u8>,
     /// Page/slide/section provenance from the original document (e.g. "page:3", "slide:2").
     #[serde(default)]
     pub page_info: String,
@@ -950,6 +953,7 @@ impl RagPipeline {
                         text: chunk.text.clone(),
                         score: fused_result.rrf_score,
                         page_info: chunk.metadata.clone(),
+                        grade: None,
                     },
                     grade,
                 ));
@@ -983,6 +987,7 @@ impl RagPipeline {
                             text: chunk.text.clone(),
                             score: fused_result.rrf_score,
                             page_info: chunk.metadata.clone(),
+                            grade: None,
                         });
                     }
                     retry_chunks.extend(fetched);
@@ -1143,6 +1148,7 @@ impl RagPipeline {
                         text: chunk.text.clone(),
                         score: fused_result.rrf_score,
                         page_info: chunk.metadata.clone(),
+                        grade: None,
                     },
                     grade,
                 ));
@@ -1174,6 +1180,7 @@ impl RagPipeline {
                             text: chunk.text.clone(),
                             score: fused_result.rrf_score,
                             page_info: chunk.metadata.clone(),
+                            grade: None,
                         });
                     }
                     retry_chunks.extend(fetched);
@@ -1282,6 +1289,7 @@ impl RagPipeline {
                     text,
                     score,
                     page_info: String::new(),
+                    grade: None,
                 }
             })
             .collect();
@@ -1344,6 +1352,7 @@ impl RagPipeline {
                     text: chunk.text.clone(),
                     score: fused_result.rrf_score,
                     page_info: chunk.metadata.clone(),
+                    grade: None,
                 });
             }
         }
@@ -1646,7 +1655,11 @@ impl RagPipeline {
             .iter()
             .filter(|(_, grade)| *grade >= strict_threshold)
             .take(top_k)
-            .map(|(source, _)| source.clone())
+            .map(|(source, grade)| {
+                let mut s = source.clone();
+                s.grade = Some(*grade);
+                s
+            })
             .collect();
 
         if !strict.is_empty() {
@@ -1663,7 +1676,11 @@ impl RagPipeline {
             .iter()
             .filter(|(_, grade)| *grade >= relaxed_threshold)
             .take(top_k)
-            .map(|(source, _)| source.clone())
+            .map(|(source, grade)| {
+                let mut s = source.clone();
+                s.grade = Some(*grade);
+                s
+            })
             .collect();
 
         if !relaxed.is_empty() {
@@ -1688,7 +1705,10 @@ impl RagPipeline {
         graded_sources
             .into_iter()
             .take(fallback_take)
-            .map(|(source, _)| source)
+            .map(|(mut source, grade)| {
+                source.grade = Some(grade);
+                source
+            })
             .collect()
     }
 
@@ -1901,6 +1921,7 @@ impl RagPipeline {
                 text,
                 score,
                 page_info: String::new(),
+                grade: None,
             });
         }
 

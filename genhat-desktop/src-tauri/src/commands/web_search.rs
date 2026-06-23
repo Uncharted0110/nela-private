@@ -40,6 +40,9 @@ pub struct SearchHit {
     pub title: String,
     pub snippet: String,
     pub url: String,
+    /// Preview image from og:image / twitter:image or Jina markdown, when available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_url: Option<String>,
 }
 
 /// The full result returned to the frontend.
@@ -189,10 +192,146 @@ fn parse_ddg_html(html: &str, max_results: usize) -> Vec<SearchHit> {
             })
             .unwrap_or_default();
 
-        hits.push(SearchHit { title, snippet, url });
+        hits.push(SearchHit {
+            title,
+            snippet,
+            url,
+            image_url: None,
+        });
     }
 
     hits
+}
+
+// ── Preview image extraction ─────────────────────────────────────────────────
+
+/// Extract the first markdown image URL from Jina Reader output.
+fn extract_first_markdown_image(text: &str) -> Option<String> {
+    for line in text.lines() {
+        let Some(paren) = line.find("](") else {
+            continue;
+        };
+        let url_start = paren + 2;
+        let rest = &line[url_start..];
+        let Some(end) = rest.find(')') else {
+            continue;
+        };
+        let url = rest[..end]
+            .trim()
+            .trim_matches('"')
+            .split_whitespace()
+            .next()
+            .unwrap_or("");
+        if url.starts_with("http://") || url.starts_with("https://") {
+            return Some(url.to_owned());
+        }
+    }
+    None
+}
+
+fn page_origin(url: &str) -> Option<String> {
+    let scheme_end = url.find("://")?;
+    let rest = &url[scheme_end + 3..];
+    let host_end = rest.find('/').unwrap_or(rest.len());
+    Some(format!("{}{}", &url[..scheme_end + 3], &rest[..host_end]))
+}
+
+fn resolve_image_url(page_url: &str, candidate: &str) -> Option<String> {
+    let c = candidate.trim();
+    if c.is_empty() || c.starts_with("data:") {
+        return None;
+    }
+    if c.starts_with("http://") || c.starts_with("https://") {
+        return Some(c.to_owned());
+    }
+    if c.starts_with("//") {
+        return Some(format!("https:{c}"));
+    }
+    let origin = page_origin(page_url)?;
+    if c.starts_with('/') {
+        return Some(format!("{origin}{c}"));
+    }
+    let base = page_url.rsplit_once('/').map(|(b, _)| b).unwrap_or(page_url);
+    Some(format!("{base}/{c}"))
+}
+
+fn is_reasonable_image_url(url: &str) -> bool {
+    let lower = url.to_lowercase();
+    (lower.starts_with("http://") || lower.starts_with("https://"))
+        && !lower.contains("data:")
+        && url.len() <= 2048
+}
+
+/// Parse Open Graph / Twitter Card image meta tags from HTML.
+fn parse_og_image_from_html(html: &str, page_url: &str) -> Option<String> {
+    let document = Html::parse_document(html);
+    let meta_sel = Selector::parse(
+        r#"meta[property="og:image"], meta[property="og:image:url"], meta[name="twitter:image"], meta[name="twitter:image:src"]"#,
+    )
+    .ok()?;
+
+    for el in document.select(&meta_sel) {
+        if let Some(content) = el.value().attr("content") {
+            if let Some(resolved) = resolve_image_url(page_url, content) {
+                if is_reasonable_image_url(&resolved) {
+                    return Some(resolved);
+                }
+            }
+        }
+    }
+
+    None
+}
+
+/// Fetch a result page and extract its primary preview image.
+async fn fetch_preview_image(url: &str) -> Option<String> {
+    let client = match reqwest::Client::builder()
+        .default_headers(browser_headers())
+        .timeout(std::time::Duration::from_secs(8))
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return None,
+    };
+
+    let html = match client.get(url).send().await {
+        Ok(resp) => {
+            let text = resp.text().await.ok()?;
+            text.chars().take(256 * 1024).collect::<String>()
+        }
+        Err(e) => {
+            log::debug!("[web_search] Image fetch failed for {url}: {e}");
+            return None;
+        }
+    };
+
+    parse_og_image_from_html(&html, url)
+}
+
+/// Attach preview images to search hits (markdown from Jina, else og:image scrape).
+async fn enrich_hit_images(hits: &mut [SearchHit]) {
+    let fetch_inputs: Vec<(String, String)> = hits
+        .iter()
+        .map(|hit| (hit.url.clone(), hit.snippet.clone()))
+        .collect();
+
+    let image_futures: Vec<_> = fetch_inputs
+        .into_iter()
+        .map(|(url, snippet)| async move {
+            if url.is_empty() {
+                return None;
+            }
+            if let Some(img) = extract_first_markdown_image(&snippet) {
+                return Some(img);
+            }
+            fetch_preview_image(&url).await
+        })
+        .collect();
+
+    let images = futures_util::future::join_all(image_futures).await;
+    for (hit, image) in hits.iter_mut().zip(images) {
+        hit.image_url = image;
+    }
 }
 
 // ── Jina AI Reader (full-page content) ───────────────────────────────────────
@@ -407,6 +546,8 @@ pub async fn web_search(
             }
         }
     }
+
+    enrich_hit_images(&mut results).await;
 
     let formatted_context = format_context(&results);
 
