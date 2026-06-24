@@ -21,12 +21,12 @@ pub mod schema;
 
 pub use gbnf::{
     json_object_with_keys, JSON_VALUE_GBNF, PRESENTATION_PLAN_GBNF, SPREADSHEET_PLAN_GBNF,
-    HTML_PLAN_GBNF,
+    HTML_PAGE_PLAN_GBNF,
 };
 pub use repair::{repair_json_keys, RepairError};
 pub use schema::{
-    PresentationPlan, PresentationSlide, SchemaManifest, SlideLayout, SpreadsheetOp,
-    SpreadsheetPlan, HtmlPlan,
+    HtmlPlan, HtmlSection, HtmlSectionItem, HtmlSectionKind, PresentationPlan, PresentationSlide,
+    SchemaManifest, SlideLayout, SpreadsheetOp, SpreadsheetPlan,
 };
 
 /// Valid top-level keys for a `SpreadsheetPlan` payload.
@@ -37,7 +37,15 @@ pub const SPREADSHEET_PLAN_KEYS: &[&str] =
 pub const PRESENTATION_PLAN_KEYS: &[&str] = &["slides", "theme", "output_name"];
 
 /// Valid top-level keys for a `HtmlPlan` payload.
-pub const HTML_PLAN_KEYS: &[&str] = &["html", "output_name"];
+pub const HTML_PLAN_KEYS: &[&str] = &[
+    "title",
+    "tagline",
+    "archetype",
+    "sections",
+    "theme",
+    "output_name",
+    "html",
+];
 
 /// Validate and optionally repair a JSON payload against a known key allowlist.
 ///

@@ -18,7 +18,8 @@ import type {
   ArtifactResult,
 } from "../types";
 import type { PipelineStageKind } from "../components/ProgressSlate";
-import { extractTaskText, parseMindMapGraph, extractJsonObject } from "./mindmapUtils";
+import { extractTaskText, parseMindMapGraph } from "./mindmapUtils";
+import { parseArtifactPlanJson, parseHtmlPlanJson } from "./artifactPlanJson";
 import { deriveTitleFromMessage } from "./sessionUtils";
 import {
   applyCompactionResultToSession,
@@ -31,6 +32,14 @@ import {
   toContextMessages,
 } from "./contextCompaction";
 import { parseSlashCommands, slashPromptForSend } from "./slashCommands";
+import {
+  HTML_PLAN_MAX_TOKENS,
+  buildHtmlArtifactSystemPrompt,
+  defaultThemeForArchetype,
+  htmlPlanRequest,
+  inferHtmlPageStructure,
+  mapHtmlRendererTheme,
+} from "./htmlArtifactPrompt";
 
 export interface MindmapOverlayState {
   sessionId: string;
@@ -1272,17 +1281,19 @@ async function handleArtifactGeneration(
       ? `Produce EXACTLY ${slidePlan.count} slides, as the user explicitly requested.`
       : `Produce a complete multi-slide deck of about ${slidePlan.count} slides (add or remove a few only if the topic clearly needs it).`;
     const themeHint = inferPresentationTheme(text);
+    const htmlArchetype =
+      schemaId === "html_synthesis" ? inferHtmlPageStructure(text) : "landing";
 
-    const systemPrompt = `You are a professional assistant that generates precise structural JSON plans for creating artifacts.
+    const systemPrompt =
+      schemaId === "html_synthesis"
+        ? buildHtmlArtifactSystemPrompt(htmlArchetype)
+        : `You are a professional assistant that generates precise structural JSON plans for creating artifacts.
 You must return ONLY a JSON object conforming to the schema contract. Do NOT include markdown formatting, code fences (e.g. \`\`\`json), or thinking/explanations.
 
 Schema Contract:
 ${schemaId === "spreadsheet_synthesis" 
   ? `{"ops": [{"op": "SUM_COLUMN" | "AVERAGE_BY_GROUP" | "PIVOT" | "SORT_DESC" | "SORT_ASC" | "FILTER_ROWS" | "COUNT_BY_GROUP" | "ADD_COLUMN" | "RENAME_SHEET" | "WRITE_DATA", ...}]}` 
-  : schemaId === "presentation_synthesis"
-  ? `{"slides": [{"title": "string", "layout": "TITLE" | "SECTION" | "BULLET" | "TWO_COLUMN" | "IMAGE_LEFT" | "STAT" | "QUOTE" | "CARDS" | "COMPARISON" | "CENTERED" | "BLANK", "bullets": ["string"], "notes": "string"}], "theme": "midnight" | "corporate" | "sunset" | "minimal" | "academic" | "cyber" | "ocean" | "forest" | "lavender" | "neon" | "rose" | "slate"}`
-  : `{"html": "string", "output_name": "string"}`
-}
+  : `{"slides": [{"title": "string", "layout": "TITLE" | "SECTION" | "BULLET" | "TWO_COLUMN" | "IMAGE_LEFT" | "STAT" | "QUOTE" | "CARDS" | "COMPARISON" | "CENTERED" | "BLANK", "bullets": ["string"], "notes": "string"}], "theme": "midnight" | "corporate" | "sunset" | "minimal" | "academic" | "cyber" | "ocean" | "forest" | "lavender" | "neon" | "rose" | "slate"}`}
 
 Allowed Operations/Fields:
 ${schemaId === "spreadsheet_synthesis"
@@ -1297,8 +1308,7 @@ ${schemaId === "spreadsheet_synthesis"
 - RENAME_SHEET: { "name": "new_sheet_name" }
 - WRITE_DATA: { "headers": ["col1", "col2", ...], "rows": [["row1_val1", "row1_val2", ...], ["row2_val1", "row2_val2", ...]] }
   Use WRITE_DATA to write raw headers and rows of data into the spreadsheet. If there is no input data/file attached, you MUST use WRITE_DATA first to populate the sheet. You can also use WRITE_DATA to add/write data even when attached files/source data are present.`
-  : schemaId === "presentation_synthesis"
-  ? `Layouts — choose the ONE that best fits each slide's content. Shape "bullets" to match the chosen layout:
+  : `Layouts — choose the ONE that best fits each slide's content. Shape "bullets" to match the chosen layout:
 - TITLE: cover slide. bullets[0] = a short subtitle/tagline. Use ONCE, as the first slide.
 - SECTION: divider before a new part. title = section name; bullets[0] = optional one-line intro. No list.
 - BULLET: a list of 3-5 short points. Use SPARINGLY — only when the content is genuinely a list.
@@ -1325,16 +1335,15 @@ Deck requirements:
 - Pick the layout from the CONTENT: a metric → STAT, a key insight → QUOTE or CENTERED, distinct features/steps → CARDS, two options → COMPARISON, a visual topic → IMAGE_LEFT.
 - Every content slide must cover a DISTINCT sub-topic; break the subject into a logical progression (intro → key points → details/examples → summary).
 - Keep text short and presentation-ready (roughly 12 words or fewer per bullet).
-- Use the optional "notes" field for brief speaker notes when helpful.`
-  : `- html: The complete raw HTML content to render. Make it visually stunning, responsive, using modern UI styling (rounded borders, harmonized HSL/RGB colors, clean typography, glassmorphism if appropriate) and functional script logic if needed. Do not use raw tailwind unless standard CSS is used inside <style>.
-- output_name: Optional hint for the filename without extension.`
-}
+- Use the optional "notes" field for brief speaker notes when helpful.`}
 `;
 
     const themeSuffix = ` Use the "${themeHint}" theme for this deck.`;
     const planRequest =
       schemaId === "presentation_synthesis"
         ? `Generate a multi-slide presentation plan (${slidePlan.count} slides) for the user request: "${text}".${themeSuffix}`
+        : schemaId === "html_synthesis"
+        ? htmlPlanRequest(text, htmlArchetype)
         : `Generate a plan for the user request: "${text}"`;
     const userPrompt = `${dataContext}${planRequest}`;
 
@@ -1344,8 +1353,11 @@ Deck requirements:
       schemaId === "presentation_synthesis"
         ? Math.min(4096, 512 + slidePlan.count * 220)
         : schemaId === "html_synthesis"
-        ? 1000
+        ? HTML_PLAN_MAX_TOKENS
         : 500;
+
+    const planTemperature =
+      schemaId === "html_synthesis" ? 0.4 : 0.1;
 
     let planJson = "";
     const generationOptions = ctx.getChatGenerationOptions(ctx.selectedModel);
@@ -1363,20 +1375,35 @@ Deck requirements:
         updateArtifactMsg("WritingCode");
         try {
           let planObj: any;
-          try {
-            const cleanedText = extractJsonObject(planJson);
-            if (!cleanedText) {
-              throw new Error("No valid JSON object found in model output.");
+          if (schemaId === "html_synthesis") {
+            planObj = parseHtmlPlanJson(planJson, {
+              prompt: text,
+              archetype: htmlArchetype,
+              theme: defaultThemeForArchetype(htmlArchetype),
+            });
+          } else {
+            try {
+              planObj = parseArtifactPlanJson(planJson);
+            } catch (jsonErr) {
+              console.warn("Failed to parse artifact plan JSON:", jsonErr);
+              throw jsonErr;
             }
-            planObj = JSON.parse(cleanedText);
-          } catch (jsonErr) {
-            console.warn("Failed to parse JSON directly, cleaning up markdown fences:", jsonErr);
-            const cleaned = planJson.replace(/```json|```/g, "").trim();
-            const cleaned2 = extractJsonObject(cleaned) || cleaned;
-            planObj = JSON.parse(cleaned2);
           }
 
           planObj = repairNestedKeys(planObj);
+
+          if (schemaId === "html_synthesis") {
+            planObj.archetype = htmlArchetype;
+            planObj.theme = mapHtmlRendererTheme(
+              planObj.theme || themeHint || defaultThemeForArchetype(htmlArchetype)
+            );
+            if (!planObj.title || String(planObj.title).trim() === "") {
+              planObj.title = text.trim().slice(0, 120) || "Generated Page";
+            }
+            if (!Array.isArray(planObj.sections)) {
+              planObj.sections = [];
+            }
+          }
 
           if (headers && rows) {
             planObj.headers = headers;
@@ -1441,7 +1468,7 @@ Deck requirements:
       {
         ...generationOptions,
         maxTokens: planMaxTokens,
-        temperature: 0.1,
+        temperature: planTemperature,
         grammar,
       }
     );

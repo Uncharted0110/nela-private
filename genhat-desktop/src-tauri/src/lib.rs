@@ -37,6 +37,7 @@ pub mod intent;
 pub mod indexer;
 pub mod security;
 pub mod telemetry;
+pub mod html;
 
 #[cfg(windows)]
 pub mod windows_spawn;

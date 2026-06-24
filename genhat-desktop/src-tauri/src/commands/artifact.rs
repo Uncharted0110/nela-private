@@ -107,29 +107,29 @@ pub async fn generate_presentation(
 }
 
 /// Generate an HTML page artifact from a `HtmlPlan`.
+///
+/// Renders in-process (no MCP sidecar) so structured section plans always use
+/// the current renderer — avoids stale sidecar binaries expecting legacy `html`.
 #[tauri::command]
 pub async fn generate_html(
     plan: HtmlPlan,
     app: AppHandle,
-    coordinator: State<'_, McpCoordinatorState>,
 ) -> Result<ArtifactResult, String> {
     emit_stage(&app, PipelineStage::WritingCode);
 
-    let app_cache_dir = app.path().app_cache_dir().unwrap_or_else(|_| std::env::temp_dir());
-    let call = ToolCall::Html(plan);
-    let result = coordinator.0.invoke(call, &app_cache_dir)?;
+    let path = crate::html::write_html_plan(plan)?;
 
     emit_stage(
         &app,
         PipelineStage::LivePreview {
-            path: result.path.clone(),
+            path: path.to_string_lossy().to_string(),
         },
     );
 
     Ok(ArtifactResult {
-        path: result.path,
-        kind: result.kind,
-        warning: result.warning,
+        path: path.to_string_lossy().to_string(),
+        kind: "html".to_string(),
+        warning: None,
     })
 }
 
@@ -175,7 +175,7 @@ pub fn get_schema_grammar(schema_id: String) -> Result<String, String> {
     match schema_id.as_str() {
         "spreadsheet_synthesis" => Ok(crate::grammar::SPREADSHEET_PLAN_GBNF.to_string()),
         "presentation_synthesis" => Ok(crate::grammar::PRESENTATION_PLAN_GBNF.to_string()),
-        "html_synthesis" => Ok(crate::grammar::HTML_PLAN_GBNF.to_string()),
+        "html_synthesis" => Ok(crate::grammar::HTML_PAGE_PLAN_GBNF.to_string()),
         other => Err(format!("Unknown schema_id: {other}")),
     }
 }

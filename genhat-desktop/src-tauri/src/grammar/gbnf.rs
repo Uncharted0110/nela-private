@@ -64,12 +64,23 @@ string       ::= "\"" ([^"\\] | "\\" .)* "\"" ws
 ws           ::= ([ \t\n] ws)?
 "#;
 
-/// Grammar for HTML page synthesis.
-///
-/// Constrains the model to emit only valid `HtmlPlan` JSON containing html content.
-pub const HTML_PLAN_GBNF: &str = r#"root         ::= "{" ws "\"html\"" ws ":" ws string ws ("," ws "\"output_name\"" ws ":" ws string)? ws "}"
-string       ::= "\"" ([^"\\] | "\\" .)* "\"" ws
-ws           ::= ([ \t\n] ws)?
+/// Grammar for HTML page synthesis (structured plan — rendered deterministically).
+pub const HTML_PAGE_PLAN_GBNF: &str = r#"root            ::= "{" ws title-field "," ws archetype-field ("," ws tagline-field)? "," ws sections-field ("," ws theme-field)? ("," ws output-field)? ws "}"
+title-field     ::= "\"title\"" ws ":" ws string
+tagline-field   ::= "\"tagline\"" ws ":" ws string
+archetype-field ::= "\"archetype\"" ws ":" ws archetype
+theme-field     ::= "\"theme\"" ws ":" ws theme-name
+output-field    ::= "\"output_name\"" ws ":" ws string
+sections-field  ::= "\"sections\"" ws ":" ws "[" ws section-list "]"
+section-list    ::= section ("," ws section)*
+section         ::= "{" ws "\"kind\"" ws ":" ws section-kind "," ws "\"title\"" ws ":" ws string ("," ws "\"subtitle\"" ws ":" ws string)? ("," ws "\"body\"" ws ":" ws string)? ("," ws "\"items\"" ws ":" ws item-list)? ws "}"
+section-kind    ::= "\"HERO\"" | "\"INFO_BAR\"" | "\"GRID\"" | "\"SPLIT\"" | "\"STATS\"" | "\"QUOTES\"" | "\"FAQ\"" | "\"CTA\"" | "\"TEXT\""
+item-list       ::= "[" ws (item ("," ws item)*)? "]"
+item            ::= "{" ws "\"label\"" ws ":" ws string ("," ws "\"detail\"" ws ":" ws string)? ("," ws "\"meta\"" ws ":" ws string)? ws "}"
+archetype       ::= "\"landing\"" | "\"local_business\"" | "\"article\"" | "\"portfolio\"" | "\"dashboard\"" | "\"documentation\"" | "\"event\"" | "\"comparison\"" | "\"catalog\"" | "\"resume\"" | "\"infographic\"" | "\"newsletter\"" | "\"interactive\""
+theme-name      ::= "\"midnight\"" | "\"corporate\"" | "\"sunset\"" | "\"minimal\"" | "\"forest\"" | "\"rose\""
+string          ::= "\"" ([^"\\] | "\\" .)* "\"" ws
+ws              ::= ([ \t\n] ws)?
 "#;
 
 /// Build a JSON object grammar constrained to a fixed set of allowed keys.

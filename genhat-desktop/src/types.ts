@@ -414,9 +414,40 @@ export interface PresentationPlan {
   output_name?: string;
 }
 
+export type HtmlSectionKind =
+  | "HERO"
+  | "INFO_BAR"
+  | "GRID"
+  | "SPLIT"
+  | "STATS"
+  | "QUOTES"
+  | "FAQ"
+  | "CTA"
+  | "TEXT";
+
+export interface HtmlSectionItem {
+  label: string;
+  detail?: string;
+  meta?: string;
+}
+
+export interface HtmlSection {
+  kind: HtmlSectionKind;
+  title: string;
+  subtitle?: string;
+  body?: string;
+  items?: HtmlSectionItem[];
+}
+
 export interface HtmlPlan {
-  html: string;
+  title: string;
+  tagline?: string;
+  archetype: string;
+  sections: HtmlSection[];
+  theme?: string;
   output_name?: string;
+  /** Legacy raw HTML (used only when sections are empty). */
+  html?: string;
 }
 
 export interface ArtifactResult {

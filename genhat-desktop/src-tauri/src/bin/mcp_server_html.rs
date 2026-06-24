@@ -1,11 +1,13 @@
-//! mcp-server-html — MCP tool sidecar for HTML rendering.
+//! mcp-server-html — MCP tool sidecar for HTML page synthesis.
 //!
-//! Reads one JSON-RPC 2.0 request from stdin, writes the HTML content to disk,
-//! and writes one JSON-RPC 2.0 response to stdout, then exits.
+//! Reads one JSON-RPC 2.0 request from stdin, renders a complete HTML page from
+//! a structured plan, writes the file to disk, and exits.
 
 use std::io::{self, BufRead};
-use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
+
+use app_lib::grammar::schema::HtmlPlan;
+use app_lib::html::write_html_plan;
 
 #[derive(Debug, Deserialize)]
 struct JsonRpcRequest {
@@ -35,12 +37,6 @@ struct ToolResult {
 struct JsonRpcError {
     code: i32,
     message: String,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-struct HtmlPlan {
-    html: String,
-    output_name: Option<String>,
 }
 
 fn main() {
@@ -75,7 +71,7 @@ fn main() {
         }
     };
 
-    match write_html(plan) {
+    match write_html_plan(plan) {
         Ok(path) => {
             let resp = JsonRpcResponse {
                 jsonrpc: "2.0".to_string(),
@@ -110,14 +106,3 @@ fn write_error(id: u64, code: i32, message: &str) {
     println!("{}", serde_json::to_string(&resp).unwrap_or_default());
 }
 
-fn write_html(plan: HtmlPlan) -> Result<PathBuf, String> {
-    let output_name = plan.output_name.as_deref().unwrap_or("nela_html");
-    let out_dir = std::env::temp_dir().join("nela_artifacts");
-    std::fs::create_dir_all(&out_dir).map_err(|e| format!("Create output dir: {e}"))?;
-    let path = out_dir.join(format!("{output_name}.html"));
-
-    std::fs::write(&path, &plan.html)
-        .map_err(|e| format!("Failed to write HTML: {e}"))?;
-
-    Ok(path)
-}

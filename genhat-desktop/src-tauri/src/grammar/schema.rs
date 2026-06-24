@@ -144,9 +144,63 @@ pub struct PresentationPlan {
 /// Sent to `mcp-server-html` as the JSON-RPC request payload.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HtmlPlan {
-    pub html: String,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tagline: Option<String>,
+    #[serde(default = "default_html_archetype")]
+    pub archetype: String,
+    #[serde(default)]
+    pub sections: Vec<HtmlSection>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub theme: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_name: Option<String>,
+    /// Legacy raw-HTML plans (used only when `sections` is empty).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub html: Option<String>,
+}
+
+fn default_html_archetype() -> String {
+    "landing".to_string()
+}
+
+/// Section kinds understood by the HTML renderer.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum HtmlSectionKind {
+    Hero,
+    InfoBar,
+    Grid,
+    Split,
+    Stats,
+    Quotes,
+    Faq,
+    Cta,
+    Text,
+}
+
+/// One content block in a page plan.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HtmlSection {
+    pub kind: HtmlSectionKind,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subtitle: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body: Option<String>,
+    #[serde(default)]
+    pub items: Vec<HtmlSectionItem>,
+}
+
+/// Row/card item inside a section (menu item, feature, FAQ, stat, etc.).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HtmlSectionItem {
+    pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub meta: Option<String>,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

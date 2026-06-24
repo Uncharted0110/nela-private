@@ -4,6 +4,7 @@ import { openPath } from "@tauri-apps/plugin-opener";
 import ProgressSlate, { type PipelineStageKind } from "./ProgressSlate";
 import DiffPatchOverlay from "./DiffPatchOverlay";
 import { Api } from "../api";
+import { prepareArtifactHtmlPreview } from "../app/artifactHtmlPreview";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -51,7 +52,7 @@ export default function ArtifactSandbox({
   const [artifactPath, setArtifactPath] = useState<string | null>(
     initialPath ?? null
   );
-  const [artifactSrc, setArtifactSrc] = useState<string | null>(null);
+  const [artifactHtml, setArtifactHtml] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [activePatch, setActivePatch] = useState<string | null>(null);
   const [patchActive, setPatchActive] = useState(false);
@@ -180,36 +181,33 @@ export default function ArtifactSandbox({
     };
   }, [_applyPatch]);
 
-  // ── Load HTML artifact content via Tauri ──────────────────────────────────
+  // ── Load HTML artifact content via Tauri; render with srcDoc ────────────────
   useEffect(() => {
     if (!artifactPath) {
-      setArtifactSrc(null);
+      setArtifactHtml(null);
       return;
     }
 
     const ext = artifactPath.split(".").pop()?.toLowerCase() ?? "";
     if (ext !== "html" && ext !== "htm") {
-      setArtifactSrc(null);
+      setArtifactHtml(null);
       return;
     }
 
-    let blobUrl: string | null = null;
     let cancelled = false;
 
     Api.readFileText(artifactPath)
       .then((html) => {
         if (cancelled) return;
-        blobUrl = URL.createObjectURL(new Blob([html], { type: "text/html;charset=utf-8" }));
-        setArtifactSrc(blobUrl);
+        setArtifactHtml(prepareArtifactHtmlPreview(html));
       })
       .catch((err) => {
         console.error("Failed to load HTML artifact:", err);
-        if (!cancelled) setArtifactSrc(null);
+        if (!cancelled) setArtifactHtml(null);
       });
 
     return () => {
       cancelled = true;
-      if (blobUrl) URL.revokeObjectURL(blobUrl);
     };
   }, [artifactPath]);
 
@@ -270,11 +268,11 @@ export default function ArtifactSandbox({
       {/* Artifact display */}
       {stage === "LivePreview" && (
         <div style={{ flex: 1, overflow: "hidden", position: "relative" }}>
-          {artifactSrc ? (
+          {artifactHtml ? (
             /* HTML artifact — rendered in a sandboxed iframe with strict CSP */
             <iframe
               ref={iframeRef}
-              src={artifactSrc}
+              srcDoc={artifactHtml}
               title="Artifact preview"
               sandbox="allow-scripts allow-same-origin"
               allow="fullscreen"

@@ -6,6 +6,7 @@ import { type PipelineStageKind } from "./ProgressSlate";
 import DiffPatchOverlay from "./DiffPatchOverlay";
 import { Api } from "../api";
 import { exportPresentation, type DeckExportFormat } from "../app/exportDeck";
+import { prepareArtifactHtmlPreview } from "../app/artifactHtmlPreview";
 
 export interface InlineArtifactProps {
   artifactPath?: string | null;
@@ -66,7 +67,7 @@ export default function InlineArtifact({ artifactPath, artifactStage, errorMessa
   const [activePatch, setActivePatch] = useState<string | null>(null);
   const [patchActive, setPatchActive] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
-  const [artifactSrc, setArtifactSrc] = useState<string | null>(null);
+  const [artifactHtml, setArtifactHtml] = useState<string | null>(null);
   const [downloadMenuOpen, setDownloadMenuOpen] = useState(false);
   const [exporting, setExporting] = useState<DeckExportFormat | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
@@ -217,37 +218,34 @@ export default function InlineArtifact({ artifactPath, artifactStage, errorMessa
     };
   }, [currentPath, applyPatch]);
 
-  // Load HTML artifact content via Tauri (avoids asset-protocol scope requirements).
+  // Load HTML artifact content via Tauri; render with srcDoc (avoids file:// iframe errors).
   useEffect(() => {
     if (!currentPath) {
-      setArtifactSrc(null);
+      setArtifactHtml(null);
       return;
     }
 
     const ext = currentPath.split(".").pop()?.toLowerCase() ?? "";
     if (ext !== "html" && ext !== "htm") {
-      setArtifactSrc(null);
+      setArtifactHtml(null);
       return;
     }
 
-    let blobUrl: string | null = null;
     let cancelled = false;
 
     Api.readFileText(currentPath)
       .then((html) => {
         if (cancelled) return;
-        blobUrl = URL.createObjectURL(new Blob([html], { type: "text/html;charset=utf-8" }));
-        setArtifactSrc(blobUrl);
+        setArtifactHtml(prepareArtifactHtmlPreview(html));
         setShowPreview(true);
       })
       .catch((err) => {
         console.error("Failed to load HTML artifact:", err);
-        if (!cancelled) setArtifactSrc(null);
+        if (!cancelled) setArtifactHtml(null);
       });
 
     return () => {
       cancelled = true;
-      if (blobUrl) URL.revokeObjectURL(blobUrl);
     };
   }, [currentPath]);
 
@@ -476,11 +474,11 @@ export default function InlineArtifact({ artifactPath, artifactStage, errorMessa
       )}
 
       {/* Interactive HTML Preview Area */}
-      {isHtml && showPreview && artifactSrc && (
+      {isHtml && showPreview && artifactHtml && (
         <div className="w-full h-[420px] bg-white border-t border-glass-border relative">
           <iframe
             ref={iframeRef}
-            src={artifactSrc}
+            srcDoc={artifactHtml}
             title="Artifact preview"
             sandbox="allow-scripts allow-same-origin"
             allow="fullscreen"

@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, convertFileSrc as tauriConvertFileSrc } from "@tauri-apps/api/core";
 import type {
   ChatMessage,
   DiscoveredModelUnit,
@@ -1092,6 +1092,6 @@ export async function triggerScan(): Promise<import("./types").ScanResult> {
 }
 
 function convertFileSrc(filePath: string): string {
-  return new URL(`file://${filePath}`).href;
+  return tauriConvertFileSrc(filePath);
 }
 
