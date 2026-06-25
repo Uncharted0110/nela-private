@@ -7,30 +7,30 @@
 .tour-dim {
   position: absolute;
   inset: 0;
-  background: rgba(0, 0, 0, 0.55);
+  background: var(--modal-dim-bg);
 }
 
 .tour-dim-pane {
   position: fixed;
-  background: rgba(0, 0, 0, 0.55);
+  background: var(--modal-dim-bg);
   backdrop-filter: blur(2px);
 }
 
 .tour-highlight {
   position: fixed;
   border-radius: 12px;
-  border: 2px solid rgba(0, 212, 255, 0.9);
-  box-shadow: 0 0 18px rgba(0, 212, 255, 0.22);
+  border: 2px solid var(--modal-highlight-border);
+  box-shadow: 0 0 18px var(--color-neon-glow);
   pointer-events: none;
 }
 
 .tour-tooltip {
   position: fixed;
   width: min(380px, calc(100vw - 40px));
-  background: linear-gradient(165deg, rgba(11, 20, 34, 0.96) 0%, rgba(8, 15, 26, 0.97) 100%);
+  background: var(--modal-surface-bg);
   border: 1px solid var(--color-glass-border);
   border-radius: 14px;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.7);
+  box-shadow: var(--modal-shadow);
   color: var(--color-txt);
   padding: 12px;
   outline: none;
@@ -65,14 +65,14 @@
   height: 28px;
   border-radius: 8px;
   border: 1px solid var(--color-glass-border);
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--modal-icon-btn-bg);
   color: var(--color-txt-secondary);
   cursor: pointer;
 }
 
 .tour-icon-btn:hover {
   color: var(--color-txt);
-  border-color: rgba(0, 212, 255, 0.3);
+  border-color: var(--color-neon);
 }
 
 .tour-tooltip-body {
@@ -104,24 +104,24 @@
 }
 
 .tour-btn.ghost {
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--color-glass-bg);
   color: var(--color-txt-secondary);
 }
 
 .tour-btn.ghost:hover {
   color: var(--color-txt);
-  border-color: rgba(0, 212, 255, 0.25);
+  border-color: var(--color-neon);
 }
 
 .tour-btn.primary {
-  background: rgba(0, 212, 255, 0.14);
-  color: rgba(0, 212, 255, 0.95);
-  border-color: rgba(0, 212, 255, 0.28);
+  background: var(--color-neon-subtle);
+  color: var(--color-neon);
+  border-color: var(--color-neon-glow);
 }
 
 .tour-btn.primary:hover {
-  background: rgba(0, 212, 255, 0.18);
-  border-color: rgba(0, 212, 255, 0.45);
+  background: color-mix(in srgb, var(--color-neon) 18%, transparent);
+  border-color: var(--color-neon);
 }
 
 .tour-btn:disabled {

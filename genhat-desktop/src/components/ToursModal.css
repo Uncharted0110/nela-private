@@ -2,7 +2,7 @@
   position: fixed;
   inset: 0;
   z-index: 9998;
-  background: rgba(0, 0, 0, 0.55);
+  background: var(--modal-overlay-bg);
   backdrop-filter: blur(2px);
   display: flex;
   align-items: center;
@@ -14,10 +14,10 @@
   width: min(1160px, 96vw);
   max-height: 88vh;
   overflow: hidden;
-  background: linear-gradient(165deg, rgba(11, 20, 34, 0.96) 0%, rgba(8, 15, 26, 0.97) 100%);
+  background: var(--modal-surface-bg);
   border: 1px solid var(--color-glass-border);
   border-radius: 16px;
-  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.75);
+  box-shadow: var(--modal-shadow);
   display: flex;
   flex-direction: column;
 }
@@ -40,7 +40,7 @@
   height: 32px;
   border-radius: 10px;
   border: 1px solid var(--color-glass-border);
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--modal-icon-btn-bg);
   color: var(--color-txt-secondary);
   cursor: pointer;
   display: flex;
@@ -50,7 +50,7 @@
 
 .tours-modal-close:hover {
   color: var(--color-txt);
-  border-color: rgba(0, 212, 255, 0.25);
+  border-color: var(--color-neon);
 }
 
 .tours-modal-body {
@@ -71,7 +71,7 @@
   padding: 4px;
   border-radius: 12px;
   border: 1px solid var(--color-glass-border);
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--color-glass-bg);
   margin-bottom: 12px;
 }
 
@@ -91,9 +91,9 @@
 }
 
 .tours-tab.active {
-  color: rgba(0, 212, 255, 0.95);
-  border-color: rgba(0, 212, 255, 0.25);
-  background: rgba(0, 212, 255, 0.12);
+  color: var(--color-neon);
+  border-color: var(--color-neon-glow);
+  background: var(--color-neon-subtle);
 }
 
 .tours-tab:hover {
@@ -114,7 +114,7 @@
   padding: 12px;
   border-radius: 14px;
   border: 1px solid var(--color-glass-border);
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--color-glass-bg);
 }
 
 .tours-item-name {
@@ -131,7 +131,7 @@
 }
 
 .tours-item-done {
-  color: rgba(0, 212, 255, 0.95);
+  color: var(--color-neon);
 }
 
 .tours-item-actions {
@@ -150,19 +150,19 @@
 }
 
 .tours-btn.ghost {
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--color-glass-bg);
   color: var(--color-txt-secondary);
 }
 
 .tours-btn.primary {
-  background: rgba(0, 212, 255, 0.14);
-  color: rgba(0, 212, 255, 0.95);
-  border-color: rgba(0, 212, 255, 0.28);
+  background: var(--color-neon-subtle);
+  color: var(--color-neon);
+  border-color: var(--color-neon-glow);
 }
 
 .tours-btn.primary:hover {
-  background: rgba(0, 212, 255, 0.18);
-  border-color: rgba(0, 212, 255, 0.45);
+  background: color-mix(in srgb, var(--color-neon) 18%, transparent);
+  border-color: var(--color-neon);
 }
 
 .tours-footer {
@@ -174,7 +174,7 @@
 .help-guide-panel {
   border-radius: 14px;
   border: 1px solid var(--color-glass-border);
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--color-glass-bg);
   padding: 14px;
   min-height: min(520px, calc(100vh - 260px));
   overflow-y: auto;

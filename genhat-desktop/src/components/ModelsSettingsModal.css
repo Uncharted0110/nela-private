@@ -1,15 +1,7 @@
-:root {
-  --settings-bg: rgba(9, 13, 18, 0.95);
-  --settings-panel: rgba(16, 22, 30, 0.92);
-  --settings-border: rgba(0, 212, 255, 0.18);
-  --settings-accent: #00d4ff;
-  --settings-muted: rgba(255, 255, 255, 0.55);
-}
-
 .settings-modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(2, 4, 8, 0.66);
+  background: var(--modal-overlay-bg);
   backdrop-filter: blur(6px);
   display: flex;
   align-items: center;
@@ -20,13 +12,13 @@
 .settings-modal {
   width: min(1160px, 96vw);
   max-height: 88vh;
-  background: var(--settings-bg);
-  border: 1px solid var(--settings-border);
+  background: var(--modal-surface-solid);
+  border: 1px solid var(--color-glass-border);
   border-radius: 18px;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+  box-shadow: var(--modal-shadow);
   display: flex;
   flex-direction: column;
-  color: #e7f6ff;
+  color: var(--color-txt);
 }
 
 .settings-modal-header {
@@ -34,7 +26,7 @@
   align-items: center;
   justify-content: space-between;
   padding: 16px 20px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid var(--modal-border-subtle);
 }
 
 .settings-title {
@@ -48,7 +40,7 @@
 .settings-close {
   background: transparent;
   border: none;
-  color: var(--settings-muted);
+  color: var(--color-txt-muted);
   cursor: pointer;
 }
 
@@ -77,10 +69,10 @@
   justify-content: space-between;
   gap: 16px;
   padding: 14px 16px;
-  background: var(--settings-panel);
+  background: var(--modal-panel-bg);
   border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  color: var(--settings-muted);
+  border: 1px solid var(--modal-border-subtle);
+  color: var(--color-txt-muted);
   font-size: 13px;
 }
 
@@ -89,9 +81,9 @@
   flex-direction: column;
   gap: 10px;
   padding: 14px 16px;
-  background: var(--settings-panel);
+  background: var(--modal-panel-bg);
   border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--modal-border-subtle);
 }
 
 .settings-startup-missing-header {
@@ -115,9 +107,9 @@
 }
 
 .settings-primary {
-  background: linear-gradient(120deg, #00d4ff, #43e3ff);
+  background: var(--modal-btn-primary-bg);
   border: none;
-  color: #081018;
+  color: var(--modal-btn-primary-text);
   font-weight: 600;
   padding: 8px 14px;
   border-radius: 10px;
@@ -140,7 +132,7 @@
   font-size: 13px;
   text-transform: uppercase;
   letter-spacing: 0.14em;
-  color: var(--settings-muted);
+  color: var(--color-txt-muted);
 }
 
 .settings-group-title-row {
@@ -160,9 +152,9 @@
   width: 16px;
   height: 16px;
   border-radius: 999px;
-  border: 1px solid rgba(0, 212, 255, 0.34);
-  background: rgba(0, 212, 255, 0.13);
-  color: #a9ecff;
+  border: 1px solid var(--color-neon-glow);
+  background: var(--color-neon-subtle);
+  color: var(--color-neon);
   font-size: 10px;
   font-weight: 700;
   line-height: 1;
@@ -175,14 +167,14 @@
 
 .settings-group-help-btn:hover,
 .settings-group-help-btn[aria-expanded="true"] {
-  background: rgba(0, 212, 255, 0.2);
-  border-color: rgba(0, 212, 255, 0.55);
-  color: #e0f9ff;
+  background: color-mix(in srgb, var(--color-neon) 20%, transparent);
+  border-color: var(--color-neon);
+  color: var(--color-txt);
 }
 
 .settings-group-help-btn:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 2px rgba(0, 212, 255, 0.2);
+  box-shadow: 0 0 0 2px var(--color-neon-subtle);
 }
 
 .settings-group-help-popover {
@@ -193,14 +185,14 @@
   width: min(340px, calc(100vw - 80px));
   padding: 10px 11px;
   border-radius: 10px;
-  border: 1px solid rgba(0, 212, 255, 0.24);
-  background: rgba(9, 14, 20, 0.97);
-  color: #d8edf8;
+  border: 1px solid var(--color-glass-border);
+  background: var(--modal-popover-bg);
+  color: var(--color-txt);
   font-size: 0.72rem;
   line-height: 1.5;
   text-transform: none;
   letter-spacing: normal;
-  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45);
+  box-shadow: var(--modal-shadow);
   backdrop-filter: blur(6px);
 }
 
@@ -214,7 +206,7 @@
   gap: 8px;
   font-size: 13px;
   font-weight: 600;
-  color: #d9f5ff;
+  color: var(--color-txt);
 }
 
 .settings-list {
@@ -230,8 +222,8 @@
   gap: 14px;
   padding: 12px 14px;
   border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  background: rgba(14, 20, 28, 0.85);
+  border: 1px solid var(--modal-border-subtle);
+  background: var(--modal-item-bg);
 }
 
 .settings-item-info {
@@ -247,7 +239,7 @@
 
 .settings-item-meta {
   font-size: 12px;
-  color: var(--settings-muted);
+  color: var(--color-txt-muted);
 }
 
 .settings-actions {
@@ -257,9 +249,9 @@
 }
 
 .settings-icon-btn {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  color: #d6f5ff;
+  background: var(--modal-icon-btn-bg);
+  border: 1px solid var(--color-glass-border);
+  color: var(--color-txt);
   padding: 6px;
   border-radius: 8px;
   cursor: pointer;
@@ -274,8 +266,8 @@
 }
 
 .settings-icon-btn.danger {
-  color: #ffb3b3;
-  border-color: rgba(255, 120, 120, 0.35);
+  color: var(--color-danger);
+  border-color: color-mix(in srgb, var(--color-danger) 35%, transparent);
 }
 
 .settings-progress {
@@ -283,7 +275,7 @@
   align-items: center;
   gap: 6px;
   font-size: 12px;
-  color: var(--settings-accent);
+  color: var(--color-neon);
 }
 
 .settings-rag-prefs {
@@ -291,9 +283,9 @@
   flex-direction: column;
   gap: 16px;
   padding: 14px 16px;
-  background: var(--settings-panel);
+  background: var(--modal-panel-bg);
   border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--modal-border-subtle);
 }
 
 .settings-rag-field {
@@ -305,16 +297,16 @@
 .settings-rag-field label {
   font-size: 13px;
   font-weight: 500;
-  color: #e7f6ff;
+  color: var(--color-txt);
 }
 
 .settings-select {
-  background: rgba(14, 20, 28, 0.85);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--modal-item-bg);
+  border: 1px solid var(--color-glass-border);
   border-radius: 8px;
   padding: 10px 12px;
   font-size: 13px;
-  color: #e7f6ff;
+  color: var(--color-txt);
   cursor: pointer;
   appearance: none;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2388b4cc' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
@@ -324,23 +316,23 @@
 }
 
 .settings-select:hover {
-  border-color: rgba(0, 212, 255, 0.3);
+  border-color: var(--color-neon-glow);
 }
 
 .settings-select:focus {
   outline: none;
-  border-color: var(--settings-accent);
-  box-shadow: 0 0 0 2px rgba(0, 212, 255, 0.15);
+  border-color: var(--color-neon);
+  box-shadow: 0 0 0 2px var(--color-neon-subtle);
 }
 
 .settings-select option {
-  background: #0a0f14;
-  color: #e7f6ff;
+  background: var(--color-void-800);
+  color: var(--color-txt);
 }
 
 .settings-field-hint {
   font-size: 11px;
-  color: var(--settings-muted);
+  color: var(--color-txt-muted);
 }
 
 .settings-rag-actions {
@@ -358,9 +350,9 @@
 .settings-params-sidebar {
   width: min(360px, 38vw);
   min-width: 320px;
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--modal-border-subtle);
   border-radius: 14px;
-  background: linear-gradient(180deg, rgba(10, 17, 24, 0.95), rgba(9, 13, 19, 0.92));
+  background: var(--modal-panel-bg);
   padding: 12px;
   display: flex;
   flex-direction: column;
@@ -387,9 +379,9 @@
 .settings-model-pill {
   width: 100%;
   text-align: left;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  color: #d9eef8;
+  background: var(--color-glass-bg);
+  border: 1px solid var(--color-glass-border);
+  color: var(--color-txt);
   border-radius: 10px;
   padding: 10px 10px;
   display: flex;
@@ -400,30 +392,30 @@
 }
 
 .settings-model-pill:hover {
-  border-color: rgba(0, 212, 255, 0.4);
-  background: rgba(0, 212, 255, 0.07);
+  border-color: var(--color-neon-glow);
+  background: var(--color-neon-subtle);
 }
 
 .settings-model-pill.active {
-  border-color: rgba(0, 212, 255, 0.58);
-  background: rgba(0, 212, 255, 0.13);
+  border-color: var(--color-neon);
+  background: color-mix(in srgb, var(--color-neon) 13%, transparent);
 }
 
 .settings-model-pill-name {
   font-size: 12px;
   font-weight: 600;
-  color: #ecf8ff;
+  color: var(--color-txt);
 }
 
 .settings-model-pill-meta {
   font-size: 11px;
-  color: var(--settings-muted);
+  color: var(--color-txt-muted);
 }
 
 .settings-params-panel {
-  border: 1px solid rgba(255, 255, 255, 0.07);
+  border: 1px solid var(--modal-border-subtle);
   border-radius: 12px;
-  background: rgba(14, 20, 28, 0.78);
+  background: var(--modal-item-bg);
   padding: 12px;
   display: flex;
   flex-direction: column;
@@ -435,17 +427,17 @@
   flex-direction: column;
   gap: 2px;
   padding-bottom: 6px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid var(--modal-border-subtle);
 }
 
 .settings-param-card {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--modal-border-subtle);
   border-radius: 10px;
   padding: 10px;
-  background: rgba(11, 17, 24, 0.72);
+  background: var(--modal-item-bg-subtle);
 }
 
 .settings-param-head {
@@ -458,17 +450,17 @@
 .settings-param-head label {
   font-size: 12px;
   font-weight: 600;
-  color: #f1fbff;
+  color: var(--color-txt);
 }
 
 .settings-param-head span {
   font-size: 11px;
-  color: #8ae8ff;
+  color: var(--color-neon);
 }
 
 .settings-slider {
   width: 100%;
-  accent-color: #00d4ff;
+  accent-color: var(--color-neon);
 }
 
 .settings-context-hint {
@@ -478,45 +470,45 @@
   font-size: 11px;
   border-radius: 8px;
   padding: 8px 9px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  color: #b8d9e8;
-  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--color-glass-border);
+  color: var(--color-txt-secondary);
+  background: var(--color-glass-bg);
 }
 
 .settings-context-hint.optimal {
-  border-color: rgba(44, 221, 163, 0.44);
-  background: rgba(44, 221, 163, 0.12);
-  color: #b9f7dd;
+  border-color: color-mix(in srgb, var(--color-success) 44%, transparent);
+  background: color-mix(in srgb, var(--color-success) 12%, transparent);
+  color: var(--color-success);
 }
 
 .settings-context-hint.suboptimal {
-  border-color: rgba(255, 177, 59, 0.44);
-  background: rgba(255, 177, 59, 0.12);
-  color: #ffe0a7;
+  border-color: color-mix(in srgb, var(--color-warning) 44%, transparent);
+  background: color-mix(in srgb, var(--color-warning) 12%, transparent);
+  color: var(--color-warning);
 }
 
 .settings-note {
   font-size: 11px;
-  color: #8db5c9;
-  background: rgba(0, 212, 255, 0.08);
-  border: 1px solid rgba(0, 212, 255, 0.2);
+  color: var(--color-txt-secondary);
+  background: var(--color-neon-subtle);
+  border: 1px solid var(--color-neon-glow);
   border-radius: 8px;
   padding: 8px 9px;
 }
 
 .settings-error {
   font-size: 11px;
-  color: #ffb9b9;
-  background: rgba(255, 74, 74, 0.12);
-  border: 1px solid rgba(255, 74, 74, 0.28);
+  color: var(--color-danger);
+  background: color-mix(in srgb, var(--color-danger) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-danger) 28%, transparent);
   border-radius: 8px;
   padding: 8px 9px;
 }
 
 .settings-empty {
   font-size: 12px;
-  color: var(--settings-muted);
-  border: 1px dashed rgba(255, 255, 255, 0.14);
+  color: var(--color-txt-muted);
+  border: 1px dashed var(--color-glass-border);
   border-radius: 10px;
   padding: 10px;
 }
