@@ -549,3 +549,49 @@
     align-items: stretch;
   }
 }
+
+.settings-intelligence-mapping {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  background: var(--modal-panel-bg);
+  border-radius: 12px;
+  border: 1px solid var(--modal-border-subtle);
+}
+
+.settings-intelligence-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.settings-intelligence-row {
+  display: grid;
+  grid-template-columns: 88px 1fr;
+  gap: 12px;
+  align-items: center;
+}
+
+.settings-intelligence-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--color-txt);
+}
+
+.settings-secondary-btn {
+  align-self: flex-start;
+  margin-top: 4px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--modal-border-subtle);
+  background: var(--modal-item-bg-subtle);
+  color: var(--color-txt-secondary);
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.settings-secondary-btn:hover {
+  border-color: var(--color-neon);
+  color: var(--color-neon);
+}

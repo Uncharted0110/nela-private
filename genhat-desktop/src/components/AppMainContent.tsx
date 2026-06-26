@@ -9,6 +9,7 @@ import type {
   WorkspaceRecord,
 } from "../types";
 import type { DownloadStateMap } from "../app/types";
+import type { IntelligenceMode } from "../app/intelligenceModes";
 import type { RuntimeParamsTarget } from "./ActiveModelParamsDock";
 import ChatTabBar from "./ChatTabBar";
 import AppMainTopBar from "./AppMainTopBar";
@@ -47,6 +48,11 @@ interface AppMainContentProps {
   };
   modelSwitching?: boolean;
   modelSwitchingLabel?: string;
+  intelligenceMode: IntelligenceMode | "custom";
+  useSpecificModelPicker: boolean;
+  onSelectIntelligenceMode: (mode: IntelligenceMode) => void;
+  onChooseSpecificModel: () => void;
+  onBackToIntelligenceTiers: () => void;
   models: ModelFile[];
   selectedModel: string;
   onModelChange: (path: string) => void;
@@ -151,6 +157,11 @@ export default function AppMainContent({
   modelLoadingStatus,
   modelSwitching = false,
   modelSwitchingLabel = "",
+  intelligenceMode,
+  useSpecificModelPicker,
+  onSelectIntelligenceMode,
+  onChooseSpecificModel,
+  onBackToIntelligenceTiers,
   models,
   selectedModel,
   onModelChange,
@@ -276,6 +287,11 @@ export default function AppMainContent({
             onCompactContext={onCompactContext}
             canCompactContext={canCompactContext}
             isCompactingContext={isCompactingContext}
+            intelligenceMode={intelligenceMode}
+            useSpecificModelPicker={useSpecificModelPicker}
+            onSelectIntelligenceMode={onSelectIntelligenceMode}
+            onChooseSpecificModel={onChooseSpecificModel}
+            onBackToIntelligenceTiers={onBackToIntelligenceTiers}
           />
         )}
       />

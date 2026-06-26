@@ -24,6 +24,17 @@ import {
   VIEWABLE_EXTS,
 } from "./app/constants";
 import {
+  type IntelligenceMode,
+  readIntelligenceMode,
+  writeIntelligenceMode,
+  readIntelligenceMapping,
+  readSpecificModelPicker,
+  writeSpecificModelPicker,
+  resolveModeForModelId,
+  modelIsDownloadable,
+} from "./app/intelligenceModes";
+import { COPY } from "./app/copy";
+import {
   findRegisteredModelByIdentifier,
   modelRefBasename,
   normalizeModelRef,
@@ -87,6 +98,9 @@ function App() {
   // ── Model state ────────────────────────────────────────────────────────────
   const [models, setModels] = useState<ModelFile[]>([]);
   const [selectedModel, setSelectedModel] = useState("");
+  const [intelligenceMode, setIntelligenceMode] = useState<IntelligenceMode>(() => readIntelligenceMode());
+  const [intelligenceMapping, setIntelligenceMapping] = useState(() => readIntelligenceMapping());
+  const [useSpecificModelPicker, setUseSpecificModelPicker] = useState(() => readSpecificModelPicker());
   const [registeredModels, setRegisteredModels] = useState<RegisteredModel[]>([]);
   const [modelCatalog, setModelCatalog] = useState<RegisteredModel[]>([]);
   const [sessionModelParamOverrides, setSessionModelParamOverrides] = useState<Record<string, Record<string, string>>>({});
@@ -1290,6 +1304,30 @@ function App() {
     }
   };
 
+  const formatModelSizeLabel = (memoryMb?: number): string => {
+    if (typeof memoryMb !== "number" || !Number.isFinite(memoryMb) || memoryMb <= 0) return "";
+    if (memoryMb >= 1024) return `${(memoryMb / 1024).toFixed(1)} GB`;
+    return `${Math.round(memoryMb)} MB`;
+  };
+
+  const resolveCatalogModel = useCallback(
+    (modelId: string) =>
+      modelCatalog.find((m) => m.id === modelId) ??
+      registeredModels.find((m) => m.id === modelId),
+    [modelCatalog, registeredModels]
+  );
+
+  const waitForModelDownload = useCallback(async (modelId: string, timeoutMs = 45 * 60 * 1000) => {
+    const started = Date.now();
+    while (Date.now() - started < timeoutMs) {
+      const catalog = await Api.listModelCatalog().catch(() => []);
+      const entry = catalog.find((m) => m.id === modelId);
+      if (entry?.is_downloaded) return true;
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+    return false;
+  }, []);
+
   const handleCancelDownload = async (modelId: string) => {
     try {
       await Api.cancelDownload(modelId);
@@ -1591,6 +1629,8 @@ function App() {
           path: m.id,
           is_downloaded: m.is_downloaded,
           gdrive_id: m.gdrive_id,
+          downloadable: modelIsDownloadable(m),
+          memory_mb: m.memory_mb,
         }));
 
       // Also include any discovered local model files that are not currently
@@ -1706,6 +1746,106 @@ function App() {
       setModelSwitching({ active: false, targetLabel: "" });
     }
   };
+
+  const ensureDownloadedAndSwitch = useCallback(
+    async (modelId: string) => {
+      const entry = resolveCatalogModel(modelId);
+      if (entry && !entry.is_downloaded && modelIsDownloadable(entry)) {
+        const ok = await confirmAction(
+          "Download model",
+          COPY.intelligenceDownloadPrompt(entry.name, formatModelSizeLabel(entry.memory_mb)),
+          "Download",
+          "Cancel"
+        );
+        if (!ok) return;
+        await handleDownloadModel(modelId);
+        const ready = await waitForModelDownload(modelId);
+        if (!ready) {
+          showError("Download is still in progress. Try switching again once it finishes.");
+          return;
+        }
+        await refreshModels();
+      }
+      await handleModelChange(modelId);
+    },
+    [resolveCatalogModel, waitForModelDownload, refreshModels, showError, selectedModel, modelSwitching.active, models, registeredModels]
+  );
+
+  const handleIntelligenceModeSelect = useCallback(
+    async (mode: IntelligenceMode) => {
+      if (mode === "deep") {
+        const ok = await confirmAction(
+          "Deep mode",
+          COPY.intelligenceDeepLoadWarning,
+          "Continue",
+          "Cancel"
+        );
+        if (!ok) return;
+      }
+
+      const modelId = intelligenceMapping[mode];
+      writeIntelligenceMode(mode);
+      setIntelligenceMode(mode);
+      setUseSpecificModelPicker(false);
+      writeSpecificModelPicker(false);
+      await ensureDownloadedAndSwitch(modelId);
+    },
+    [intelligenceMapping, ensureDownloadedAndSwitch]
+  );
+
+  const handleModelChangeFromPicker = useCallback(
+    async (path: string) => {
+      setUseSpecificModelPicker(true);
+      writeSpecificModelPicker(true);
+
+      const entry = resolveCatalogModel(path);
+      if (entry && !entry.is_downloaded && modelIsDownloadable(entry)) {
+        const ok = await confirmAction(
+          "Download model",
+          COPY.intelligenceDownloadPrompt(entry.name, formatModelSizeLabel(entry.memory_mb)),
+          "Download",
+          "Cancel"
+        );
+        if (!ok) return;
+        await handleDownloadModel(path);
+        const ready = await waitForModelDownload(path);
+        if (!ready) {
+          showError("Download is still in progress. Try switching again once it finishes.");
+          return;
+        }
+        await refreshModels();
+      }
+
+      await handleModelChange(path);
+    },
+    [resolveCatalogModel, waitForModelDownload, refreshModels, showError, handleModelChange]
+  );
+
+  const handleChooseSpecificModel = useCallback(() => {
+    setUseSpecificModelPicker(true);
+    writeSpecificModelPicker(true);
+  }, []);
+
+  const handleBackToIntelligenceTiers = useCallback(() => {
+    setUseSpecificModelPicker(false);
+    writeSpecificModelPicker(false);
+    void ensureDownloadedAndSwitch(intelligenceMapping[intelligenceMode]);
+  }, [ensureDownloadedAndSwitch, intelligenceMapping, intelligenceMode]);
+
+  const intelligenceDisplayMode = useMemo((): IntelligenceMode | "custom" => {
+    if (useSpecificModelPicker) return "custom";
+    const matched = resolveModeForModelId(selectedModel, intelligenceMapping);
+    return matched ?? "custom";
+  }, [useSpecificModelPicker, selectedModel, intelligenceMapping]);
+
+  useEffect(() => {
+    if (!selectedModel || useSpecificModelPicker) return;
+    const matched = resolveModeForModelId(selectedModel, intelligenceMapping);
+    if (matched && matched !== intelligenceMode) {
+      setIntelligenceMode(matched);
+      writeIntelligenceMode(matched);
+    }
+  }, [selectedModel, intelligenceMapping, useSpecificModelPicker, intelligenceMode]);
 
   const handleAddModel = () => {
     setHfModalPreset({ folder: "LLM", profile: "llm" });
@@ -2250,6 +2390,12 @@ function App() {
     updateSession,
   ]);
 
+  useEffect(() => {
+    if (!settingsOpen) {
+      setIntelligenceMapping(readIntelligenceMapping());
+    }
+  }, [settingsOpen]);
+
   // Show startup modal if no active workspace yet (unless we're running the tour from it)
   const showStartupModal = !activeWorkspace && !suppressStartupModal;
   const showParamsDock = advanced && !!activeRuntimeParamTarget && paramsDockOpen;
@@ -2378,9 +2524,20 @@ function App() {
         modelLoadingStatus={modelLoadingStatus}
         modelSwitching={modelSwitching.active}
         modelSwitchingLabel={modelSwitching.targetLabel}
+        intelligenceMode={intelligenceDisplayMode}
+        useSpecificModelPicker={useSpecificModelPicker}
+        onSelectIntelligenceMode={(mode) => {
+          void handleIntelligenceModeSelect(mode);
+        }}
+        onChooseSpecificModel={handleChooseSpecificModel}
+        onBackToIntelligenceTiers={() => {
+          void handleBackToIntelligenceTiers();
+        }}
         models={models}
         selectedModel={selectedModel}
-        onModelChange={handleModelChange}
+        onModelChange={(path) => {
+          void handleModelChangeFromPicker(path);
+        }}
         onAddModel={handleAddModel}
         onDownloadModel={handleDownloadModel}
         onCancelDownload={handleCancelDownload}

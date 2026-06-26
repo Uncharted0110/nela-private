@@ -95,6 +95,68 @@ chat_template_kwargs = '{"enable_thinking": false}'
 [models.task_priorities]
 podcast_script = 10
 
+# ── LLM: LFM2.5-1.2B Thinking (llama-server) ─────────────────────────────────
+# Balanced "Smart" tier — thinking model for stronger reasoning at modest size.
+
+[[models]]
+id = "lfm2.5-1.2b-thinking"
+name = "LFM2.5 1.2B Thinking Q4"
+backend = "llama_server"
+kind = "child_process"
+model_file = "LLM/LiquidAI/LFM2.5-1.2B-Thinking-GGUF/LFM2.5-1.2B-Thinking-Q4_K_M.gguf"
+tasks = ["chat", "summarize", "mindmap", "enrich", "hyde", "podcast_script"]
+auto_start = false
+max_instances = 2
+idle_timeout_s = 300
+priority = 25
+memory_mb = 731
+hf_repo = "LiquidAI/LFM2.5-1.2B-Thinking-GGUF"
+hf_file = "LFM2.5-1.2B-Thinking-Q4_K_M.gguf"
+is_zip = false
+
+[models.params]
+ctx_size = "8192"
+port = "0"
+max_tokens = "2048"
+temp = "0.7"
+top_p = "0.9"
+top_k = "40"
+repeat_penalty = "1.1"
+flash_attn = "true"
+mlock = "true"
+cache_type = "q8_0"
+
+# ── LLM: Gemma 4 E2B IT QAT (llama-server) ───────────────────────────────────
+# "Deep" tier — largest default chat model for best answer quality.
+
+[[models]]
+id = "gemma-4-e2b-it"
+name = "Gemma 4 E2B IT Q4"
+backend = "llama_server"
+kind = "child_process"
+model_file = "LLM/unsloth/gemma-4-E2B-it-qat-GGUF/gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf"
+tasks = ["chat", "summarize", "mindmap", "enrich", "hyde", "podcast_script"]
+auto_start = false
+max_instances = 1
+idle_timeout_s = 300
+priority = 22
+memory_mb = 2620
+hf_repo = "unsloth/gemma-4-E2B-it-qat-GGUF"
+hf_file = "gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf"
+is_zip = false
+
+[models.params]
+ctx_size = "8192"
+port = "0"
+max_tokens = "2048"
+temp = "0.7"
+top_p = "0.9"
+top_k = "40"
+repeat_penalty = "1.1"
+flash_attn = "true"
+mlock = "true"
+cache_type = "q8_0"
+
 # ── Vision Projector: LFM2.5-VL-450M mmproj (download/check helper) ──────────
 
 [[models]]

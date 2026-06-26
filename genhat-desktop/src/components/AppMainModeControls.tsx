@@ -8,9 +8,13 @@ import type {
 } from "../types";
 import type { DownloadStateMap } from "../app/types";
 import type { RuntimeParamsTarget } from "./ActiveModelParamsDock";
+import type { IntelligenceMode } from "../app/intelligenceModes";
+import { COPY } from "../app/copy";
 import GlassDropdown from "./GlassDropdown";
 import ModelSelector from "./ModelSelector";
+import IntelligenceModeSelector from "./IntelligenceModeSelector";
 import { useAdvancedMode } from "../hooks/useAdvancedMode";
+import "./IntelligenceModeSelector.css";
 import {
   inferStyle,
   RESPONSE_STYLE_OPTIONS,
@@ -53,6 +57,11 @@ interface AppMainModeControlsProps {
   isCompactingContext: boolean;
   modelSwitching?: boolean;
   modelSwitchingLabel?: string;
+  intelligenceMode: IntelligenceMode | "custom";
+  useSpecificModelPicker: boolean;
+  onSelectIntelligenceMode: (mode: IntelligenceMode) => void;
+  onChooseSpecificModel: () => void;
+  onBackToIntelligenceTiers: () => void;
 }
 
 export default function AppMainModeControls({
@@ -85,6 +94,11 @@ export default function AppMainModeControls({
   isCompactingContext,
   modelSwitching = false,
   modelSwitchingLabel = "",
+  intelligenceMode,
+  useSpecificModelPicker,
+  onSelectIntelligenceMode,
+  onChooseSpecificModel,
+  onBackToIntelligenceTiers,
 }: AppMainModeControlsProps) {
   const { advanced } = useAdvancedMode();
   const disabledStyle = !!activeRuntimeParamTarget && activeRuntimeParamTarget.backend !== "LlamaServer";
@@ -97,24 +111,49 @@ export default function AppMainModeControls({
 
   const canToggleWeb = chatMode === "text" && typeof onToggleWebEnabled === "function";
 
+  const renderLlmPicker = () => {
+    if (useSpecificModelPicker) {
+      return (
+        <div className="intelligence-picker-row">
+          <button
+            type="button"
+            className="intelligence-back-link"
+            onClick={onBackToIntelligenceTiers}
+          >
+            {COPY.intelligenceBackToTiers}
+          </button>
+          <ModelSelector
+            models={models}
+            selectedModel={selectedModel}
+            switching={modelSwitching}
+            switchingLabel={modelSwitchingLabel}
+            onSelect={onModelChange}
+            type="llm"
+            onAdd={onAddModel}
+            onDownload={onDownloadModel}
+            onCancelDownload={onCancelDownload}
+            onUninstall={onUninstallModel}
+            onConfirm={onConfirmAction}
+            downloads={downloads}
+          />
+        </div>
+      );
+    }
+
+    return (
+      <IntelligenceModeSelector
+        mode={intelligenceMode}
+        switching={modelSwitching}
+        switchingLabel={modelSwitchingLabel}
+        onSelectMode={onSelectIntelligenceMode}
+        onChooseSpecificModel={onChooseSpecificModel}
+      />
+    );
+  };
+
   return (
     <div className="flex items-center gap-3">
-      {(chatMode === "text" || chatMode === "mindmap") && (
-        <ModelSelector
-          models={models}
-          selectedModel={selectedModel}
-          switching={modelSwitching}
-          switchingLabel={modelSwitchingLabel}
-          onSelect={onModelChange}
-          type="llm"
-          onAdd={onAddModel}
-          onDownload={onDownloadModel}
-          onCancelDownload={onCancelDownload}
-          onUninstall={onUninstallModel}
-          onConfirm={onConfirmAction}
-          downloads={downloads}
-        />
-      )}
+      {(chatMode === "text" || chatMode === "mindmap") && renderLlmPicker()}
 
       {chatMode === "audio" && ttsEngines.length > 0 && (
         <div className="flex items-center gap-2.5">
@@ -187,7 +226,6 @@ export default function AppMainModeControls({
                   try {
                     await onApplyRuntimeParams(RESPONSE_STYLE_PRESETS[style]);
                   } catch {
-                    // If apply fails, revert to what the model is actually using.
                     setStyleValue(inferredStyle);
                   }
                 })();

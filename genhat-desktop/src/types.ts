@@ -3,6 +3,9 @@ export interface ModelFile {
   path: string;
   is_downloaded?: boolean;
   gdrive_id?: string | null;
+  /** True when the model can be downloaded from Google Drive or Hugging Face. */
+  downloadable?: boolean;
+  memory_mb?: number;
 }
 
 export interface DiscoveredModelUnit {

@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import { Plus, ChevronDown, Check, Music, MessageSquare, Loader2, Trash2 } from "lucide-react";
 import type { ModelFile } from "../types";
+import { modelFileIsDownloadable } from "../app/intelligenceModes";
 import InstallModelModal from "./InstallModelModal";
 import "./ModelSelector.css";
 
@@ -61,8 +62,15 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
     switchingLabel.length > 26 ? `${switchingLabel.slice(0, 26)}...` : switchingLabel;
   const buttonLabel = switching ? `Switching: ${switchingDisplay}` : currentModelLabel;
 
-  const installedModels = models.filter(m => m.is_downloaded || downloads[m.path] !== undefined || !m.gdrive_id);
-  const missingModelsCount = models.filter(m => !m.is_downloaded && m.gdrive_id).length;
+  const installedModels = models.filter(
+    (m) =>
+      m.is_downloaded ||
+      downloads[m.path] !== undefined ||
+      !modelFileIsDownloadable(m)
+  );
+  const missingModelsCount = models.filter(
+    (m) => !m.is_downloaded && modelFileIsDownloadable(m)
+  ).length;
   const useExternalInstallFlow = typeof onAdd === "function" && (type === "llm" || type === "vision");
 
   return (

@@ -18,6 +18,8 @@ export const STARTUP_MODEL_SELECTOR = {
     "kitten-tts",
     "parakeet-tdt",
     "qwen3.5-0_8b",
+    "lfm2.5-1.2b-thinking",
+    "gemma-4-e2b-it",
     "mmproj-LFM2.5-VL-450m-F16",
     "LFM2.5-VL-450M-F32",
   ]),
