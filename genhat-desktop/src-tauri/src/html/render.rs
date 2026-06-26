@@ -5,6 +5,7 @@ use crate::grammar::schema::{
 };
 
 use super::layout::{layout_for, ArchetypeLayout, GridVariant, HeroVariant, ARCHETYPE_CSS};
+use super::charts::{self, CHART_CSS, CHART_INTERACTION_JS};
 
 const DEFAULT_INTERACTIVE_POOL: &[(&str, &str, &str)] = &[
     ("The Grand Budapest Hotel", "A whimsical caper through a luxurious European hotel.", "2014 · Comedy"),
@@ -64,7 +65,8 @@ const REQUIRED_KINDS: &[( &str, &[HtmlSectionKind])] = &[
         &[
             HtmlSectionKind::Hero,
             HtmlSectionKind::Stats,
-            HtmlSectionKind::Grid,
+            HtmlSectionKind::Chart,
+            HtmlSectionKind::Chart,
             HtmlSectionKind::Text,
         ],
     ),
@@ -158,6 +160,7 @@ pub fn render_html_plan(plan: HtmlPlan) -> String {
         plan.sections = default_sections(&plan.archetype, &plan.title, plan.tagline.as_deref());
     }
     plan.sections = normalize_sections(&plan.archetype, plan.sections, &plan.title);
+    charts::resolve_plan_charts(&mut plan);
 
     if plan.archetype == "interactive" {
         return super::interactive::render_interactive_plan(plan);
@@ -199,7 +202,7 @@ pub fn render_html_plan(plan: HtmlPlan) -> String {
         .sections
         .iter()
         .enumerate()
-        .map(|(i, s)| render_section(&layout, i, s))
+        .map(|(i, s)| render_section(&layout, i, s, theme, plan.images.as_deref()))
         .collect::<Vec<_>>()
         .join("\n");
 
@@ -209,14 +212,25 @@ pub fn render_html_plan(plan: HtmlPlan) -> String {
         format!(r#"<p class="site-tagline">{tagline}</p>"#)
     };
 
+    let has_charts = plan
+        .sections
+        .iter()
+        .any(|s| s.kind == HtmlSectionKind::Chart);
+
     let theme_vars = theme_css(theme);
+    let (font_body, font_heading) = theme_fonts(theme, &layout);
     let body_class = layout.body_class;
-    let font_url = layout.font_url;
     let font_vars = format!(
         ":root {{ --font-body: {}; --font-heading: {}; }}",
-        layout.font_body, layout.font_heading
+        font_body, font_heading
     );
     let footer_note = escape_html(layout.footer_note);
+    let chart_css = if has_charts { CHART_CSS } else { "" };
+    let chart_js = if has_charts {
+        CHART_INTERACTION_JS
+    } else {
+        ""
+    };
 
     format!(
         r##"<!DOCTYPE html>
@@ -225,14 +239,12 @@ pub fn render_html_plan(plan: HtmlPlan) -> String {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title}</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="{font_url}" rel="stylesheet">
 <style>
 {font_vars}
 {theme_css}
 {base_css}
 {archetype_css}
+{chart_css}
 </style>
 </head>
 <body class="{body_class}">
@@ -265,12 +277,15 @@ pub fn render_html_plan(plan: HtmlPlan) -> String {
         if (item) item.classList.toggle('open');
       }});
     }});
+    {chart_js}
   </script>
 </body>
 </html>"##,
         theme_css = theme_vars,
         base_css = BASE_CSS,
         archetype_css = ARCHETYPE_CSS,
+        chart_css = chart_css,
+        chart_js = chart_js,
     )
 }
 
@@ -295,6 +310,7 @@ fn default_sections(archetype: &str, title: &str, tagline: Option<&str>) -> Vec<
                 ),
                 body: None,
                 items: vec![],
+                ..HtmlSection::with_kind(HtmlSectionKind::Hero)
             },
             HtmlSection {
                 kind: HtmlSectionKind::Grid,
@@ -305,6 +321,7 @@ fn default_sections(archetype: &str, title: &str, tagline: Option<&str>) -> Vec<
                     .iter()
                     .map(|(label, detail, meta)| item(label, detail, Some(meta)))
                     .collect(),
+                ..HtmlSection::with_kind(HtmlSectionKind::Grid)
             },
         ];
     }
@@ -320,6 +337,7 @@ fn default_sections(archetype: &str, title: &str, tagline: Option<&str>) -> Vec<
                 title
             )),
             items: vec![],
+            ..HtmlSection::with_kind(HtmlSectionKind::Hero)
         },
         HtmlSection {
             kind: HtmlSectionKind::Grid,
@@ -331,6 +349,7 @@ fn default_sections(archetype: &str, title: &str, tagline: Option<&str>) -> Vec<
                 item("Feature two", "Another reason this topic matters today.", None),
                 item("Feature three", "Practical value you can act on right away.", None),
             ],
+            ..HtmlSection::with_kind(HtmlSectionKind::Grid)
         },
         HtmlSection {
             kind: HtmlSectionKind::Stats,
@@ -343,6 +362,7 @@ fn default_sections(archetype: &str, title: &str, tagline: Option<&str>) -> Vec<
                 item("10k+", "Community", None),
                 item("5★", "Rated experience", None),
             ],
+            ..HtmlSection::with_kind(HtmlSectionKind::Stats)
         },
         HtmlSection {
             kind: HtmlSectionKind::Cta,
@@ -350,6 +370,7 @@ fn default_sections(archetype: &str, title: &str, tagline: Option<&str>) -> Vec<
             subtitle: Some("Take the next step today.".to_string()),
             body: None,
             items: vec![],
+            ..HtmlSection::with_kind(HtmlSectionKind::Cta)
         },
     ]
 }
@@ -389,6 +410,7 @@ fn enrich_section(mut section: HtmlSection) -> HtmlSection {
         HtmlSectionKind::Grid => 3,
         HtmlSectionKind::Faq | HtmlSectionKind::Quotes | HtmlSectionKind::Stats => 2,
         HtmlSectionKind::InfoBar => 2,
+        HtmlSectionKind::Chart => 2,
         _ => 0,
     };
 
@@ -420,6 +442,11 @@ fn enrich_section(mut section: HtmlSection) -> HtmlSection {
                 "Supporting information",
                 None,
             ),
+            HtmlSectionKind::Chart => item(
+                &format!("Category {n}"),
+                "",
+                Some(&format!("{n}0")),
+            ),
             _ => break,
         });
     }
@@ -444,6 +471,7 @@ fn placeholder_section(kind: HtmlSectionKind, title: &str, archetype: &str) -> H
                 subtitle: Some("Press the button to get a random pick.".to_string()),
                 body: None,
                 items: vec![],
+                ..HtmlSection::with_kind(kind)
             },
             HtmlSectionKind::Grid => placeholder_interactive_grid(title),
             _ => HtmlSection {
@@ -452,6 +480,7 @@ fn placeholder_section(kind: HtmlSectionKind, title: &str, archetype: &str) -> H
                 subtitle: None,
                 body: None,
                 items: vec![],
+                ..HtmlSection::with_kind(kind)
             },
         };
     }
@@ -463,6 +492,7 @@ fn placeholder_section(kind: HtmlSectionKind, title: &str, archetype: &str) -> H
             subtitle: Some("Your guide starts here".to_string()),
             body: Some(format!("Everything you need to know about {title}, in one place.")),
             items: vec![],
+            ..HtmlSection::with_kind(kind)
         },
         HtmlSectionKind::InfoBar => HtmlSection {
             kind,
@@ -474,6 +504,7 @@ fn placeholder_section(kind: HtmlSectionKind, title: &str, archetype: &str) -> H
                 item("Location", "Downtown · Main Street", None),
                 item("Contact", "hello@example.com", None),
             ],
+            ..HtmlSection::with_kind(kind)
         },
         HtmlSectionKind::Grid => HtmlSection {
             kind,
@@ -485,6 +516,7 @@ fn placeholder_section(kind: HtmlSectionKind, title: &str, archetype: &str) -> H
                 item("Item B", "Description for the second highlight.", Some("$15")),
                 item("Item C", "Description for the third highlight.", Some("$9")),
             ],
+            ..HtmlSection::with_kind(kind)
         },
         HtmlSectionKind::Split => HtmlSection {
             kind,
@@ -495,6 +527,7 @@ fn placeholder_section(kind: HtmlSectionKind, title: &str, archetype: &str) -> H
                  Today we continue that tradition with care, craft, and community at the center."
             )),
             items: vec![],
+            ..HtmlSection::with_kind(kind)
         },
         HtmlSectionKind::Stats => HtmlSection {
             kind,
@@ -506,6 +539,7 @@ fn placeholder_section(kind: HtmlSectionKind, title: &str, archetype: &str) -> H
                 item("15", "Years experience", None),
                 item("4.9", "Average rating", None),
             ],
+            ..HtmlSection::with_kind(kind)
         },
         HtmlSectionKind::Quotes => HtmlSection {
             kind,
@@ -517,6 +551,7 @@ fn placeholder_section(kind: HtmlSectionKind, title: &str, archetype: &str) -> H
                 "— A satisfied visitor",
                 None,
             )],
+            ..HtmlSection::with_kind(kind)
         },
         HtmlSectionKind::Faq => HtmlSection {
             kind,
@@ -527,6 +562,7 @@ fn placeholder_section(kind: HtmlSectionKind, title: &str, archetype: &str) -> H
                 item("How do I get started?", "Simply reach out or visit us during opening hours.", None),
                 item("Is there a cost?", "Pricing depends on what you need — see highlights above.", None),
             ],
+            ..HtmlSection::with_kind(kind)
         },
         HtmlSectionKind::Cta => HtmlSection {
             kind,
@@ -534,6 +570,7 @@ fn placeholder_section(kind: HtmlSectionKind, title: &str, archetype: &str) -> H
             subtitle: Some("We would love to hear from you.".to_string()),
             body: None,
             items: vec![],
+            ..HtmlSection::with_kind(kind)
         },
         HtmlSectionKind::Text => HtmlSection {
             kind,
@@ -544,6 +581,29 @@ fn placeholder_section(kind: HtmlSectionKind, title: &str, archetype: &str) -> H
                  practical takeaways you can use right away."
             )),
             items: vec![],
+            ..HtmlSection::with_kind(kind)
+        },
+        HtmlSectionKind::Chart => HtmlSection {
+            kind,
+            title: "Distribution".to_string(),
+            subtitle: None,
+            body: None,
+            chart_type: Some("bar".to_string()),
+            items: vec![
+                item("Category A", "", Some("42")),
+                item("Category B", "", Some("28")),
+                item("Category C", "", Some("18")),
+            ],
+            ..HtmlSection::with_kind(kind)
+        },
+        HtmlSectionKind::Image => HtmlSection {
+            kind,
+            title: "Illustration".to_string(),
+            subtitle: None,
+            body: None,
+            image_index: Some(0),
+            items: vec![],
+            ..HtmlSection::with_kind(kind)
         },
     }
 }
@@ -569,6 +629,7 @@ fn placeholder_interactive_grid(title: &str) -> HtmlSection {
         subtitle: None,
         body: None,
         items,
+        ..HtmlSection::with_kind(HtmlSectionKind::Grid)
     }
 }
 
@@ -580,7 +641,7 @@ fn item(label: &str, detail: &str, meta: Option<&str>) -> HtmlSectionItem {
     }
 }
 
-fn render_section(layout: &ArchetypeLayout, index: usize, section: &HtmlSection) -> String {
+fn render_section(layout: &ArchetypeLayout, index: usize, section: &HtmlSection, theme: &str, images: Option<&[crate::grammar::schema::ArtifactImageAsset]>) -> String {
     let id = format!("sec-{index}");
     let title = escape_html(&section.title);
     let subtitle = section
@@ -711,7 +772,73 @@ fn render_section(layout: &ArchetypeLayout, index: usize, section: &HtmlSection)
   </div>
 </section>"#
         ),
+        HtmlSectionKind::Chart => charts::render_chart_section(section, index, theme),
+        HtmlSectionKind::Image => render_image_section(section, index, images),
     }
+}
+
+fn section_image_uri(
+    section: &HtmlSection,
+    section_index: usize,
+    images: Option<&[crate::grammar::schema::ArtifactImageAsset]>,
+) -> Option<String> {
+    let pool = images.filter(|p| !p.is_empty())?;
+    let idx = section
+        .image_index
+        .map(|i| i as usize)
+        .unwrap_or(section_index % pool.len());
+    pool.get(idx)
+        .or_else(|| pool.first())
+        .map(|a| a.data_uri.clone())
+}
+
+fn render_image_section(
+    section: &HtmlSection,
+    index: usize,
+    images: Option<&[crate::grammar::schema::ArtifactImageAsset]>,
+) -> String {
+    let title = escape_html(&section.title);
+    let subtitle = section
+        .subtitle
+        .as_deref()
+        .map(|s| format!(r#"<p class="section-sub">{}</p>"#, escape_html(s)))
+        .unwrap_or_default();
+    let body = section
+        .body
+        .as_deref()
+        .map(|s| format!(r#"<p class="section-body">{}</p>"#, escape_html(s)))
+        .unwrap_or_default();
+
+    let img_block = if let Some(uri) = section_image_uri(section, index, images) {
+        let alt = escape_html(
+            images
+                .and_then(|pool| {
+                    let idx = section.image_index.map(|i| i as usize).unwrap_or(index % pool.len());
+                    pool.get(idx).or_else(|| pool.first())
+                })
+                .map(|a| {
+                    a.alt
+                        .as_deref()
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or(a.caption.as_str())
+                })
+                .unwrap_or("Illustration"),
+        );
+        format!(r#"<figure class="page-figure"><img class="page-image" src="{uri}" alt="{alt}" loading="lazy" /></figure>"#)
+    } else {
+        r#"<div class="hero-visual" aria-hidden="true"></div>"#.to_string()
+    };
+
+    format!(
+        r#"<section class="section image-section" id="sec-{index}">
+  <div class="container">
+    <h2 class="section-title">{title}</h2>
+    {subtitle}
+    {body}
+    {img_block}
+  </div>
+</section>"#
+    )
 }
 
 fn render_hero(
@@ -830,7 +957,42 @@ pub(crate) fn theme_css(theme: &str) -> &'static str {
         "corporate" => CORPORATE_THEME,
         "forest" => FOREST_THEME,
         "rose" => ROSE_THEME,
+        "cyber" => CYBER_THEME,
+        "ocean" => OCEAN_THEME,
+        "academic" => ACADEMIC_THEME,
+        "lavender" => LAVENDER_THEME,
+        "neon" => NEON_THEME,
+        "slate" => SLATE_THEME,
+        "aurora" => AURORA_THEME,
+        "paper" => PAPER_THEME,
         _ => MIDNIGHT_THEME,
+    }
+}
+
+/// Offline system font stacks per theme (no CDN).
+pub(crate) fn theme_fonts(theme: &str, layout: &ArchetypeLayout) -> (&'static str, &'static str) {
+    match theme {
+        "cyber" => (
+            "ui-monospace, 'Cascadia Code', 'Segoe UI', system-ui, sans-serif",
+            "ui-monospace, 'Cascadia Code', 'Segoe UI', system-ui, sans-serif",
+        ),
+        "academic" => (
+            "Georgia, 'Times New Roman', serif",
+            "Georgia, 'Times New Roman', serif",
+        ),
+        "ocean" => (
+            "system-ui, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
+            "system-ui, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
+        ),
+        "lavender" => (
+            "system-ui, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
+            "Georgia, 'Times New Roman', serif",
+        ),
+        "paper" => (
+            "Georgia, 'Times New Roman', serif",
+            "Georgia, 'Times New Roman', serif",
+        ),
+        _ => (layout.font_body, layout.font_heading),
     }
 }
 
@@ -898,6 +1060,94 @@ const ROSE_THEME: &str = r#":root {
   --accent-2: #fbbf24;
   --hero-grad: linear-gradient(135deg, #4c0519, #1c1017);
   --card-grad: linear-gradient(145deg, rgba(225,29,72,.2), rgba(251,191,36,.08));
+}"#;
+
+const CYBER_THEME: &str = r#":root {
+  --bg: #050508;
+  --surface: #0a1628;
+  --text: #e0fff4;
+  --muted: #4ade80;
+  --accent: #22d3ee;
+  --accent-2: #10b981;
+  --hero-grad: linear-gradient(135deg, #050508, #0a1628 60%, #064e3b);
+  --card-grad: linear-gradient(145deg, rgba(34,211,238,.12), rgba(16,185,129,.08));
+}"#;
+
+const OCEAN_THEME: &str = r#":root {
+  --bg: #0c1929;
+  --surface: #0f2847;
+  --text: #e0f2fe;
+  --muted: #7dd3fc;
+  --accent: #38bdf8;
+  --accent-2: #0284c7;
+  --hero-grad: linear-gradient(135deg, #0c1929, #0f2847);
+  --card-grad: linear-gradient(145deg, rgba(56,189,248,.15), rgba(2,132,199,.08));
+}"#;
+
+const ACADEMIC_THEME: &str = r#":root {
+  --bg: #f8f5f0;
+  --surface: #ede8e0;
+  --text: #292524;
+  --muted: #78716c;
+  --accent: #991b1b;
+  --accent-2: #7f1d1d;
+  --hero-grad: linear-gradient(180deg, #f8f5f0, #ede8e0);
+  --card-grad: linear-gradient(145deg, #fff, #ede8e0);
+}"#;
+
+const LAVENDER_THEME: &str = r#":root {
+  --bg: #1a1028;
+  --surface: #261433;
+  --text: #f5f3ff;
+  --muted: #c4b5fd;
+  --accent: #a78bfa;
+  --accent-2: #e879f9;
+  --hero-grad: linear-gradient(135deg, #1a1028, #312e81);
+  --card-grad: linear-gradient(145deg, rgba(167,139,250,.18), rgba(232,121,249,.08));
+}"#;
+
+const NEON_THEME: &str = r#":root {
+  --bg: #0a0a0f;
+  --surface: #14141f;
+  --text: #fafafa;
+  --muted: #f0abfc;
+  --accent: #f0abfc;
+  --accent-2: #22d3ee;
+  --hero-grad: linear-gradient(135deg, #0a0a0f, #1e1b4b);
+  --card-grad: linear-gradient(145deg, rgba(240,171,252,.2), rgba(34,211,238,.1));
+}"#;
+
+const SLATE_THEME: &str = r#":root {
+  --bg: #0f1419;
+  --surface: #1a222c;
+  --text: #e2e8f0;
+  --muted: #94a3b8;
+  --accent: #64748b;
+  --accent-2: #cbd5e1;
+  --hero-grad: linear-gradient(135deg, #0f1419, #1e293b);
+  --card-grad: linear-gradient(145deg, rgba(100,116,139,.2), rgba(30,41,59,.9));
+}"#;
+
+const AURORA_THEME: &str = r#":root {
+  --bg: #0b1020;
+  --surface: #121a2e;
+  --text: #ecfeff;
+  --muted: #a5b4fc;
+  --accent: #22d3ee;
+  --accent-2: #a78bfa;
+  --hero-grad: linear-gradient(135deg, #0b1020, #1e1b4b 50%, #134e4a);
+  --card-grad: linear-gradient(145deg, rgba(34,211,238,.15), rgba(167,139,250,.12));
+}"#;
+
+const PAPER_THEME: &str = r#":root {
+  --bg: #faf8f5;
+  --surface: #ffffff;
+  --text: #1c1917;
+  --muted: #78716c;
+  --accent: #b45309;
+  --accent-2: #1d4ed8;
+  --hero-grad: linear-gradient(180deg, #faf8f5, #f5f0e8);
+  --card-grad: linear-gradient(145deg, #fff, #f5f0e8);
 }"#;
 
 pub(crate) const BASE_CSS: &str = r#"
@@ -1015,6 +1265,9 @@ h1, h2, h3 { font-family: var(--font-heading, 'Fraunces', Georgia, serif); line-
   .hero-inner, .split-inner { grid-template-columns: 1fr; }
   .site-nav { display: none; }
 }
+.page-figure { margin: 1.25rem 0 0; border-radius: 16px; overflow: hidden; border: 1px solid color-mix(in srgb, var(--text) 10%, transparent); }
+.page-image { width: 100%; max-height: 420px; object-fit: cover; display: block; }
+.image-section .hero-visual { min-height: 200px; margin-top: 1rem; }
 "#;
 
 #[cfg(test)]
@@ -1032,6 +1285,9 @@ mod tests {
             theme: Some("sunset".into()),
             output_name: None,
             html: None,
+            headers: None,
+            source_rows: None,
+            images: None,
         };
         let html = render_html_plan(plan);
         assert!(html.contains("<!DOCTYPE html>"));
@@ -1051,6 +1307,9 @@ mod tests {
             theme: Some("minimal".into()),
             output_name: None,
             html: None,
+            headers: None,
+            source_rows: None,
+            images: None,
         };
         assert!(render_html_plan(article).contains("layout-article"));
 
@@ -1062,6 +1321,9 @@ mod tests {
             theme: Some("minimal".into()),
             output_name: None,
             html: None,
+            headers: None,
+            source_rows: None,
+            images: None,
         };
         assert!(render_html_plan(resume).contains("layout-resume"));
 
@@ -1073,10 +1335,42 @@ mod tests {
             theme: Some("midnight".into()),
             output_name: None,
             html: None,
+            headers: None,
+            source_rows: None,
+            images: None,
         };
         let html = render_html_plan(picker);
         assert!(html.contains("layout-interactive"));
         assert!(html.contains("pick-btn"));
         assert!(html.contains("Pick a random movie"));
+    }
+
+    #[test]
+    fn renders_dashboard_charts() {
+        let plan = HtmlPlan {
+            title: "Sales Dashboard".into(),
+            tagline: Some("Q4 overview".into()),
+            archetype: "dashboard".into(),
+            sections: vec![{
+                let mut s = HtmlSection::with_kind(HtmlSectionKind::Chart);
+                s.title = "Revenue".into();
+                s.chart_type = Some("bar".into());
+                s.items = vec![
+                    item("A", "", Some("10")),
+                    item("B", "", Some("20")),
+                ];
+                s
+            }],
+            theme: Some("corporate".into()),
+            output_name: None,
+            html: None,
+            headers: None,
+            source_rows: None,
+            images: None,
+        };
+        let html = render_html_plan(plan);
+        assert!(html.contains("chart-panel"));
+        assert!(html.contains("chart-bar"));
+        assert!(!html.contains("fonts.googleapis.com"));
     }
 }

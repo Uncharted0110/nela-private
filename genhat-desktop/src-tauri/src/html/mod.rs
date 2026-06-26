@@ -7,6 +7,7 @@ pub mod render;
 pub mod write;
 pub mod layout;
 pub mod interactive;
+pub mod charts;
 
 pub use render::render_html_plan;
 pub use write::write_html_plan;

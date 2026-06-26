@@ -1,5 +1,9 @@
 use crate::governor::{CancellationToken, Governor};
 use crate::indexer::db::IndexerDb;
+use crate::indexer::paths::{
+    collect_index_roots, index_path_exists, is_blacklisted, normalize_index_path,
+    remove_from_path_set,
+};
 use calamine::{Reader, open_workbook_auto};
 use std::collections::HashSet;
 use std::fs;
@@ -8,36 +12,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::UNIX_EPOCH;
 use walkdir::WalkDir;
-
-const BLACKLIST: &[&str] = &[
-    ".git",
-    "node_modules",
-    "target",
-    "AppData",
-    "Library",
-    ".cache",
-    "cache",
-    "dist",
-    "build",
-    ".squad_cache",
-    "venv",
-    ".venv",
-    "env",
-    ".env",
-    "System Volume Information",
-    "$RECYCLE.BIN",
-];
-
-/// Returns true if any component of the path is blacklisted.
-pub(crate) fn is_blacklisted(path: &Path) -> bool {
-    path.components().any(|c| {
-        if let Some(s) = c.as_os_str().to_str() {
-            BLACKLIST.contains(&s)
-        } else {
-            false
-        }
-    })
-}
 
 /// Read first 10KB of a text file.
 pub(crate) fn read_first_10kb(path: &Path) -> Option<String> {
@@ -151,6 +125,37 @@ pub(crate) fn parent_location(path: &std::path::Path, levels: usize) -> String {
     tail.iter().map(|s| tokenize_filename(s)).collect::<Vec<_>>().join(" ")
 }
 
+/// Drop index rows whose files no longer exist (handles legacy path spellings).
+fn prune_missing_files(
+    db: &IndexerDb,
+    governor: &Arc<Governor>,
+    cancel_token: &CancellationToken,
+) {
+    log::info!("Pruning stale ambient index entries for missing files...");
+    let paths = db.get_all_paths().unwrap_or_default();
+    let mut duty_guard = governor.indexer_duty_cycle();
+    let mut pruned = 0usize;
+
+    for path_key in paths {
+        if cancel_token.is_cancelled() {
+            return;
+        }
+        duty_guard.checkpoint_sync();
+
+        if index_path_exists(&path_key) {
+            continue;
+        }
+
+        if db.delete(&path_key).is_ok() {
+            pruned += 1;
+        }
+    }
+
+    if pruned > 0 {
+        log::info!("Pruned {pruned} stale ambient index record(s).");
+    }
+}
+
 /// Main background crawling logic.
 pub fn run_crawler(
     home_dir: PathBuf,
@@ -161,57 +166,25 @@ pub fn run_crawler(
 ) {
     log::info!("Starting background ambient crawler...");
 
-    // 1. Gather all existing paths from database for deletion sync
+    prune_missing_files(&db, &governor, &cancel_token);
+
+    // Gather all existing paths from database for deletion sync
     let mut db_paths: HashSet<String> = db.get_all_paths().unwrap_or_default().into_iter().collect();
 
-    // 2. Initialize duty cycle guard
     let mut duty_guard = governor.indexer_duty_cycle();
 
-    // 3. Define crawl targets: (PathBuf, is_recursive)
-    let mut targets = Vec::new();
+    let targets = collect_index_roots(&home_dir, &workspace_paths);
 
-    // Add active workspaces recursively
-    for ws_path in &workspace_paths {
-        if ws_path.exists() {
-            targets.push((ws_path.clone(), true));
-        }
-    }
-
-    // Add standard folders recursively
-    let documents = home_dir.join("Documents");
-    let downloads = home_dir.join("Downloads");
-    let desktop = home_dir.join("Desktop");
-
-    for dir in &[documents, downloads, desktop] {
-        if dir.exists() {
-            targets.push((dir.clone(), true));
-        }
-    }
-
-    // Add home directory non-recursively (top-level files only)
-    if home_dir.exists() {
-        targets.push((home_dir.clone(), false));
-    }
-
-    // 4. Start scanning
-    for (target_path, is_recursive) in targets {
+    for target_path in targets {
         if cancel_token.is_cancelled() {
             log::info!("Crawler cancelled cooperatively.");
             return;
         }
 
-        log::debug!(
-            "Crawling target: {} (recursive={})",
-            target_path.display(),
-            is_recursive
-        );
+        log::info!("Crawling target recursively: {}", target_path.display());
 
-        let mut walk_builder = WalkDir::new(&target_path).follow_links(false);
-        if !is_recursive {
-            walk_builder = walk_builder.max_depth(1);
-        }
-
-        let walk = walk_builder
+        let walk = WalkDir::new(&target_path)
+            .follow_links(false)
             .into_iter()
             .filter_entry(|e| !is_blacklisted(e.path()));
 
@@ -221,7 +194,6 @@ pub fn run_crawler(
                 return;
             }
 
-            // Apply thermal governor work/sleep pulse
             duty_guard.checkpoint_sync();
 
             let entry = match entry {
@@ -230,8 +202,8 @@ pub fn run_crawler(
             };
 
             let path = entry.path();
-            let path_str = path.to_string_lossy().to_string();
-            db_paths.remove(&path_str);
+            let path_str = normalize_index_path(path);
+            remove_from_path_set(&mut db_paths, path);
 
             let metadata = match fs::metadata(path) {
                 Ok(m) => m,
@@ -263,7 +235,6 @@ pub fn run_crawler(
                             }
                         }
                     } else {
-                        // Not modified, skip extraction
                         continue;
                     }
                 }
@@ -288,7 +259,6 @@ pub fn run_crawler(
                     "xlsx" | "xls" | "ods" => extract_excel_metadata(path),
                     "csv" => extract_csv_headers(path),
                     "pdf" | "docx" | "pptx" => {
-                        // Use the RAG parser to extract text from rich documents
                         match crate::rag::parsers::parse_document(path) {
                             Ok(parsed) => {
                                 let text: String = parsed
@@ -300,7 +270,6 @@ pub fn run_crawler(
                                 if text.trim().is_empty() {
                                     None
                                 } else {
-                                    // Truncate to ~10KB to keep the index manageable
                                     Some(text.chars().take(10240).collect())
                                 }
                             }
@@ -328,12 +297,17 @@ pub fn run_crawler(
                 content.as_deref(),
             ) {
                 log::error!("Failed to index {}: {}", path_str, e);
+            } else {
+                // Remove legacy spellings so we don't keep duplicate rows.
+                let legacy = path.to_string_lossy().into_owned();
+                if legacy != path_str {
+                    db.delete(&legacy).ok();
+                }
             }
         }
     }
 
-    // 5. Sync deletions: any path still in db_paths no longer exists on filesystem target paths
-    // Only delete stale records if they were under our crawled scopes to avoid deleting files watched in fallbacks
+    // Sync deletions: paths still in db_paths were not seen during this crawl.
     for removed_path in db_paths {
         if cancel_token.is_cancelled() {
             return;
@@ -346,4 +320,14 @@ pub fn run_crawler(
     }
 
     log::info!("Background ambient crawl completed successfully.");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tokenize_splits_camel_case() {
+        assert_eq!(tokenize_filename("TaxReturn_2023.pdf"), "tax return 2023 pdf");
+    }
 }

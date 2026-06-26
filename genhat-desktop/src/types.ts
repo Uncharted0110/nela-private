@@ -404,17 +404,28 @@ export type SlideLayout =
   | "COMPARISON"
   | "CENTERED";
 
+export interface ArtifactImageAsset {
+  data_uri: string;
+  caption?: string;
+  alt?: string;
+  source?: string;
+}
+
 export interface PresentationSlide {
   title: string;
   layout: SlideLayout;
   bullets?: string[];
   notes?: string;
+  image_index?: number;
+  left_title?: string;
+  right_title?: string;
 }
 
 export interface PresentationPlan {
   slides: PresentationSlide[];
   theme?: string;
   output_name?: string;
+  images?: ArtifactImageAsset[];
 }
 
 export type HtmlSectionKind =
@@ -426,7 +437,9 @@ export type HtmlSectionKind =
   | "QUOTES"
   | "FAQ"
   | "CTA"
-  | "TEXT";
+  | "TEXT"
+  | "CHART"
+  | "IMAGE";
 
 export interface HtmlSectionItem {
   label: string;
@@ -440,6 +453,11 @@ export interface HtmlSection {
   subtitle?: string;
   body?: string;
   items?: HtmlSectionItem[];
+  chart_type?: "bar" | "pie" | "line";
+  label_column?: string;
+  value_column?: string;
+  aggregation?: "sum" | "count" | "avg" | "min" | "max";
+  image_index?: number;
 }
 
 export interface HtmlPlan {
@@ -451,6 +469,12 @@ export interface HtmlPlan {
   output_name?: string;
   /** Legacy raw HTML (used only when sections are empty). */
   html?: string;
+  /** Column headers for attached spreadsheet data. */
+  headers?: string[];
+  /** Data rows (no header row) for file-backed charts. */
+  source_rows?: string[][];
+  /** Embedded images referenced by section image_index. */
+  images?: ArtifactImageAsset[];
 }
 
 export interface ArtifactResult {

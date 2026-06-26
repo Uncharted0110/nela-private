@@ -49,6 +49,6 @@ pub const LOW_PRIORITY_YIELD_MS: u64 = 500;
 pub fn is_ephemeral_task(task: &TaskType) -> bool {
     matches!(
         task,
-        TaskType::Enrich | TaskType::Grade | TaskType::Hyde
+        TaskType::Enrich | TaskType::Hyde
     )
 }

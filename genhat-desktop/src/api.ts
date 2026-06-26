@@ -23,6 +23,7 @@ import type {
   PresentationPlan,
   HtmlPlan,
   ArtifactResult,
+  ArtifactImageAsset,
   FileRecord,
 } from "./types";
 
@@ -208,8 +209,10 @@ export const Api = {
   },
 
   /** Get the HTTP port of the running llama-server (triggers lazy start). */
-  async getLlamaPort(): Promise<number> {
-    return invoke<number>("get_llama_port");
+  async getLlamaPort(modelId?: string | null): Promise<number> {
+    return invoke<number>("get_llama_port", {
+      modelId: modelId?.trim() ? modelId.trim() : null,
+    });
   },
 
   /** Get estimated total memory usage of all loaded models (MB). */
@@ -637,6 +640,7 @@ export const Api = {
     onFinish: () => void,
     onError: (err: unknown) => void,
     port?: number,
+    modelId?: string | null,
     signal?: AbortSignal,
     disableThinking?: boolean,
     generationOptions?: {
@@ -652,7 +656,10 @@ export const Api = {
       const apiMessages = messages.map(({ role, content }) => ({ role, content }));
 
       const llamaPort =
-        port || (await invoke<number>("get_llama_port"));
+        port ||
+        (await invoke<number>("get_llama_port", {
+          modelId: modelId?.trim() ? modelId.trim() : null,
+        }));
 
       const requestBody: Record<string, unknown> = {
         messages: apiMessages,
@@ -1004,6 +1011,19 @@ export const Api = {
   /** Parse cells/rows of spreadsheet files using Calamine/CSV. */
   async parseSpreadsheetData(path: string): Promise<{ sheet_name: string; rows: string[][] }> {
     return invoke<{ sheet_name: string; rows: string[][] }>("parse_spreadsheet_data", { path });
+  },
+
+  /** Download a remote image as a base64 data URI for artifact embedding. */
+  async downloadImageDataUri(url: string): Promise<string> {
+    return invoke<string>("download_image_data_uri", { url });
+  },
+
+  /** Extract images from PDF/DOCX/PPTX as data URIs. */
+  async extractDocumentImages(
+    path: string,
+    maxImages?: number
+  ): Promise<ArtifactImageAsset[]> {
+    return invoke<ArtifactImageAsset[]>("extract_document_images", { path, maxImages });
   },
 
   /**

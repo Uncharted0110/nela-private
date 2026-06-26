@@ -492,6 +492,9 @@ fn format_context(results: &[SearchHit]) -> String {
             hit.url,
             hit.snippet
         ));
+        if let Some(ref img) = hit.image_url {
+            ctx.push_str(&format!("Image: {img}\n"));
+        }
     }
 
     ctx

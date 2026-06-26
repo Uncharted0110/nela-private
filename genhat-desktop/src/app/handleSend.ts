@@ -40,6 +40,19 @@ import {
   inferHtmlPageStructure,
   mapHtmlRendererTheme,
 } from "./htmlArtifactPrompt";
+import { inferHtmlTheme } from "./htmlThemeInference";
+import {
+  attachSpreadsheetToPlan,
+  buildHtmlDataContext,
+  spreadsheetFromParsed,
+  type SpreadsheetData,
+} from "./htmlChartData";
+import {
+  attachImagesToHtmlPlan,
+  attachImagesToPresentationPlan,
+  buildArtifactImagePool,
+  formatImageCatalogForPrompt,
+} from "./artifactImagePool";
 
 export interface MindmapOverlayState {
   sessionId: string;
@@ -489,6 +502,7 @@ export async function executeHandleSend(
             }));
           },
           undefined,
+          ctx.selectedModel || undefined,
           ctrl.signal,
           !ctx.thinkingEnabled,
           generationOptions
@@ -626,6 +640,7 @@ export async function executeHandleSend(
               }));
             },
             setup.llama_port,
+            ctx.selectedModel || undefined,
             ctrl.signal,
             !ctx.thinkingEnabled,
             generationOptions
@@ -1075,6 +1090,7 @@ export async function executeHandleSend(
         }));
       },
       undefined,
+      ctx.selectedModel || undefined,
       ctrl.signal,
       !ctx.thinkingEnabled,
       generationOptions
@@ -1148,6 +1164,7 @@ async function handleArtifactGeneration(
 
     let headers: string[] | undefined;
     let rows: string[][] | undefined;
+    let spreadsheetData: SpreadsheetData | null = null;
     let ambientFileContent = "";
 
     let attachedFile = ctx.directDocumentPaths.length > 0 ? ctx.directDocumentPaths[0] : null;
@@ -1194,6 +1211,7 @@ async function handleArtifactGeneration(
           const parsed = parseCSV(fileContent);
           headers = parsed.headers;
           rows = parsed.rows;
+          spreadsheetData = { headers: parsed.headers, rows: parsed.rows };
         } catch (err) {
           console.warn("Failed to read/parse CSV file:", err);
         }
@@ -1203,13 +1221,25 @@ async function handleArtifactGeneration(
         attachedFile.endsWith(".ods")
       ) {
         try {
-          // Query cached Excel sheet/column metadata from FTS5 index database
-          const cached = await Api.getAmbientFileContent(attachedFile);
-          if (cached) {
-            ambientFileContent = cached;
+          const parsed = await Api.parseSpreadsheetData(attachedFile);
+          const sheet = spreadsheetFromParsed(parsed.rows);
+          if (sheet) {
+            headers = sheet.headers;
+            rows = sheet.rows;
+            spreadsheetData = sheet;
           }
         } catch (err) {
-          console.warn("Failed to query Excel metadata cache:", err);
+          console.warn("Failed to parse spreadsheet file:", err);
+        }
+        if (!spreadsheetData) {
+          try {
+            const cached = await Api.getAmbientFileContent(attachedFile);
+            if (cached) {
+              ambientFileContent = cached;
+            }
+          } catch (err) {
+            console.warn("Failed to query Excel metadata cache:", err);
+          }
         }
       } else {
         // Documents/plain text: prefer indexed parsed content (handles pdf/docx/pptx),
@@ -1239,6 +1269,8 @@ async function handleArtifactGeneration(
 
     let supplementalContext = "";
 
+    let webHitsForImages: import("../types").SearchHit[] = [];
+
     if (options?.ragEnabled && ctx.ragDocs.length > 0) {
       try {
         const setup = await Api.queryRagStream(text);
@@ -1263,10 +1295,17 @@ async function handleArtifactGeneration(
         if (result.formatted_context) {
           supplementalContext += `${result.formatted_context}\n\n`;
         }
+        webHitsForImages = result.results ?? [];
       } catch (err) {
         console.warn("Web grounding for artifact generation failed:", err);
       }
     }
+
+    const imagePool = await buildArtifactImagePool({
+      webHits: webHitsForImages,
+      documentPath: attachedFile,
+    });
+    const imageCatalog = formatImageCatalogForPrompt(imagePool);
 
     let dataContext = supplementalContext;
     if (headers && headers.length > 0) {
@@ -1281,12 +1320,18 @@ async function handleArtifactGeneration(
       ? `Produce EXACTLY ${slidePlan.count} slides, as the user explicitly requested.`
       : `Produce a complete multi-slide deck of about ${slidePlan.count} slides (add or remove a few only if the topic clearly needs it).`;
     const themeHint = inferPresentationTheme(text);
+    const htmlThemeHint = inferHtmlTheme(text);
     const htmlArchetype =
       schemaId === "html_synthesis" ? inferHtmlPageStructure(text) : "landing";
+    const htmlHasSourceData =
+      schemaId === "html_synthesis" && spreadsheetData !== null;
 
     const systemPrompt =
       schemaId === "html_synthesis"
-        ? buildHtmlArtifactSystemPrompt(htmlArchetype)
+        ? buildHtmlArtifactSystemPrompt(htmlArchetype, {
+            hasSourceData: htmlHasSourceData,
+            hasImages: imagePool.length > 0,
+          })
         : `You are a professional assistant that generates precise structural JSON plans for creating artifacts.
 You must return ONLY a JSON object conforming to the schema contract. Do NOT include markdown formatting, code fences (e.g. \`\`\`json), or thinking/explanations.
 
@@ -1313,12 +1358,12 @@ ${schemaId === "spreadsheet_synthesis"
 - SECTION: divider before a new part. title = section name; bullets[0] = optional one-line intro. No list.
 - BULLET: a list of 3-5 short points. Use SPARINGLY — only when the content is genuinely a list.
 - TWO_COLUMN: 4-6 related items shown in two columns (e.g. pros, features, categories).
-- IMAGE_LEFT: a visual placeholder beside 2-4 points. Use when describing a product, screen, or visual concept.
-- STAT: one headline metric. bullets[0] = the big number/value (e.g. "87%", "$2.4M", "3x"); title = what it measures; bullets[1..] = brief context.
-- QUOTE: a quotation or punchy takeaway. bullets[0] = the quote text; bullets[1] = attribution/source.
-- CARDS: 2-4 distinct concepts/features/steps. Format EACH bullet as "Label: short description". Renders as cards, not a list.
-- COMPARISON: two options/approaches side by side. First half of bullets = left side, second half = right side.
-- CENTERED: a single bold statement or 1-3 short lines, centered. Great for emphasis, transitions, or the closing slide.
+- IMAGE_LEFT: image beside 3-6 substantive points. Set image_index when images are available.
+- STAT: one headline metric. bullets[0] = the big number/value (e.g. "87%", "$2.4M", "3x"); title = what it measures; bullets[1..] = supporting detail (1-2 lines each).
+- QUOTE: a quotation or punchy takeaway. bullets[0] = the quote text (full sentence); bullets[1] = attribution/source.
+- CARDS: 2-4 distinct concepts/features/steps. Format EACH bullet as "Label: 1-2 sentence description". Renders as cards, not a list.
+- COMPARISON: two real options side by side. Set left_title and right_title to meaningful names (e.g. "Electric vehicles", "Gas vehicles") — NEVER use "Option A/B". First half of bullets = left side points; second half = right side points (3-5 bullets per side).
+- CENTERED: a bold statement or 2-4 short lines, centered. Great for emphasis, transitions, or the closing slide.
 - BLANK: minimal; avoid unless nothing else fits.
 
 Themes — set the "theme" field to the ONE theme that best matches the topic tone:
@@ -1334,7 +1379,8 @@ Deck requirements:
 - DESIGN VARIETY IS REQUIRED: do NOT make every slide a BULLET list. Use at least 4 DIFFERENT layouts across the deck, and never use BULLET on more than ~1/3 of slides. Reach for STAT, QUOTE, CARDS, COMPARISON, IMAGE_LEFT, TWO_COLUMN, and CENTERED wherever the content fits.
 - Pick the layout from the CONTENT: a metric → STAT, a key insight → QUOTE or CENTERED, distinct features/steps → CARDS, two options → COMPARISON, a visual topic → IMAGE_LEFT.
 - Every content slide must cover a DISTINCT sub-topic; break the subject into a logical progression (intro → key points → details/examples → summary).
-- Keep text short and presentation-ready (roughly 12 words or fewer per bullet).
+- Write substantive presentation text: up to ~30 words per bullet, 1-3 sentences where the layout allows (CARDS, CENTERED, IMAGE_LEFT, BULLET).
+- Include at least 1-2 IMAGE_LEFT slides when images are available in the catalog; set image_index accordingly.
 - Use the optional "notes" field for brief speaker notes when helpful.`}
 `;
 
@@ -1343,15 +1389,19 @@ Deck requirements:
       schemaId === "presentation_synthesis"
         ? `Generate a multi-slide presentation plan (${slidePlan.count} slides) for the user request: "${text}".${themeSuffix}`
         : schemaId === "html_synthesis"
-        ? htmlPlanRequest(text, htmlArchetype)
+        ? htmlPlanRequest(text, htmlArchetype, { hasSourceData: htmlHasSourceData })
         : `Generate a plan for the user request: "${text}"`;
-    const userPrompt = `${dataContext}${planRequest}`;
+    const spreadsheetContext =
+      schemaId === "html_synthesis" && spreadsheetData
+        ? buildHtmlDataContext(spreadsheetData)
+        : "";
+    const userPrompt = `${dataContext}${spreadsheetContext}${imageCatalog}${planRequest}`;
 
     // Presentations need far more output room than a single artifact plan: budget
     // roughly per-slide so larger decks aren't truncated mid-array.
     const planMaxTokens =
       schemaId === "presentation_synthesis"
-        ? Math.min(4096, 512 + slidePlan.count * 220)
+        ? Math.min(6144, 640 + slidePlan.count * 320)
         : schemaId === "html_synthesis"
         ? HTML_PLAN_MAX_TOKENS
         : 500;
@@ -1395,7 +1445,7 @@ Deck requirements:
           if (schemaId === "html_synthesis") {
             planObj.archetype = htmlArchetype;
             planObj.theme = mapHtmlRendererTheme(
-              planObj.theme || themeHint || defaultThemeForArchetype(htmlArchetype)
+              planObj.theme || htmlThemeHint || defaultThemeForArchetype(htmlArchetype)
             );
             if (!planObj.title || String(planObj.title).trim() === "") {
               planObj.title = text.trim().slice(0, 120) || "Generated Page";
@@ -1403,9 +1453,19 @@ Deck requirements:
             if (!Array.isArray(planObj.sections)) {
               planObj.sections = [];
             }
+            if (spreadsheetData) {
+              planObj = attachSpreadsheetToPlan(planObj, spreadsheetData);
+            }
+            if (imagePool.length) {
+              planObj = attachImagesToHtmlPlan(planObj, imagePool);
+            }
           }
 
-          if (headers && rows) {
+          if (schemaId === "presentation_synthesis" && imagePool.length) {
+            planObj = attachImagesToPresentationPlan(planObj, imagePool);
+          }
+
+          if (headers && rows && schemaId === "spreadsheet_synthesis") {
             planObj.headers = headers;
             planObj.source_rows = rows;
           }
@@ -1463,6 +1523,7 @@ Deck requirements:
         updateArtifactMsg("Error", null, `Failed to generate artifact plan: ${err}`);
       },
       undefined,
+      ctx.selectedModel || undefined,
       ctrl.signal,
       true,
       {
@@ -1608,6 +1669,7 @@ ${currentContent}
         updatePatchMsg("Error", null, `Failed to generate patch: ${err}`);
       },
       undefined,
+      ctx.selectedModel || undefined,
       ctrl.signal,
       true,
       {

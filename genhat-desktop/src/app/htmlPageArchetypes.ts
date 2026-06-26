@@ -36,8 +36,21 @@ const KEYWORDS: Record<HtmlPageArchetype, { aliases: string[]; topics: string[] 
     topics: ["designer", "developer", "photographer", "freelance", "creative", "illustrator", "agency"],
   },
   dashboard: {
-    aliases: ["dashboard", "analytics page", "admin panel", "control panel", "kpi dashboard"],
-    topics: ["kpi", "monitoring", "reporting", "traffic", "revenue", "metrics overview", "analytics"],
+    aliases: [
+      "dashboard",
+      "analytics page",
+      "admin panel",
+      "control panel",
+      "kpi dashboard",
+      "pie chart",
+      "bar chart",
+      "bar graph",
+      "line chart",
+      "line graph",
+      "data visualization",
+      "visualize",
+    ],
+    topics: ["kpi", "monitoring", "reporting", "traffic", "revenue", "metrics overview", "analytics", "chart", "plot", "graph"],
   },
   documentation: {
     aliases: ["docs page", "documentation", "tutorial page", "how-to guide", "manual", "readme"],

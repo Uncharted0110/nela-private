@@ -57,9 +57,13 @@ slide        ::= "{" ws "\"title\"" ws ":" ws string ws
                  "," ws "\"layout\"" ws ":" ws layout-type ws
                  ("," ws "\"bullets\"" ws ":" ws bullet-list)?
                  ("," ws "\"notes\"" ws ":" ws string)?
+                 ("," ws "\"image_index\"" ws ":" ws number)?
+                 ("," ws "\"left_title\"" ws ":" ws string)?
+                 ("," ws "\"right_title\"" ws ":" ws string)?
                  ws "}"
 layout-type  ::= "\"TITLE\"" | "\"BULLET\"" | "\"TWO_COLUMN\"" | "\"IMAGE_LEFT\"" | "\"BLANK\"" | "\"SECTION\"" | "\"STAT\"" | "\"QUOTE\"" | "\"CARDS\"" | "\"COMPARISON\"" | "\"CENTERED\""
 bullet-list  ::= "[" ws (string ("," ws string)*)? "]" ws
+number       ::= [0-9]+ ws
 string       ::= "\"" ([^"\\] | "\\" .)* "\"" ws
 ws           ::= ([ \t\n] ws)?
 "#;
@@ -73,12 +77,20 @@ theme-field     ::= "\"theme\"" ws ":" ws theme-name
 output-field    ::= "\"output_name\"" ws ":" ws string
 sections-field  ::= "\"sections\"" ws ":" ws "[" ws section-list "]"
 section-list    ::= section ("," ws section)*
-section         ::= "{" ws "\"kind\"" ws ":" ws section-kind "," ws "\"title\"" ws ":" ws string ("," ws "\"subtitle\"" ws ":" ws string)? ("," ws "\"body\"" ws ":" ws string)? ("," ws "\"items\"" ws ":" ws item-list)? ws "}"
-section-kind    ::= "\"HERO\"" | "\"INFO_BAR\"" | "\"GRID\"" | "\"SPLIT\"" | "\"STATS\"" | "\"QUOTES\"" | "\"FAQ\"" | "\"CTA\"" | "\"TEXT\""
+section         ::= "{" ws "\"kind\"" ws ":" ws section-kind "," ws "\"title\"" ws ":" ws string ("," ws "\"subtitle\"" ws ":" ws string)? ("," ws "\"body\"" ws ":" ws string)? ("," ws chart-type-field)? ("," ws label-col-field)? ("," ws value-col-field)? ("," ws agg-field)? ("," ws image-index-field)? ("," ws "\"items\"" ws ":" ws item-list)? ws "}"
+section-kind    ::= "\"HERO\"" | "\"INFO_BAR\"" | "\"GRID\"" | "\"SPLIT\"" | "\"STATS\"" | "\"QUOTES\"" | "\"FAQ\"" | "\"CTA\"" | "\"TEXT\"" | "\"CHART\"" | "\"IMAGE\""
+image-index-field ::= "\"image_index\"" ws ":" ws number
+number          ::= [0-9]+ ws
+chart-type-field ::= "\"chart_type\"" ws ":" ws chart-type
+chart-type      ::= "\"bar\"" | "\"pie\"" | "\"line\""
+label-col-field ::= "\"label_column\"" ws ":" ws string
+value-col-field ::= "\"value_column\"" ws ":" ws string
+agg-field       ::= "\"aggregation\"" ws ":" ws aggregation
+aggregation     ::= "\"sum\"" | "\"count\"" | "\"avg\"" | "\"min\"" | "\"max\""
 item-list       ::= "[" ws (item ("," ws item)*)? "]"
 item            ::= "{" ws "\"label\"" ws ":" ws string ("," ws "\"detail\"" ws ":" ws string)? ("," ws "\"meta\"" ws ":" ws string)? ws "}"
 archetype       ::= "\"landing\"" | "\"local_business\"" | "\"article\"" | "\"portfolio\"" | "\"dashboard\"" | "\"documentation\"" | "\"event\"" | "\"comparison\"" | "\"catalog\"" | "\"resume\"" | "\"infographic\"" | "\"newsletter\"" | "\"interactive\""
-theme-name      ::= "\"midnight\"" | "\"corporate\"" | "\"sunset\"" | "\"minimal\"" | "\"forest\"" | "\"rose\""
+theme-name      ::= "\"midnight\"" | "\"corporate\"" | "\"sunset\"" | "\"minimal\"" | "\"forest\"" | "\"rose\"" | "\"cyber\"" | "\"ocean\"" | "\"academic\"" | "\"lavender\"" | "\"neon\"" | "\"slate\"" | "\"aurora\"" | "\"paper\""
 string          ::= "\"" ([^"\\] | "\\" .)* "\"" ws
 ws              ::= ([ \t\n] ws)?
 "#;

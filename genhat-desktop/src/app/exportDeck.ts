@@ -177,6 +177,7 @@ interface SlideData {
   cards: { head: string; body: string }[];
   compareA: { label: string; items: string[] };
   compareB: { label: string; items: string[] };
+  imageSrc: string;
 }
 
 /** Normalize any CSS color (`#rgb`, `#rrggbb`, `rgb()/rgba()`) to `RRGGBB` hex. */
@@ -315,6 +316,7 @@ function extractSlides(doc: Document): SlideData[] {
       cards: [],
       compareA: { label: "", items: [] },
       compareB: { label: "", items: [] },
+      imageSrc: "",
     };
 
     const headerTitle = txt(el.querySelector(".slide-header h2"));
@@ -373,6 +375,8 @@ function extractSlides(doc: Document): SlideData[] {
       case "imageleft":
         data.title = headerTitle;
         data.bullets = lists[0] ? txtAll(lists[0].querySelectorAll("li")) : [];
+        data.imageSrc =
+          (el.querySelector(".slide-image") as HTMLImageElement | null)?.getAttribute("src") ?? "";
         break;
       case "bullet":
       default:
@@ -560,12 +564,12 @@ function renderSlide(pptx: pptxgen, theme: DeckTheme, d: SlideData) {
           x: x + 0.2, y: colY + 0.95, w: colW - 0.4, h: colH - 1.1, color: theme.textSecondary, font: body, size: 15,
         });
       };
-      renderSide(MX, d.compareA.label || "Option A", d.compareA.items);
+      renderSide(MX, d.compareA.label || "Primary approach", d.compareA.items);
       slide.addText("VS", {
         x: MX + colW, y: colY + colH / 2 - 0.4, w: 1.0, h: 0.8,
         fontFace: head, fontSize: 22, bold: true, color: accent, align: "center", valign: "middle",
       } as any);
-      renderSide(MX + colW + 1.0, d.compareB.label || "Option B", d.compareB.items);
+      renderSide(MX + colW + 1.0, d.compareB.label || "Alternative approach", d.compareB.items);
       break;
     }
 
@@ -580,14 +584,21 @@ function renderSlide(pptx: pptxgen, theme: DeckTheme, d: SlideData) {
     case "imageleft": {
       headerTitle();
       const imgW = CW * 0.42;
-      slide.addShape(pptx.ShapeType.roundRect, {
-        x: MX, y: 1.9, w: imgW, h: 4.6,
-        fill: { color: theme.surface }, line: { color: accent, width: 0.75 }, rectRadius: 0.12,
-      } as any);
-      slide.addText("Visual Panel", {
-        x: MX, y: 1.9, w: imgW, h: 4.6,
-        fontFace: head, fontSize: 16, color: accent, align: "center", valign: "middle",
-      } as any);
+      if (d.imageSrc.startsWith("data:")) {
+        slide.addImage({
+          data: d.imageSrc,
+          x: MX,
+          y: 1.9,
+          w: imgW,
+          h: 4.6,
+          sizing: { type: "cover", w: imgW, h: 4.6 },
+        } as any);
+      } else {
+        slide.addShape(pptx.ShapeType.roundRect, {
+          x: MX, y: 1.9, w: imgW, h: 4.6,
+          fill: { color: theme.surface }, line: { color: accent, width: 0.75 }, rectRadius: 0.12,
+        } as any);
+      }
       addBullets(slide, d.bullets, {
         x: MX + imgW + 0.6, y: 1.9, w: CW - imgW - 0.6, h: 4.6, color: theme.textSecondary, font: body, size: 17,
       });

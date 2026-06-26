@@ -21,5 +21,9 @@ pub async fn get_ambient_file_content(
     path: String,
     state: State<'_, AmbientIndexerState>,
 ) -> Result<Option<String>, String> {
+    if !crate::indexer::paths::index_path_exists(&path) {
+        crate::indexer::paths::delete_index_paths(&state.0.db, std::path::Path::new(&path));
+        return Ok(None);
+    }
     state.0.db.get_file_content(&path)
 }

@@ -2,7 +2,6 @@
 
 use crate::rag::pipeline::{IngestionStatus, RagPipeline, RagResult};
 use crate::commands::models::ProcessManagerState;
-use crate::registry::types::TaskType;
 use std::collections::HashSet;
 use std::path::Path;
 use std::path::PathBuf;
@@ -12,26 +11,17 @@ use tauri::State;
 
 async fn resolve_runnable_chat_port(
     pm: &crate::process::ProcessManager,
+    preferred_model_id: Option<&str>,
 ) -> Result<(String, u16), String> {
-    let active_id = pm.active_llm_id().await;
-    let mut candidates = Vec::new();
-    if !active_id.is_empty() {
-        candidates.push(active_id);
-    }
-
-    for id in pm.find_models_for_task(&TaskType::Chat).await {
-        if !candidates.contains(&id) {
-            candidates.push(id);
-        }
-    }
-
+    let candidates = pm.streaming_chat_candidates(preferred_model_id).await;
     if candidates.is_empty() {
-        return Err("No chat-capable model is registered".to_string());
+        return Err("No chat-capable llama-server model is registered".to_string());
     }
 
     let mut errors = Vec::new();
     for id in candidates {
         if let Some(port) = pm.get_llama_port(&id).await {
+            pm.set_active_llm(&id).await;
             return Ok((id, port));
         }
 
@@ -43,6 +33,7 @@ async fn resolve_runnable_chat_port(
         {
             Ok(Ok(_)) => {
                 if let Some(port) = pm.get_llama_port(&id).await {
+                    pm.set_active_llm(&id).await;
                     return Ok((id, port));
                 }
                 errors.push(format!("{id}: started but no port assigned"));
@@ -414,7 +405,7 @@ pub async fn query_rag_stream(
     let retrieval = pipeline.retrieve_for_query(&query, k).await?;
 
     // Phase 2: Resolve a runnable chat model + llama-server port
-    let (_model_id, llama_port) = resolve_runnable_chat_port(&pm_state.0).await?;
+    let (_model_id, llama_port) = resolve_runnable_chat_port(&pm_state.0, None).await?;
 
     // Determine the prompt to stream — use raw query for no_retrieval, else augmented prompt
     let prompt = if retrieval.no_retrieval {
@@ -527,7 +518,7 @@ pub async fn query_rag_with_raptor_stream(
         .await?;
 
     // Phase 2: Resolve a runnable chat model + llama-server port
-    let (_model_id, llama_port) = resolve_runnable_chat_port(&pm_state.0).await?;
+    let (_model_id, llama_port) = resolve_runnable_chat_port(&pm_state.0, None).await?;
 
     let prompt = if retrieval.no_retrieval {
         query
