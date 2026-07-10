@@ -25,6 +25,10 @@ use std::collections::HashSet;
 use tauri::State;
 
 use crate::commands::inference::TaskRouterState;
+use crate::commands::web_tables::{
+    extract_html_tables, extract_markdown_tables, extract_row_limit,
+    resolve_wikipedia_list_title, select_best_table, table_to_markdown, ExtractedWebTable,
+};
 use crate::registry::types::TaskResponse;
 use crate::router::tasks::grade_request;
 use crate::router::TaskRouter;
@@ -32,7 +36,52 @@ use crate::router::TaskRouter;
 /// Number of candidate results to over-fetch before reranking down to the
 /// caller-requested `max_results`. A larger pool gives the cross-encoder room
 /// to surface authoritative pages DuckDuckGo ranked lower.
-const OVERFETCH_CANDIDATES: usize = 15;
+const OVERFETCH_CANDIDATES: usize = 20;
+
+/// Max chars kept from a full-page fetch (Jina or direct HTML extract).
+const FULL_CONTENT_CHAR_LIMIT: usize = 6000;
+
+/// Max chars kept per snippet-only result.
+const SNIPPET_CHAR_LIMIT: usize = 600;
+
+/// Host fragments that are almost never reliable primary sources.
+const BLOCKED_HOST_FRAGMENTS: &[&str] = &[
+    "pinterest.",
+    "facebook.com",
+    "instagram.com",
+    "tiktok.com",
+    "duckduckgo.com",
+];
+
+/// Trusted reference / data publishers — boosted during reranking.
+const TRUSTED_HOST_FRAGMENTS: &[&str] = &[
+    "wikipedia.org",
+    "wikidata.org",
+    "britannica.com",
+    "imdb.com",
+    "boxofficemojo.com",
+    "the-numbers.com",
+    "statista.com",
+    "worldbank.org",
+    "who.int",
+    "cdc.gov",
+    "nih.gov",
+    "sec.gov",
+    "reuters.com",
+    "apnews.com",
+    "bbc.com",
+    "bbc.co.uk",
+    "nytimes.com",
+    "theguardian.com",
+    "economist.com",
+    "bloomberg.com",
+    "ft.com",
+    "nature.com",
+    "science.org",
+    "arxiv.org",
+    ".gov",
+    ".edu",
+];
 
 /// A single web search result.
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -52,6 +101,105 @@ pub struct WebSearchResult {
     pub results: Vec<SearchHit>,
     /// Pre-formatted context block ready to be injected into the model prompt.
     pub formatted_context: String,
+    /// Structured tables extracted from Wikipedia / page content for deterministic spreadsheets.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub extracted_tables: Vec<ExtractedWebTable>,
+}
+
+// ── Query refinement ──────────────────────────────────────────────────────────
+
+/// Strip leading slash commands (`/web /excel …`) from the raw user message.
+fn refine_search_query(raw: &str) -> String {
+    let mut q = raw.trim().to_string();
+    while q.starts_with('/') {
+        let Some(rest) = q.strip_prefix('/') else { break };
+        let Some(space) = rest.find(char::is_whitespace) else {
+            q.clear();
+            break;
+        };
+        q = rest[space..].trim().to_string();
+    }
+    q
+}
+
+/// Nudge factual queries toward phrasing that surfaces authoritative data pages.
+fn enhance_factual_query(query: &str) -> String {
+    let lower = query.to_lowercase();
+    let mut parts: Vec<&str> = vec![query.trim()];
+
+    if (lower.contains("movie") || lower.contains("film") || lower.contains("grossing"))
+        && !lower.contains("box office")
+    {
+        parts.push("box office");
+    }
+    if (lower.contains("top ") || lower.contains("highest") || lower.contains("best "))
+        && (lower.contains("grossing") || lower.contains("revenue") || lower.contains("sales"))
+        && !lower.contains("worldwide")
+        && !lower.contains("domestic")
+    {
+        parts.push("worldwide");
+    }
+
+    parts.join(" ")
+}
+
+fn host_from_url(url: &str) -> String {
+    let trimmed = url.trim();
+    let after_scheme = trimmed
+        .strip_prefix("https://")
+        .or_else(|| trimmed.strip_prefix("http://"))
+        .unwrap_or(trimmed);
+    let host = after_scheme.split('/').next().unwrap_or("");
+    host.strip_prefix("www.")
+        .unwrap_or(host)
+        .to_lowercase()
+}
+
+fn should_reject_hit(hit: &SearchHit) -> bool {
+    if hit.url.trim().is_empty() || hit.title.trim().is_empty() {
+        return true;
+    }
+    let host = host_from_url(&hit.url);
+    if host.is_empty() {
+        return true;
+    }
+    BLOCKED_HOST_FRAGMENTS
+        .iter()
+        .any(|frag| host.contains(frag))
+}
+
+fn authority_boost(url: &str) -> f32 {
+    let host = host_from_url(url);
+    if host.is_empty() {
+        return 0.0;
+    }
+    let mut boost = 0.0f32;
+    for frag in TRUSTED_HOST_FRAGMENTS {
+        if host.contains(frag) || host.ends_with(frag) {
+            boost = boost.max(0.28);
+        }
+    }
+    if host.ends_with(".gov") || host.ends_with(".edu") {
+        boost = boost.max(0.32);
+    }
+    boost
+}
+
+fn decode_ddg_href(href: &str) -> String {
+    if let Some(pos) = href.find("uddg=") {
+        let encoded = &href[pos + 5..];
+        let decoded = urlencoding::decode(encoded.split('&').next().unwrap_or(encoded))
+            .map(|s| s.into_owned())
+            .unwrap_or_else(|_| encoded.to_owned());
+        return decoded;
+    }
+    if href.starts_with("http://") || href.starts_with("https://") {
+        return href.to_owned();
+    }
+    if href.starts_with("//") {
+        return format!("https:{href}");
+    }
+    format!("https://duckduckgo.com{href}")
 }
 
 // ── DDG HTML scraper ──────────────────────────────────────────────────────────
@@ -93,7 +241,7 @@ async fn fetch_ddg_results(query: &str, max_results: usize) -> Vec<SearchHit> {
     };
 
     let url = format!(
-        "https://html.duckduckgo.com/html/?q={}",
+        "https://html.duckduckgo.com/html/?q={}&kl=us-en",
         urlencoding::encode(query)
     );
 
@@ -159,38 +307,33 @@ fn parse_ddg_html(html: &str, max_results: usize) -> Vec<SearchHit> {
             .map(|el| el.text().collect::<String>().trim().to_owned())
             .unwrap_or_default();
 
-        // Try to get a clean URL from the visible .result__url span.
-        // DDG wraps the real href in a redirect; the visible text is usually cleaner.
+        // Prefer the decoded redirect target from the title link — most reliable.
         let url = result
-            .select(&url_sel)
+            .select(&title_sel)
             .next()
-            .map(|el| {
-                let raw = el.text().collect::<String>().trim().to_owned();
-                if raw.starts_with("http") {
-                    raw
-                } else {
-                    format!("https://{raw}")
-                }
-            })
-            // fallback: pull href from the title link and strip DDG redirect prefix
+            .and_then(|el| el.value().attr("href"))
+            .map(decode_ddg_href)
+            .filter(|u| !u.is_empty())
             .or_else(|| {
-                result.select(&title_sel).next().and_then(|el| {
-                    el.value().attr("href").map(|href| {
-                        // DDG links look like "/l/?uddg=https%3A%2F%2F..."
-                        if let Some(pos) = href.find("uddg=") {
-                            let encoded = &href[pos + 5..];
-                            urlencoding::decode(encoded)
-                                .map(|s| s.into_owned())
-                                .unwrap_or_else(|_| href.to_owned())
-                        } else if href.starts_with("http") {
-                            href.to_owned()
-                        } else {
-                            format!("https://duckduckgo.com{href}")
-                        }
-                    })
+                result.select(&url_sel).next().map(|el| {
+                    let raw = el.text().collect::<String>().trim().to_owned();
+                    if raw.starts_with("http") {
+                        raw
+                    } else {
+                        format!("https://{raw}")
+                    }
                 })
             })
             .unwrap_or_default();
+
+        if should_reject_hit(&SearchHit {
+            title: title.clone(),
+            snippet: snippet.clone(),
+            url: url.clone(),
+            image_url: None,
+        }) {
+            continue;
+        }
 
         hits.push(SearchHit {
             title,
@@ -334,17 +477,113 @@ async fn enrich_hit_images(hits: &mut [SearchHit]) {
     }
 }
 
+// ── Page content extraction ───────────────────────────────────────────────────
+
+/// Extract readable paragraph/list text from raw HTML (fallback when Jina fails).
+fn extract_readable_text(html: &str) -> String {
+    let document = Html::parse_document(html);
+    let container_sels = [
+        "article",
+        "main",
+        "[role=main]",
+        "#content",
+        ".article-body",
+        ".post-content",
+        ".entry-content",
+        ".mw-parser-output",
+    ];
+    let block_sels = ["p", "li", "td", "th", "h1", "h2", "h3"];
+
+    for container_sel in container_sels {
+        let Ok(c_sel) = Selector::parse(container_sel) else {
+            continue;
+        };
+        if let Some(container) = document.select(&c_sel).next() {
+            let mut buf = String::new();
+            for block_sel in block_sels {
+                let Ok(b_sel) = Selector::parse(block_sel) else {
+                    continue;
+                };
+                for el in container.select(&b_sel) {
+                    let t = el.text().collect::<String>().trim().to_string();
+                    if t.len() < 3 {
+                        continue;
+                    }
+                    if !buf.is_empty() {
+                        buf.push('\n');
+                    }
+                    buf.push_str(&t);
+                }
+            }
+            if buf.len() > 120 {
+                return buf;
+            }
+        }
+    }
+
+    // Fallback: all paragraphs on the page.
+    let Ok(p_sel) = Selector::parse("p") else {
+        return String::new();
+    };
+    let mut buf = String::new();
+    for el in document.select(&p_sel).take(40) {
+        let t = el.text().collect::<String>().trim().to_string();
+        if t.len() < 3 {
+            continue;
+        }
+        if !buf.is_empty() {
+            buf.push('\n');
+        }
+        buf.push_str(&t);
+    }
+    buf
+}
+
+/// Fetch page HTML and extract readable text directly from the publisher.
+async fn fetch_direct_page_text(url: &str, max_chars: usize) -> Option<String> {
+    let client = match reqwest::Client::builder()
+        .default_headers(browser_headers())
+        .timeout(std::time::Duration::from_secs(12))
+        .redirect(reqwest::redirect::Policy::limited(5))
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return None,
+    };
+
+    let html = match client.get(url).send().await {
+        Ok(resp) => {
+            let status = resp.status();
+            if !status.is_success() {
+                log::debug!("[web_search] Direct fetch HTTP {status} for {url}");
+                return None;
+            }
+            resp.text().await.ok()?
+        }
+        Err(e) => {
+            log::debug!("[web_search] Direct fetch failed for {url}: {e}");
+            return None;
+        }
+    };
+
+    let text = extract_readable_text(&html);
+    if text.trim().len() < 80 {
+        return None;
+    }
+    Some(text.chars().take(max_chars).collect())
+}
+
 // ── Jina AI Reader (full-page content) ───────────────────────────────────────
 
 /// Fetch full-page markdown content for a URL via `r.jina.ai`.
 ///
 /// Returns `None` on any failure — caller should fall back to snippet.
-async fn fetch_jina_content(url: &str) -> Option<String> {
+async fn fetch_jina_content(url: &str, max_chars: usize) -> Option<String> {
     let jina_url = format!("https://r.jina.ai/{url}");
 
     let client = match reqwest::Client::builder()
         .default_headers(browser_headers())
-        .timeout(std::time::Duration::from_secs(15))
+        .timeout(std::time::Duration::from_secs(18))
         .build()
     {
         Ok(c) => c,
@@ -352,19 +591,35 @@ async fn fetch_jina_content(url: &str) -> Option<String> {
     };
 
     match client.get(&jina_url).send().await {
-        Ok(resp) => match resp.text().await {
-            Ok(text) => {
-                // Truncate to ~2000 chars to keep context lean for small models
-                let truncated: String = text.chars().take(2000).collect();
-                Some(truncated)
+        Ok(resp) => {
+            if !resp.status().is_success() {
+                log::debug!("[web_search] Jina HTTP {} for {url}", resp.status());
+                return None;
             }
-            Err(_) => None,
-        },
+            match resp.text().await {
+                Ok(text) => {
+                    let cleaned = text.trim();
+                    if cleaned.len() < 80 {
+                        return None;
+                    }
+                    Some(cleaned.chars().take(max_chars).collect())
+                }
+                Err(_) => None,
+            }
+        }
         Err(e) => {
             log::warn!("[web_search] Jina fetch failed for {url}: {e}");
             None
         }
     }
+}
+
+/// Jina Reader first, then direct HTML extraction from the publisher.
+async fn fetch_page_content(url: &str, max_chars: usize) -> Option<String> {
+    if let Some(jina) = fetch_jina_content(url, max_chars).await {
+        return Some(jina);
+    }
+    fetch_direct_page_text(url, max_chars).await
 }
 
 // ── Dedup + cross-encoder reranking ───────────────────────────────────────────
@@ -429,10 +684,8 @@ async fn rerank_hits(router: &TaskRouter, query: &str, hits: Vec<SearchHit>) -> 
             match router.route(&request).await {
                 Ok(TaskResponse::Score(s)) => {
                     any_scored = true;
-                    s
+                    s + authority_boost(&hit.url)
                 }
-                // Wrong response shape or grader unavailable → sink this hit
-                // below any successfully scored ones.
                 _ => f32::NEG_INFINITY,
             }
         };
@@ -441,8 +694,13 @@ async fn rerank_hits(router: &TaskRouter, query: &str, hits: Vec<SearchHit>) -> 
     }
 
     if !any_scored {
-        log::warn!("[web_search] Cross-encoder grader unavailable; preserving DDG order");
-        return scored.into_iter().map(|(_, hit)| hit).collect();
+        log::warn!("[web_search] Cross-encoder grader unavailable; using authority-weighted DDG order");
+        let mut boosted: Vec<(f32, SearchHit)> = scored
+            .into_iter()
+            .map(|(_, hit)| (authority_boost(&hit.url), hit))
+            .collect();
+        boosted.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+        return boosted.into_iter().map(|(_, hit)| hit).collect();
     }
 
     // Stable-ish descending sort by relevance score.
@@ -480,21 +738,73 @@ fn format_context(results: &[SearchHit]) -> String {
     }
 
     let mut ctx = String::from(
-        "Use the following up-to-date web search results to inform your answer. \
-         Cite sources where relevant.\n\nWeb Search Results:\n",
+        "VERIFIED WEB SOURCES — use ONLY facts explicitly stated in the excerpts below.\n\
+         Do NOT invent, estimate, or guess values. If sources conflict or omit data, say so.\n\
+         Cite the source URL when stating a fact.\n\n\
+         Web Search Results:\n",
     );
 
     for (i, hit) in results.iter().enumerate() {
+        let host = host_from_url(&hit.url);
         ctx.push_str(&format!(
-            "\n[{}] {}\nURL: {}\n{}\n",
+            "\n[{}] {}\nSource: {}\nURL: {}\nExcerpt:\n{}\n",
             i + 1,
             hit.title,
+            if host.is_empty() { "unknown" } else { &host },
             hit.url,
-            hit.snippet
+            hit.snippet.trim()
         ));
     }
 
+    ctx.push_str("\n--- End of web sources ---\n");
     ctx
+}
+
+async fn fetch_raw_html(url: &str) -> Option<String> {
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(12))
+        .user_agent("Mozilla/5.0 (compatible; GenhatDesktop/1.0)")
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return None,
+    };
+
+    let resp = client.get(url).send().await.ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    resp.text().await.ok()
+}
+
+/// Fetch the canonical Wikipedia list page when the query maps to a known title.
+async fn fetch_wikipedia_list_table(query: &str) -> Option<ExtractedWebTable> {
+    let title = resolve_wikipedia_list_title(query)?;
+    let url = format!("https://en.wikipedia.org/wiki/{title}");
+    let html = fetch_raw_html(&url).await?;
+    let display_title = title.replace('_', " ");
+    let tables = extract_html_tables(&html, &url, &display_title);
+    let row_limit = extract_row_limit(query);
+    select_best_table(tables, query, row_limit)
+}
+
+fn collect_tables_from_hits(hits: &[SearchHit]) -> Vec<ExtractedWebTable> {
+    let mut all = Vec::new();
+    for hit in hits {
+        all.extend(extract_markdown_tables(
+            &hit.snippet,
+            &hit.url,
+            &hit.title,
+        ));
+        if hit.snippet.contains("<table") {
+            all.extend(extract_html_tables(
+                &hit.snippet,
+                &hit.url,
+                &hit.title,
+            ));
+        }
+    }
+    all
 }
 
 // ── Tauri command ─────────────────────────────────────────────────────────────
@@ -519,41 +829,124 @@ pub async fn web_search(
     fetch_content: bool,
     router: State<'_, TaskRouterState>,
 ) -> Result<WebSearchResult, String> {
-    let trimmed_query: String = query.chars().take(150).collect();
+    let refined = refine_search_query(&query);
+    let enhanced = enhance_factual_query(&refined);
+    let trimmed_query: String = enhanced.chars().take(150).collect();
     let n = (max_results.min(10)).max(1) as usize;
+    let content_limit = if fetch_content {
+        FULL_CONTENT_CHAR_LIMIT
+    } else {
+        SNIPPET_CHAR_LIMIT
+    };
 
-    // Over-fetch a broad candidate pool so the cross-encoder has room to surface
-    // authoritative pages DuckDuckGo ranked lower, then dedup and rerank.
+    log::info!("[web_search] query={trimmed_query:?} fetch_content={fetch_content} max={n}");
+
     let candidates = fetch_ddg_results(&trimmed_query, OVERFETCH_CANDIDATES).await;
+    let candidates: Vec<SearchHit> = candidates
+        .into_iter()
+        .filter(|h| !should_reject_hit(h))
+        .collect();
     let candidates = dedup_hits(candidates);
     let reranked = rerank_hits(&router.0, &trimmed_query, candidates).await;
 
     let mut results: Vec<SearchHit> = reranked.into_iter().take(n).collect();
 
     if fetch_content && !results.is_empty() {
-        // Enrich each result with full page content
         let enriched_futures: Vec<_> = results
             .iter()
-            .map(|hit| fetch_jina_content(&hit.url))
+            .map(|hit| fetch_page_content(&hit.url, content_limit))
             .collect();
 
         let contents = futures_util::future::join_all(enriched_futures).await;
 
         for (hit, content_opt) in results.iter_mut().zip(contents) {
             if let Some(content) = content_opt {
-                // Replace brief snippet with richer page content
                 hit.snippet = content;
+            } else if hit.snippet.chars().count() > SNIPPET_CHAR_LIMIT {
+                hit.snippet = hit.snippet.chars().take(SNIPPET_CHAR_LIMIT).collect();
+            }
+        }
+    } else {
+        for hit in &mut results {
+            if hit.snippet.chars().count() > SNIPPET_CHAR_LIMIT {
+                hit.snippet = hit.snippet.chars().take(SNIPPET_CHAR_LIMIT).collect();
             }
         }
     }
 
     enrich_hit_images(&mut results).await;
 
-    let formatted_context = format_context(&results);
+    let row_limit = extract_row_limit(&trimmed_query);
+    let mut candidate_tables: Vec<ExtractedWebTable> = Vec::new();
+
+    if fetch_content {
+        if let Some(wiki_table) = fetch_wikipedia_list_table(&trimmed_query).await {
+            candidate_tables.push(wiki_table);
+        }
+    }
+
+    candidate_tables.extend(collect_tables_from_hits(&results));
+
+    let extracted_tables: Vec<ExtractedWebTable> = match select_best_table(candidate_tables, &trimmed_query, row_limit) {
+        Some(table) => vec![table],
+        None => Vec::new(),
+    };
+
+    let mut formatted_context = format_context(&results);
+    if let Some(table) = extracted_tables.first() {
+        let table_block = format!(
+            "AUTHORITATIVE DATA TABLE — use these EXACT values in WRITE_DATA (do not invent, round, or modify):\n\n{}\n",
+            table_to_markdown(table)
+        );
+        formatted_context = format!("{table_block}\n{formatted_context}");
+    }
 
     Ok(WebSearchResult {
         query: trimmed_query,
         results,
         formatted_context,
+        extracted_tables,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn refine_strips_slash_commands() {
+        assert_eq!(
+            refine_search_query("/web /excel Top 10 movies"),
+            "Top 10 movies"
+        );
+    }
+
+    #[test]
+    fn enhance_box_office_query() {
+        let q = enhance_factual_query("top 10 highest grossing movies");
+        assert!(q.contains("box office"));
+    }
+
+    #[test]
+    fn authority_boosts_wikipedia() {
+        assert!(authority_boost("https://en.wikipedia.org/wiki/List") > 0.2);
+    }
+
+    #[test]
+    fn blocks_pinterest() {
+        assert!(should_reject_hit(&SearchHit {
+            title: "Pins".into(),
+            snippet: String::new(),
+            url: "https://www.pinterest.com/pin/1".into(),
+            image_url: None,
+        }));
+    }
+
+    #[test]
+    fn decode_ddg_redirect() {
+        let decoded = decode_ddg_href(
+            "/l/?uddg=https%3A%2F%2Fen.wikipedia.org%2Fwiki%2FFilm&rut=abc",
+        );
+        assert_eq!(decoded, "https://en.wikipedia.org/wiki/Film");
+    }
 }

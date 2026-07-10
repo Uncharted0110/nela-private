@@ -40,6 +40,23 @@ import {
   inferHtmlPageStructure,
   mapHtmlRendererTheme,
 } from "./htmlArtifactPrompt";
+import {
+  extractWebSearchQuery,
+  webArtifactGroundingPreamble,
+  webContextCharLimit,
+  webSearchOptionsForArtifact,
+} from "./webSearchQuery";
+import { fitArtifactPlanPrompt } from "./artifactContextBudget";
+import {
+  buildSpreadsheetDataContext,
+  buildSpreadsheetFallbackPlan,
+  buildSpreadsheetSystemPrompt,
+  extractSpreadsheetRowCount,
+  normalizeSpreadsheetPlan,
+  parseSpreadsheetPlanJson,
+  spreadsheetPlanMaxTokens,
+} from "./spreadsheetPlan";
+import { tryBuildDeterministicWebSpreadsheetPlan } from "./spreadsheetWebPlan";
 
 export interface MindmapOverlayState {
   sessionId: string;
@@ -789,9 +806,10 @@ export async function executeHandleSend(
     let webSearchResult: WebSearchResult | null = null;
     if (ctx.chatMode === "text" && effectiveWebEnabled) {
       try {
+        const searchQuery = extractWebSearchQuery(promptText);
         const fetchContent = ctx.webDepth === "full";
-        const maxResults = fetchContent ? 2 : 5;
-        const result = await Api.webSearch(promptText.slice(0, 150), maxResults, fetchContent);
+        const maxResults = fetchContent ? 4 : 5;
+        const result = await Api.webSearch(searchQuery, maxResults, fetchContent);
         if (result.results.length > 0) {
           webSearchResult = result;
         }
@@ -1188,28 +1206,29 @@ async function handleArtifactGeneration(
 
     if (attachedFile) {
       updateArtifactMsg("SearchingDisk");
-      if (attachedFile.endsWith(".csv") || attachedFile.endsWith(".tsv")) {
-        try {
-          const fileContent = await Api.readFileText(attachedFile);
-          const parsed = parseCSV(fileContent);
-          headers = parsed.headers;
-          rows = parsed.rows;
-        } catch (err) {
-          console.warn("Failed to read/parse CSV file:", err);
-        }
-      } else if (
+      const isSpreadsheet =
+        attachedFile.endsWith(".csv") ||
+        attachedFile.endsWith(".tsv") ||
         attachedFile.endsWith(".xlsx") ||
         attachedFile.endsWith(".xls") ||
-        attachedFile.endsWith(".ods")
-      ) {
+        attachedFile.endsWith(".ods");
+
+      if (isSpreadsheet) {
         try {
-          // Query cached Excel sheet/column metadata from FTS5 index database
-          const cached = await Api.getAmbientFileContent(attachedFile);
-          if (cached) {
-            ambientFileContent = cached;
+          const parsed = await Api.parseSpreadsheetData(attachedFile);
+          if (parsed.rows && parsed.rows.length > 0) {
+            headers = parsed.rows[0];
+            rows = parsed.rows.slice(1).filter((row) => row.some((cell) => cell.trim().length > 0));
           }
         } catch (err) {
-          console.warn("Failed to query Excel metadata cache:", err);
+          console.warn("Failed to parse spreadsheet file:", err);
+          // Fall back to indexed metadata so the model still has context
+          try {
+            const cached = await Api.getAmbientFileContent(attachedFile);
+            if (cached) ambientFileContent = cached;
+          } catch {
+            // ignore
+          }
         }
       } else {
         // Documents/plain text: prefer indexed parsed content (handles pdf/docx/pptx),
@@ -1218,16 +1237,34 @@ async function handleArtifactGeneration(
           try {
             const cached = await Api.getAmbientFileContent(attachedFile);
             if (cached && cached.trim().length > 0) {
-              ambientFileContent = cached.substring(0, 10240);
+              const contentLimit =
+                schemaId === "spreadsheet_synthesis" ? 20480 : 10240;
+              ambientFileContent = cached.substring(0, contentLimit);
             }
           } catch (err) {
             console.warn("Failed to query indexed content cache:", err);
           }
         }
+        // PDF/DOC/PPT: parse on demand when the index cache is empty.
+        if (
+          !ambientFileContent &&
+          /\.(pdf|docx|pptx|doc|ppt)$/i.test(attachedFile)
+        ) {
+          try {
+            const fileContent = await Api.readFileText(attachedFile);
+            const contentLimit =
+              schemaId === "spreadsheet_synthesis" ? 20480 : 10240;
+            ambientFileContent = fileContent.substring(0, contentLimit);
+          } catch (err) {
+            console.warn("Failed to parse attached document:", err);
+          }
+        }
         if (!ambientFileContent && !/\.(pdf|docx|pptx|doc|ppt)$/i.test(attachedFile)) {
           try {
             const fileContent = await Api.readFileText(attachedFile);
-            ambientFileContent = fileContent.substring(0, 10240);
+            const contentLimit =
+              schemaId === "spreadsheet_synthesis" ? 20480 : 10240;
+            ambientFileContent = fileContent.substring(0, contentLimit);
           } catch (err) {
             console.warn("Failed to read text file:", err);
           }
@@ -1235,9 +1272,36 @@ async function handleArtifactGeneration(
       }
     }
 
+    // Ensure document text is loaded for PDF/DOC paths (index cache or search snippet may be incomplete).
+    if (
+      attachedFile &&
+      !headers?.length &&
+      !ambientFileContent &&
+      /\.(pdf|docx|pptx|doc|ppt)$/i.test(attachedFile)
+    ) {
+      try {
+        const fileContent = await Api.readFileText(attachedFile);
+        const contentLimit =
+          schemaId === "spreadsheet_synthesis" ? 20480 : 10240;
+        ambientFileContent = fileContent.substring(0, contentLimit);
+      } catch (err) {
+        console.warn("Failed to read attached document for artifact context:", err);
+      }
+    }
+
     updateArtifactMsg("CrunchingMetrics");
 
+    const contextWindowTokens = ctx.getContextWindowTokens(ctx.selectedModel);
+    const webActive = Boolean(options?.webEnabled);
+
     let supplementalContext = "";
+    const rowPlan =
+      schemaId === "spreadsheet_synthesis"
+        ? extractSpreadsheetRowCount(text)
+        : { count: null, explicit: false };
+    let deterministicWebPlan = null as ReturnType<
+      typeof tryBuildDeterministicWebSpreadsheetPlan
+    >;
 
     if (options?.ragEnabled && ctx.ragDocs.length > 0) {
       try {
@@ -1257,23 +1321,98 @@ async function handleArtifactGeneration(
 
     if (options?.webEnabled) {
       try {
-        const fetchContent = (options.webDepth ?? ctx.webDepth) === "full";
-        const maxResults = fetchContent ? 2 : 5;
-        const result = await Api.webSearch(text.slice(0, 150), maxResults, fetchContent);
+        const { fetchContent, maxResults } = webSearchOptionsForArtifact(
+          schemaId,
+          contextWindowTokens
+        );
+        const searchQuery = extractWebSearchQuery(text);
+        const result = await Api.webSearch(searchQuery, maxResults, fetchContent);
+        if (
+          schemaId === "spreadsheet_synthesis" &&
+          result.extracted_tables &&
+          result.extracted_tables.length > 0
+        ) {
+          deterministicWebPlan = tryBuildDeterministicWebSpreadsheetPlan(
+            result.extracted_tables,
+            text,
+            rowPlan.explicit ? rowPlan.count : null
+          );
+          if (deterministicWebPlan) {
+            console.info(
+              "Using deterministic web table for spreadsheet:",
+              result.extracted_tables[0]?.source_url
+            );
+          }
+        }
         if (result.formatted_context) {
-          supplementalContext += `${result.formatted_context}\n\n`;
+          const webLimit = webContextCharLimit(contextWindowTokens);
+          const trimmedWeb =
+            result.formatted_context.length > webLimit
+              ? result.formatted_context.slice(0, webLimit) +
+                "\n\n[...web excerpts truncated for context limit]\n--- End of web sources ---\n"
+              : result.formatted_context;
+          supplementalContext +=
+            webArtifactGroundingPreamble() + `${trimmedWeb}\n\n`;
         }
       } catch (err) {
         console.warn("Web grounding for artifact generation failed:", err);
       }
     }
 
+    // When web grounding is active, cap document text so prompts fit 4k models.
+    if (webActive && ambientFileContent) {
+      const docCap = contextWindowTokens <= 4096 ? 3000 : 8000;
+      ambientFileContent = ambientFileContent.substring(0, docCap);
+    }
+
+    const hasSourceData = Boolean(headers && headers.length > 0 && rows);
+
+    if (
+      schemaId === "spreadsheet_synthesis" &&
+      deterministicWebPlan &&
+      !hasSourceData
+    ) {
+      updateArtifactMsg("WritingCode");
+      try {
+        const result = await Api.generateSpreadsheet(deterministicWebPlan);
+        ctx.updateSession(sid, {
+          loading: false,
+          artifactVisible: false,
+        });
+        const filename = result.path.split(/[/\\]/).pop();
+        updateArtifactMsg(
+          "LivePreview",
+          result.path,
+          `Generated spreadsheet from verified web data: **${filename}**\nPath: \`${result.path}\``
+        );
+      } catch (execErr: unknown) {
+        const message =
+          execErr instanceof Error ? execErr.message : String(execErr);
+        console.error("Deterministic web spreadsheet failed:", execErr);
+        ctx.updateSession(sid, { loading: false });
+        updateArtifactMsg(
+          "Error",
+          null,
+          `Failed to build spreadsheet from web data: ${message}`
+        );
+      }
+      return;
+    }
+
     let dataContext = supplementalContext;
-    if (headers && headers.length > 0) {
-      dataContext = `Source data columns: [${headers.join(", ")}].\n` +
+    if (schemaId === "spreadsheet_synthesis") {
+      dataContext +=
+        buildSpreadsheetDataContext({
+          headers: hasSourceData ? headers : undefined,
+          rows: hasSourceData ? rows : undefined,
+          ambientContent: !hasSourceData ? ambientFileContent : undefined,
+        });
+    } else if (headers && headers.length > 0) {
+      dataContext +=
+        `Source data columns: [${headers.join(", ")}].\n` +
         `Number of rows: ${rows ? rows.length : 0}.\n\n`;
     } else if (ambientFileContent) {
-      dataContext = `Source data details:\n${ambientFileContent}\n\n`;
+      dataContext += `Source data details:\n${ambientFileContent}\n\n`;
     }
 
     const slidePlan = extractSlideCount(text);
@@ -1287,28 +1426,16 @@ async function handleArtifactGeneration(
     const systemPrompt =
       schemaId === "html_synthesis"
         ? buildHtmlArtifactSystemPrompt(htmlArchetype)
+        : schemaId === "spreadsheet_synthesis"
+        ? buildSpreadsheetSystemPrompt(hasSourceData, rowPlan.count)
         : `You are a professional assistant that generates precise structural JSON plans for creating artifacts.
 You must return ONLY a JSON object conforming to the schema contract. Do NOT include markdown formatting, code fences (e.g. \`\`\`json), or thinking/explanations.
 
 Schema Contract:
-${schemaId === "spreadsheet_synthesis" 
-  ? `{"ops": [{"op": "SUM_COLUMN" | "AVERAGE_BY_GROUP" | "PIVOT" | "SORT_DESC" | "SORT_ASC" | "FILTER_ROWS" | "COUNT_BY_GROUP" | "ADD_COLUMN" | "RENAME_SHEET" | "WRITE_DATA", ...}]}` 
-  : `{"slides": [{"title": "string", "layout": "TITLE" | "SECTION" | "BULLET" | "TWO_COLUMN" | "IMAGE_LEFT" | "STAT" | "QUOTE" | "CARDS" | "COMPARISON" | "CENTERED" | "BLANK", "bullets": ["string"], "notes": "string"}], "theme": "midnight" | "corporate" | "sunset" | "minimal" | "academic" | "cyber" | "ocean" | "forest" | "lavender" | "neon" | "rose" | "slate"}`}
+{"slides": [{"title": "string", "layout": "TITLE" | "SECTION" | "BULLET" | "TWO_COLUMN" | "IMAGE_LEFT" | "STAT" | "QUOTE" | "CARDS" | "COMPARISON" | "CENTERED" | "BLANK", "bullets": ["string"], "notes": "string"}], "theme": "midnight" | "corporate" | "sunset" | "minimal" | "academic" | "cyber" | "ocean" | "forest" | "lavender" | "neon" | "rose" | "slate"}
 
 Allowed Operations/Fields:
-${schemaId === "spreadsheet_synthesis"
-  ? `- SUM_COLUMN: { "col": "col_name", "label": "optional_label" }
-- AVERAGE_BY_GROUP: { "value_col": "col_name", "group_col": "col_name" }
-- PIVOT: { "row_col": "col_name", "col_col": "col_name", "value_col": "col_name" }
-- SORT_DESC: { "col": "col_name" }
-- SORT_ASC: { "col": "col_name" }
-- FILTER_ROWS: { "col": "col_name", "value": "value_to_match" }
-- COUNT_BY_GROUP: { "group_col": "col_name" }
-- ADD_COLUMN: { "name": "new_col_name", "formula": "simple_formula" }
-- RENAME_SHEET: { "name": "new_sheet_name" }
-- WRITE_DATA: { "headers": ["col1", "col2", ...], "rows": [["row1_val1", "row1_val2", ...], ["row2_val1", "row2_val2", ...]] }
-  Use WRITE_DATA to write raw headers and rows of data into the spreadsheet. If there is no input data/file attached, you MUST use WRITE_DATA first to populate the sheet. You can also use WRITE_DATA to add/write data even when attached files/source data are present.`
-  : `Layouts — choose the ONE that best fits each slide's content. Shape "bullets" to match the chosen layout:
+Layouts — choose the ONE that best fits each slide's content. Shape "bullets" to match the chosen layout:
 - TITLE: cover slide. bullets[0] = a short subtitle/tagline. Use ONCE, as the first slide.
 - SECTION: divider before a new part. title = section name; bullets[0] = optional one-line intro. No list.
 - BULLET: a list of 3-5 short points. Use SPARINGLY — only when the content is genuinely a list.
@@ -1335,27 +1462,44 @@ Deck requirements:
 - Pick the layout from the CONTENT: a metric → STAT, a key insight → QUOTE or CENTERED, distinct features/steps → CARDS, two options → COMPARISON, a visual topic → IMAGE_LEFT.
 - Every content slide must cover a DISTINCT sub-topic; break the subject into a logical progression (intro → key points → details/examples → summary).
 - Keep text short and presentation-ready (roughly 12 words or fewer per bullet).
-- Use the optional "notes" field for brief speaker notes when helpful.`}
-`;
+- Use the optional "notes" field for brief speaker notes when helpful.`;
 
     const themeSuffix = ` Use the "${themeHint}" theme for this deck.`;
+    const rowCountSuffix =
+      schemaId === "spreadsheet_synthesis" &&
+      rowPlan.explicit &&
+      rowPlan.count
+        ? ` WRITE_DATA must contain EXACTLY ${rowPlan.count} data rows (not counting headers).`
+        : "";
     const planRequest =
       schemaId === "presentation_synthesis"
         ? `Generate a multi-slide presentation plan (${slidePlan.count} slides) for the user request: "${text}".${themeSuffix}`
         : schemaId === "html_synthesis"
         ? htmlPlanRequest(text, htmlArchetype)
-        : `Generate a plan for the user request: "${text}"`;
-    const userPrompt = `${dataContext}${planRequest}`;
+        : `Generate a plan for the user request: "${text}".${rowCountSuffix}`;
+    const dataContextBody = dataContext;
+    const planRequestText = planRequest;
 
     // Presentations need far more output room than a single artifact plan: budget
     // roughly per-slide so larger decks aren't truncated mid-array.
-    const planMaxTokens =
+    const desiredPlanMaxTokens =
       schemaId === "presentation_synthesis"
         ? Math.min(4096, 512 + slidePlan.count * 220)
         : schemaId === "html_synthesis"
         ? HTML_PLAN_MAX_TOKENS
+        : schemaId === "spreadsheet_synthesis"
+        ? spreadsheetPlanMaxTokens(hasSourceData, ambientFileContent, rowPlan.count)
         : 500;
 
+    const fitted = fitArtifactPlanPrompt({
+      contextWindowTokens,
+      systemPrompt,
+      dataContext: dataContextBody,
+      planRequest: planRequestText,
+      desiredMaxOutputTokens: desiredPlanMaxTokens,
+    });
+
+    const planMaxTokens = fitted.maxOutputTokens;
     const planTemperature =
       schemaId === "html_synthesis" ? 0.4 : 0.1;
 
@@ -1364,8 +1508,8 @@ Deck requirements:
 
     await Api.streamChat(
       [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userPrompt }
+        { role: "system", content: fitted.systemPrompt },
+        { role: "user", content: fitted.userPrompt }
       ],
       (chunk) => {
         planJson += chunk;
@@ -1381,6 +1525,26 @@ Deck requirements:
               archetype: htmlArchetype,
               theme: defaultThemeForArchetype(htmlArchetype),
             });
+          } else if (schemaId === "spreadsheet_synthesis") {
+            const sheetFallback = {
+              prompt: text,
+              hasSourceData: Boolean(headers && headers.length > 0 && rows),
+              ambientContent: ambientFileContent || undefined,
+            };
+            try {
+              planObj = parseSpreadsheetPlanJson(planJson, sheetFallback);
+            } catch (parseErr) {
+              const docFallback = buildSpreadsheetFallbackPlan(sheetFallback);
+              if (docFallback) {
+                console.warn(
+                  "Spreadsheet parse failed; using document fallback:",
+                  parseErr
+                );
+                planObj = docFallback;
+              } else {
+                throw parseErr;
+              }
+            }
           } else {
             try {
               planObj = parseArtifactPlanJson(planJson);
@@ -1405,7 +1569,17 @@ Deck requirements:
             }
           }
 
-          if (headers && rows) {
+          if (schemaId === "spreadsheet_synthesis") {
+            if (headers && rows) {
+              planObj.headers = headers;
+              planObj.source_rows = rows;
+            }
+            planObj = normalizeSpreadsheetPlan(planObj, {
+              prompt: text,
+              hasSourceData: Boolean(headers && headers.length > 0 && rows),
+              expectedRowCount: rowPlan.explicit ? rowPlan.count : null,
+            });
+          } else if (headers && rows) {
             planObj.headers = headers;
             planObj.source_rows = rows;
           }

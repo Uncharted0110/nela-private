@@ -23,7 +23,8 @@ ws     ::= ([ \t\n] ws)?
 ///
 /// Constrains the SLM to emit only valid `SpreadsheetPlan` JSON with operations
 /// from the approved vocabulary (revamp.md §5.1 — Functional Schema Library).
-pub const SPREADSHEET_PLAN_GBNF: &str = r#"root      ::= "{" ws "\"ops\"" ws ":" ws "[" ws op-list "]" ws "}"
+pub const SPREADSHEET_PLAN_GBNF: &str = r#"root      ::= "{" ws "\"ops\"" ws ":" ws "[" ws op-list "]" ws ("," ws output-field)? ws "}"
+output-field ::= "\"output_name\"" ws ":" ws string
 op-list   ::= op ("," ws op)*
 op        ::= sum-op | avg-op | pivot-op | sort-desc-op | sort-asc-op | filter-op | count-op | add-col-op | write-data-op | rename-op
 

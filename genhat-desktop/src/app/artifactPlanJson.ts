@@ -61,7 +61,11 @@ export function stripArtifactModelOutput(raw: string): string {
   let text = raw.trim();
   text = text.replace(/```json\s*/gi, "");
   text = text.replace(/```\s*/g, "");
+  // Strip thinking / reasoning blocks (various model formats).
   text = text.replace(/[\s\S]*?<\/think>/gi, "");
+  text = text.replace(/[\s\S]*?<\/redacted_thinking>/gi, "");
+  text = text.replace(/<think>[\s\S]*?<\/think>/gi, "");
+  text = text.replace(/<think>[\s\S]*?<\/redacted_thinking>/gi, "");
   text = text.replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, "");
   text = text.replace(/<redacted[^>]*>[\s\S]*?<\/redacted[^>]*>/gi, "");
 
@@ -164,7 +168,7 @@ function tryParseObject(text: string): Record<string, unknown> | null {
   return null;
 }
 
-function parseJsonCandidates(raw: string): Record<string, unknown> | null {
+export function parseJsonCandidates(raw: string): Record<string, unknown> | null {
   const stripped = stripArtifactModelOutput(raw);
   const balanced = extractBalancedJsonObject(stripped);
   const base = balanced ?? stripped;
@@ -227,6 +231,63 @@ export function extractSectionsFromBrokenJson(raw: string): Record<string, unkno
   }
 
   return sections;
+}
+
+const SPREADSHEET_OP_NAMES =
+  "SUM_COLUMN|AVERAGE_BY_GROUP|PIVOT|SORT_DESC|SORT_ASC|FILTER_ROWS|COUNT_BY_GROUP|ADD_COLUMN|RENAME_SHEET|WRITE_DATA";
+
+/** Salvage spreadsheet op objects from truncated / invalid JSON. */
+export function extractSpreadsheetOpsFromBrokenJson(
+  raw: string
+): Record<string, unknown>[] {
+  const text = stripArtifactModelOutput(raw);
+  const ops: Record<string, unknown>[] = [];
+  const seen = new Set<string>();
+
+  const marker = new RegExp(`"op"\\s*:\\s*"(${SPREADSHEET_OP_NAMES})"`, "gi");
+  let match: RegExpExecArray | null;
+
+  while ((match = marker.exec(text)) !== null) {
+    let start = match.index;
+    while (start > 0 && text[start] !== "{") start--;
+
+    const slice = extractBalancedJsonObject(text.slice(start));
+    const candidates = slice
+      ? [slice, escapeControlCharsInJsonStrings(slice)]
+      : [
+          closeTruncatedJson(text.slice(start)),
+          closeTruncatedJson(escapeControlCharsInJsonStrings(text.slice(start))),
+        ];
+
+    for (const candidate of candidates) {
+      const obj = tryParseObject(candidate);
+      if (obj?.op) {
+        const key = JSON.stringify(obj);
+        if (!seen.has(key)) {
+          seen.add(key);
+          ops.push(obj);
+        }
+        break;
+      }
+    }
+  }
+
+  return ops;
+}
+
+/** Salvage a spreadsheet plan (ops + output_name) from broken model output. */
+export function extractSpreadsheetPlanFallback(
+  raw: string
+): Record<string, unknown> | null {
+  const text = stripArtifactModelOutput(raw);
+  const ops = extractSpreadsheetOpsFromBrokenJson(raw);
+  const output_name = readJsonStringField(text, "output_name");
+
+  if (ops.length === 0) return null;
+
+  const plan: Record<string, unknown> = { ops };
+  if (output_name) plan.output_name = output_name;
+  return plan;
 }
 
 /** Last-resort extractor for legacy raw-HTML JSON plans. */
