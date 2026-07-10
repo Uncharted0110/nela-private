@@ -3,7 +3,7 @@
 use crate::grammar::schema::{HtmlPlan, HtmlSection, HtmlSectionItem, HtmlSectionKind};
 
 use super::layout::layout_for;
-use super::render::{escape_html, normalize_sections, theme_css, BASE_CSS};
+use super::render::{escape_html, normalize_sections, theme_css, theme_fonts, BASE_CSS};
 use super::layout::ARCHETYPE_CSS;
 
 const DEFAULT_POOL: &[(&str, &str, &str)] = &[
@@ -50,9 +50,10 @@ pub fn render_interactive_plan(mut plan: HtmlPlan) -> String {
     let action_label = infer_action_label(&plan.title, &pool);
 
     let theme_vars = theme_css(theme);
+    let (font_body, font_heading) = theme_fonts(theme, &layout);
     let font_vars = format!(
         ":root {{ --font-body: {}; --font-heading: {}; }}",
-        layout.font_body, layout.font_heading
+        font_body, font_heading
     );
 
     format!(
@@ -62,9 +63,6 @@ pub fn render_interactive_plan(mut plan: HtmlPlan) -> String {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title}</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="{font_url}" rel="stylesheet">
 <style>
 {font_vars}
 {theme_css}
@@ -141,7 +139,6 @@ pub fn render_interactive_plan(mut plan: HtmlPlan) -> String {
   </script>
 </body>
 </html>"##,
-        font_url = layout.font_url,
         body_class = layout.body_class,
         theme_css = theme_vars,
         hero_body_block = if hero_body.is_empty() {

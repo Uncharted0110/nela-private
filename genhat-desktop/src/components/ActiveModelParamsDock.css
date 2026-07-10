@@ -1,12 +1,12 @@
 .runtime-param-select {
   width: 100%;
-  background: rgba(14, 20, 28, 0.85);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--modal-item-bg);
+  border: 1px solid var(--color-glass-border);
   border-radius: 8px;
   padding: 8px 12px;
   padding-right: 34px;
   font-size: 0.76rem;
-  color: #e7f6ff;
+  color: var(--color-txt);
   cursor: pointer;
   appearance: none;
   -webkit-appearance: none;
@@ -18,13 +18,13 @@
 }
 
 .runtime-param-select:hover {
-  border-color: rgba(0, 212, 255, 0.3);
+  border-color: var(--color-neon-glow);
 }
 
 .runtime-param-select:focus {
   outline: none;
-  border-color: #00d4ff;
-  box-shadow: 0 0 0 2px rgba(0, 212, 255, 0.15);
+  border-color: var(--color-neon);
+  box-shadow: 0 0 0 2px var(--color-neon-subtle);
 }
 
 .runtime-param-select:disabled {
@@ -33,8 +33,8 @@
 }
 
 .runtime-param-select option {
-  background: #0a0f14;
-  color: #e7f6ff;
+  background: var(--color-void-800);
+  color: var(--color-txt);
 }
 
 .runtime-param-dropdown-btn {
@@ -72,9 +72,9 @@
   width: 16px;
   height: 16px;
   border-radius: 999px;
-  border: 1px solid rgba(0, 212, 255, 0.35);
-  background: rgba(0, 212, 255, 0.12);
-  color: #a9ecff;
+  border: 1px solid var(--color-neon-glow);
+  background: var(--color-neon-subtle);
+  color: var(--color-neon);
   font-size: 10px;
   font-weight: 700;
   line-height: 1;
@@ -87,30 +87,30 @@
 
 .runtime-param-help-btn:hover,
 .runtime-param-help-btn[aria-expanded="true"] {
-  background: rgba(0, 212, 255, 0.2);
-  border-color: rgba(0, 212, 255, 0.6);
-  color: #d8f7ff;
+  background: color-mix(in srgb, var(--color-neon) 20%, transparent);
+  border-color: var(--color-neon);
+  color: var(--color-txt);
 }
 
 .runtime-param-help-btn:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 2px rgba(0, 212, 255, 0.18);
+  box-shadow: 0 0 0 2px var(--color-neon-subtle);
 }
 
 .runtime-param-help-popover {
-  position: fixed;
-  z-index: 220;
-  max-height: 240px;
-  overflow-y: auto;
-  padding: 9px 10px;
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 90;
+  width: min(340px, calc(100vw - 80px));
+  padding: 10px 11px;
   border-radius: 10px;
-  border: 1px solid rgba(0, 212, 255, 0.24);
-  background: rgba(9, 14, 20, 0.97);
-  color: #d8edf8;
-  font-size: 0.68rem;
-  line-height: 1.45;
-  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.45);
-  backdrop-filter: blur(6px);
+  border: 1px solid var(--color-glass-border);
+  background: var(--modal-popover-bg);
+  color: var(--color-txt-secondary);
+  font-size: 0.72rem;
+  line-height: 1.5;
+  box-shadow: var(--modal-shadow);
 }
 
 .runtime-param-help-popover p {

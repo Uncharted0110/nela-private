@@ -1,17 +1,7 @@
-:root {
-  --modal-bg: rgba(9, 12, 16, 0.96);
-  --modal-border: rgba(0, 212, 255, 0.18);
-  --modal-text: #e7f6ff;
-  --modal-muted: rgba(255, 255, 255, 0.6);
-  --modal-accent: #00d4ff;
-  --modal-warning: #fbbf24;
-  --modal-error: #f87171;
-}
-
 .app-modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(2, 4, 8, 0.66);
+  background: var(--modal-overlay-bg);
   backdrop-filter: blur(6px);
   display: flex;
   align-items: center;
@@ -21,11 +11,11 @@
 
 .app-modal {
   width: min(460px, 92vw);
-  background: var(--modal-bg);
-  border: 1px solid var(--modal-border);
+  background: var(--modal-surface-solid);
+  border: 1px solid var(--color-glass-border);
   border-radius: 14px;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
-  color: var(--modal-text);
+  box-shadow: var(--modal-shadow);
+  color: var(--color-txt);
   overflow: hidden;
   animation: app-modal-pop 0.18s ease-out;
 }
@@ -40,7 +30,7 @@
   align-items: center;
   justify-content: space-between;
   padding: 14px 18px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid var(--modal-border-subtle);
 }
 
 .app-modal-title {
@@ -51,25 +41,25 @@
 }
 
 .app-modal-header.info svg {
-  color: var(--modal-accent);
+  color: var(--color-neon);
 }
 
 .app-modal-header.warning svg {
-  color: var(--modal-warning);
+  color: var(--color-warning);
 }
 
 .app-modal-header.error svg {
-  color: var(--modal-error);
+  color: var(--color-danger);
 }
 
 .app-modal-header.confirm svg {
-  color: #34d399;
+  color: var(--color-success);
 }
 
 .app-modal-close {
   background: transparent;
   border: none;
-  color: var(--modal-muted);
+  color: var(--color-txt-muted);
   cursor: pointer;
   padding: 4px;
   border-radius: 6px;
@@ -78,7 +68,7 @@
 .app-modal-body {
   padding: 16px 18px 8px;
   font-size: 0.92rem;
-  color: var(--modal-muted);
+  color: var(--color-txt-secondary);
 }
 
 .app-modal-actions {
@@ -99,24 +89,24 @@
 
 .app-modal-btn.info,
 .app-modal-btn.confirm {
-  background: linear-gradient(120deg, #00d4ff, #43e3ff);
-  color: #081018;
+  background: var(--modal-btn-primary-bg);
+  color: var(--modal-btn-primary-text);
 }
 
 .app-modal-btn.warning {
-  background: rgba(251, 191, 36, 0.18);
-  color: #fde68a;
-  border: 1px solid rgba(251, 191, 36, 0.4);
+  background: color-mix(in srgb, var(--color-warning) 18%, transparent);
+  color: var(--color-warning);
+  border: 1px solid color-mix(in srgb, var(--color-warning) 40%, transparent);
 }
 
 .app-modal-btn.error {
-  background: rgba(248, 113, 113, 0.16);
-  color: #fecaca;
-  border: 1px solid rgba(248, 113, 113, 0.35);
+  background: color-mix(in srgb, var(--color-danger) 16%, transparent);
+  color: var(--color-danger);
+  border: 1px solid color-mix(in srgb, var(--color-danger) 35%, transparent);
 }
 
 .app-modal-btn.ghost {
-  background: rgba(255, 255, 255, 0.05);
-  color: var(--modal-muted);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--modal-icon-btn-bg);
+  color: var(--color-txt-secondary);
+  border: 1px solid var(--color-glass-border);
 }

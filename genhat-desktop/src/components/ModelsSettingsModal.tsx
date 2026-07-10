@@ -7,6 +7,14 @@ import InstallModelModal from "./InstallModelModal";
 import { DropdownSelect } from "./DropdownSelect";
 import { useAdvancedMode } from "../hooks/useAdvancedMode";
 import { useTheme, type ThemeName } from "../hooks/useTheme";
+import {
+  DEFAULT_INTELLIGENCE_MAPPING,
+  INTELLIGENCE_MODE_OPTIONS,
+  type IntelligenceMode,
+  modelIsDownloadable,
+  readIntelligenceMapping,
+  writeIntelligenceMapping,
+} from "../app/intelligenceModes";
 import "./ModelsSettingsModal.css";
 
 interface ModelsSettingsModalProps {
@@ -44,6 +52,8 @@ const STARTUP_IDS = new Set([
   "kitten-tts",
   "parakeet-tdt",
   "qwen3.5-0_8b",
+  "lfm2.5-1.2b-thinking",
+  "gemma-4-e2b-it",
   "mmproj-LFM2.5-VL-450m-F16",
   "LFM2.5-VL-450M-F32",
 ]);
@@ -336,6 +346,35 @@ const ModelsSettingsModal: React.FC<ModelsSettingsModalProps> = ({
   const [contextHint, setContextHint] = useState<{ rating: CompatibilityRating; reason: string } | null>(null);
   const [contextHintLoading, setContextHintLoading] = useState(false);
   const [activePickerGroupId, setActivePickerGroupId] = useState<string | null>(null);
+  const [intelligenceMapping, setIntelligenceMapping] = useState(readIntelligenceMapping);
+
+  useEffect(() => {
+    if (isOpen) {
+      setIntelligenceMapping(readIntelligenceMapping());
+    }
+  }, [isOpen]);
+
+  const chatModelOptions = useMemo(() => {
+    const source = modelCatalog.length > 0 ? modelCatalog : models;
+    return source
+      .filter((model) => model.tasks.includes("chat"))
+      .sort((a, b) => b.priority - a.priority || a.name.localeCompare(b.name))
+      .map((model) => ({ value: model.id, label: model.name }));
+  }, [modelCatalog, models]);
+
+  const updateIntelligenceMapping = (mode: IntelligenceMode, modelId: string) => {
+    setIntelligenceMapping((prev) => {
+      const next = { ...prev, [mode]: modelId };
+      writeIntelligenceMapping(next);
+      return next;
+    });
+  };
+
+  const resetIntelligenceMapping = () => {
+    const next = { ...DEFAULT_INTELLIGENCE_MAPPING };
+    setIntelligenceMapping(next);
+    writeIntelligenceMapping(next);
+  };
 
   const selectedParamModel = useMemo(
     () => models.find((m) => m.id === selectedParamModelId) ?? null,
@@ -505,7 +544,7 @@ const ModelsSettingsModal: React.FC<ModelsSettingsModalProps> = ({
   }, [modelCatalog, models]);
 
   const startupMissing = useMemo(
-    () => startupCandidates.filter((model) => !model.is_downloaded && !!model.gdrive_id),
+    () => startupCandidates.filter((model) => !model.is_downloaded && modelIsDownloadable(model)),
     [startupCandidates]
   );
 
@@ -647,6 +686,33 @@ const ModelsSettingsModal: React.FC<ModelsSettingsModalProps> = ({
                 >
                   Download Missing ({missingOptional.length})
                   {missingOptionalTotalMb > 0 ? ` · ${formatModelSizeLabel(missingOptionalTotalMb)}` : ""}
+                </button>
+              </div>
+
+              <div className="settings-intelligence-mapping">
+                <div className="settings-group-title">Intelligence modes</div>
+                <div className="settings-field-hint">
+                  Choose which model is used for Fast, Smart, and Deep in the main toolbar.
+                </div>
+                <div className="settings-intelligence-grid">
+                  {INTELLIGENCE_MODE_OPTIONS.map((option) => (
+                    <label key={option.key} className="settings-intelligence-row">
+                      <span className="settings-intelligence-label">{option.label}</span>
+                      <DropdownSelect
+                        value={intelligenceMapping[option.key]}
+                        options={chatModelOptions}
+                        onChange={(value) => updateIntelligenceMapping(option.key, value)}
+                        disabled={chatModelOptions.length === 0}
+                      />
+                    </label>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  className="settings-secondary-btn"
+                  onClick={resetIntelligenceMapping}
+                >
+                  Reset to defaults
                 </button>
               </div>
 

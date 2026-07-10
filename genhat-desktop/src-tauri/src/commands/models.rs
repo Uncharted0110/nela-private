@@ -876,23 +876,33 @@ pub async fn stop_llama(state: State<'_, ProcessManagerState>) -> Result<(), Str
 pub async fn get_llama_port(
     app: AppHandle,
     state: State<'_, ProcessManagerState>,
+    model_id: Option<String>,
 ) -> Result<u16, String> {
-    let active_id = state.0.active_llm_id().await;
-    // Strict behavior: if an active model is set, only ever start/return that model.
-    // This avoids confusing UI states where the renderer selected a model but
-    // `get_llama_port` silently falls back to a different one.
-    if !active_id.is_empty() {
-        if let Some(port) = state.0.get_llama_port(&active_id).await {
+    let preferred = model_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let candidates = state
+        .0
+        .streaming_chat_candidates(preferred)
+        .await;
+    if candidates.is_empty() {
+        return Err("No chat-capable llama-server model is registered".to_string());
+    }
+
+    let mut errors = Vec::new();
+    for id in candidates {
+        if let Some(port) = state.0.get_llama_port(&id).await {
+            state.0.set_active_llm(&id).await;
             return Ok(port);
         }
 
-        let id = active_id;
         let _ = app.emit("model-loading", serde_json::json!({
             "model_id": &id,
             "status": "starting",
             "message": format!("Loading model {}...", &id)
         }));
-        log::info!("Starting active model {} for chat...", &id);
+        log::info!("Starting chat model {} for streaming...", &id);
 
         let start = std::time::Instant::now();
         match tokio::time::timeout(
@@ -909,9 +919,10 @@ pub async fn get_llama_port(
                     "message": format!("Model {} ready ({}s)", &id, elapsed)
                 }));
                 if let Some(port) = state.0.get_llama_port(&id).await {
+                    state.0.set_active_llm(&id).await;
                     return Ok(port);
                 }
-                return Err(format!("{id}: started but no port assigned"));
+                errors.push(format!("{id}: started but no port assigned"));
             }
             Ok(Err(e)) => {
                 let _ = app.emit("model-loading", serde_json::json!({
@@ -919,7 +930,7 @@ pub async fn get_llama_port(
                     "status": "error",
                     "message": format!("Failed to start {}: {}", &id, &e)
                 }));
-                return Err(format!("{id}: {e}"));
+                errors.push(format!("{id}: {e}"));
             }
             Err(_) => {
                 let _ = app.emit("model-loading", serde_json::json!({
@@ -927,49 +938,15 @@ pub async fn get_llama_port(
                     "status": "timeout",
                     "message": format!("{} timed out after 150s", &id)
                 }));
-                return Err(format!("{id}: timed out while starting"));
+                errors.push(format!("{id}: timed out while starting"));
             }
         }
     }
 
-    // No active model set: choose the highest-priority chat model and start it.
-    let mut candidates = state.0.find_models_for_task(&TaskType::Chat).await;
-    if candidates.is_empty() {
-        return Err("No chat-capable model is registered".to_string());
-    }
-    let id = candidates.remove(0);
-    state.0.set_active_llm(&id).await;
-    if let Some(port) = state.0.get_llama_port(&id).await {
-        return Ok(port);
-    }
-
-    let _ = app.emit("model-loading", serde_json::json!({
-        "model_id": &id,
-        "status": "starting",
-        "message": format!("Loading model {}...", &id)
-    }));
-    log::info!("Starting default model {} for chat...", &id);
-    let start = std::time::Instant::now();
-    tokio::time::timeout(
-        std::time::Duration::from_secs(150),
-        state.0.ensure_running(&id, false),
-    )
-    .await
-    .map_err(|_| format!("{id}: timed out while starting"))?
-    .map_err(|e| format!("{id}: {e}"))?;
-
-    let elapsed = start.elapsed().as_secs();
-    let _ = app.emit("model-loading", serde_json::json!({
-        "model_id": &id,
-        "status": "ready",
-        "message": format!("Model {} ready ({}s)", &id, elapsed)
-    }));
-
-    state
-        .0
-        .get_llama_port(&id)
-        .await
-        .ok_or_else(|| format!("{id}: started but no port assigned"))
+    Err(format!(
+        "No runnable chat model found for streaming: {}",
+        errors.join(" | ")
+    ))
 }
 
 /// Get estimated total memory usage of all loaded models (MB).

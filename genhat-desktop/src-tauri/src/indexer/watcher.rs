@@ -1,11 +1,15 @@
 use crate::governor::{CancellationToken, Governor};
 use crate::indexer::db::IndexerDb;
+use crate::indexer::paths::{
+    collect_index_roots, delete_index_paths, is_blacklisted, normalize_index_path,
+};
 use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-/// Start real-time file watching on the root home directory with Linux watch limit fallback.
+/// Start real-time file watching on the home directory (recursive) and any
+/// workspace roots outside home. Uses the same root set as the background crawler.
 pub fn start_watcher(
     root_dir: PathBuf,
     db: IndexerDb,
@@ -17,7 +21,6 @@ pub fn start_watcher(
     let governor_clone = governor.clone();
     let cancel_clone = cancel_token.clone();
 
-    // Channel for forwarding notify events to processor thread
     let (tx, rx) = std::sync::mpsc::channel();
 
     let mut watcher = RecommendedWatcher::new(
@@ -30,40 +33,19 @@ pub fn start_watcher(
     )
     .map_err(|e| format!("Failed to create watcher: {e}"))?;
 
-    // 1. Watch active workspaces recursively
-    for ws_path in &workspace_paths {
-        if ws_path.exists() {
-            if let Err(e) = watcher.watch(ws_path, RecursiveMode::Recursive) {
-                log::warn!("Failed to watch workspace {}: {}", ws_path.display(), e);
-            } else {
-                log::info!("Watching workspace recursively: {}", ws_path.display());
-            }
+    let watch_roots = collect_index_roots(&root_dir, &workspace_paths);
+    for dir in &watch_roots {
+        if let Err(e) = watcher.watch(dir, RecursiveMode::Recursive) {
+            log::warn!(
+                "Failed to watch {}: {} (index updates may lag until the next crawl)",
+                dir.display(),
+                e
+            );
+        } else {
+            log::info!("Watching recursively: {}", dir.display());
         }
     }
 
-    // 2. Watch standard user folders recursively
-    let documents = root_dir.join("Documents");
-    let downloads = root_dir.join("Downloads");
-    let desktop = root_dir.join("Desktop");
-
-    for dir in &[documents, downloads, desktop] {
-        if dir.exists() {
-            if let Err(e) = watcher.watch(dir, RecursiveMode::Recursive) {
-                log::warn!("Failed to watch standard directory {}: {}", dir.display(), e);
-            } else {
-                log::info!("Watching standard directory recursively: {}", dir.display());
-            }
-        }
-    }
-
-    // 3. Watch home directory top-level folder non-recursively
-    if let Err(e) = watcher.watch(&root_dir, RecursiveMode::NonRecursive) {
-        log::warn!("Failed to watch top-level {}: {}", root_dir.display(), e);
-    } else {
-        log::info!("Watching top-level home directory non-recursively.");
-    }
-
-    // Spawn the background thread to handle watcher events
     std::thread::spawn(move || {
         log::info!("Watcher event processing loop started.");
         let mut duty_guard = governor_clone.indexer_duty_cycle();
@@ -79,26 +61,22 @@ pub fn start_watcher(
             let kind = event.kind;
 
             for path in paths {
-                // Ignore blacklisted files/directories
-                if crate::indexer::crawler::is_blacklisted(&path) {
+                if is_blacklisted(&path) {
                     continue;
                 }
 
-                let path_str = path.to_string_lossy().to_string();
+                let path_str = normalize_index_path(&path);
 
                 if kind.is_remove() {
                     log::debug!("File removed event: {}", path_str);
-                    if let Err(e) = db_clone.delete(&path_str) {
-                        log::error!("Failed to delete index record for removed file {}: {}", path_str, e);
-                    }
+                    delete_index_paths(&db_clone, &path);
                 } else if kind.is_create() || kind.is_modify() {
                     log::debug!("File created/modified event: {}", path_str);
 
                     let metadata = match fs::metadata(&path) {
                         Ok(m) => m,
                         Err(_) => {
-                            // File was deleted or inaccessible
-                            db_clone.delete(&path_str).ok();
+                            delete_index_paths(&db_clone, &path);
                             continue;
                         }
                     };
@@ -112,7 +90,6 @@ pub fn start_watcher(
                         .map(|d| d.as_secs() as i64)
                         .unwrap_or(0);
 
-                    // Incremental write check
                     if let Ok(Some((db_mtime, db_size))) = db_clone.get_file_metadata(&path_str) {
                         if db_mtime == mtime && db_size == size {
                             continue;
@@ -173,6 +150,11 @@ pub fn start_watcher(
                         content.as_deref(),
                     ) {
                         log::error!("Watcher failed to index {}: {}", path_str, e);
+                    } else {
+                        let legacy = path.to_string_lossy().into_owned();
+                        if legacy != path_str {
+                            db_clone.delete(&legacy).ok();
+                        }
                     }
                 }
             }

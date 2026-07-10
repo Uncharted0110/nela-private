@@ -409,6 +409,8 @@ fn main() {
             app_lib::commands::artifact::generate_presentation,
             app_lib::commands::artifact::generate_html,
             app_lib::commands::artifact::parse_spreadsheet_data,
+            app_lib::commands::artifact_images::download_image_data_uri,
+            app_lib::commands::artifact_images::extract_document_images,
             app_lib::commands::artifact::get_governor_state,
             app_lib::commands::artifact::get_schema_grammar,
             app_lib::commands::artifact::apply_diff_patch,

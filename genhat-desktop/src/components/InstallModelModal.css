@@ -4,7 +4,7 @@
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, 0.6);
+  background: var(--modal-overlay-bg);
   backdrop-filter: blur(4px);
   display: flex;
   align-items: center;
@@ -13,16 +13,17 @@
 }
 
 .install-modal-content {
-  background: var(--bg-color, #1a1a1a);
-  border: 1px solid var(--glass-border, #333);
+  background: var(--modal-surface-solid);
+  border: 1px solid var(--color-glass-border);
   border-radius: 12px;
   width: 90%;
   max-width: 480px;
   max-height: 80vh;
   display: flex;
   flex-direction: column;
-  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--modal-shadow);
   animation: modal-pop 0.2s ease-out;
+  color: var(--color-txt);
 }
 
 @keyframes modal-pop {
@@ -35,14 +36,14 @@
   align-items: center;
   justify-content: space-between;
   padding: 16px 20px;
-  border-bottom: 1px solid var(--glass-border, #333);
-  color: var(--text-color, #fff);
+  border-bottom: 1px solid var(--color-glass-border);
+  color: var(--color-txt);
 }
 
 .close-btn {
   background: transparent;
   border: none;
-  color: var(--text-secondary, #aaa);
+  color: var(--color-txt-muted);
   cursor: pointer;
   padding: 4px;
   border-radius: 4px;
@@ -53,8 +54,8 @@
 }
 
 .close-btn:hover {
-  background: rgba(255, 255, 255, 0.1);
-  color: var(--text-color, #fff);
+  background: var(--color-glass-hover);
+  color: var(--color-txt);
 }
 
 .install-modal-body {
@@ -72,7 +73,7 @@
   font-size: 0.7rem;
   text-transform: uppercase;
   letter-spacing: 0.12em;
-  color: var(--text-secondary, #aaa);
+  color: var(--color-txt-muted);
   margin-top: 6px;
 }
 
@@ -81,14 +82,14 @@
   align-items: center;
   justify-content: space-between;
   padding: 12px 16px;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid var(--glass-border, #333);
+  background: var(--color-glass-bg);
+  border: 1px solid var(--color-glass-border);
   border-radius: 8px;
   transition: border-color 0.2s;
 }
 
 .install-item:hover {
-  border-color: rgba(255, 255, 255, 0.15);
+  border-color: var(--color-neon-glow);
 }
 
 .install-item-info {
@@ -100,12 +101,12 @@
 .install-item-name {
   font-weight: 500;
   font-size: 0.95rem;
-  color: var(--text-color, #fff);
+  color: var(--color-txt);
 }
 
 .install-item-path {
   font-size: 0.75rem;
-  color: var(--text-secondary, #aaa);
+  color: var(--color-txt-muted);
   font-family: monospace;
 }
 
@@ -113,8 +114,8 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  background: var(--accent-color, #3b82f6);
-  color: #fff;
+  background: var(--color-neon);
+  color: var(--modal-btn-primary-text);
   border: none;
   padding: 6px 12px;
   border-radius: 6px;
@@ -129,9 +130,9 @@
 }
 
 .install-btn.uninstall-btn {
-  background: rgba(239, 68, 68, 0.12);
-  color: #ffb4b4;
-  border: 1px solid rgba(239, 68, 68, 0.3);
+  background: color-mix(in srgb, var(--color-danger) 12%, transparent);
+  color: var(--color-danger);
+  border: 1px solid color-mix(in srgb, var(--color-danger) 30%, transparent);
 }
 
 .install-progress {
@@ -139,13 +140,13 @@
   align-items: center;
   gap: 8px;
   padding: 6px 12px;
-  background: rgba(var(--accent-color-rgb, 59, 130, 246), 0.1);
+  background: var(--color-neon-subtle);
   border-radius: 6px;
 }
 
 .cancel-btn {
-  background: rgba(239, 68, 68, 0.1);
-  color: #ef4444;
+  background: color-mix(in srgb, var(--color-danger) 10%, transparent);
+  color: var(--color-danger);
   border: none;
   padding: 6px;
   border-radius: 6px;
@@ -157,22 +158,5 @@
 }
 
 .cancel-btn:hover {
-  background: rgba(239, 68, 68, 0.2);
-}
-
-.cancel-btn {
-  background: rgba(239, 68, 68, 0.1);
-  color: #ef4444;
-  border: none;
-  padding: 6px;
-  border-radius: 6px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.2s;
-}
-
-.cancel-btn:hover {
-  background: rgba(239, 68, 68, 0.2);
+  background: color-mix(in srgb, var(--color-danger) 20%, transparent);
 }

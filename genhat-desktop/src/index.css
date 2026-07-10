@@ -30,6 +30,28 @@
   --color-danger: #f87171;
 
   --color-scrollbar-thumb: rgba(0, 212, 255, 0.25);
+
+  /* Modal / overlay surfaces (neon default) */
+  --modal-overlay-bg: rgba(2, 4, 8, 0.66);
+  --modal-overlay-startup: radial-gradient(circle at 16% 20%, rgba(0, 212, 255, 0.08), transparent 42%),
+    rgba(4, 10, 18, 0.72);
+  --modal-surface-bg: linear-gradient(165deg, rgba(11, 20, 34, 0.96) 0%, rgba(8, 15, 26, 0.97) 100%);
+  --modal-surface-solid: rgba(9, 12, 16, 0.96);
+  --modal-panel-bg: rgba(16, 22, 30, 0.92);
+  --modal-item-bg: rgba(14, 20, 28, 0.85);
+  --modal-item-bg-subtle: rgba(11, 17, 24, 0.72);
+  --modal-border-subtle: rgba(255, 255, 255, 0.06);
+  --modal-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+  --modal-dim-bg: rgba(0, 0, 0, 0.55);
+  --modal-action-bg: linear-gradient(145deg, rgba(11, 30, 48, 0.9), rgba(8, 22, 36, 0.88));
+  --modal-action-color: #9feeff;
+  --modal-action-border: rgba(0, 212, 255, 0.35);
+  --modal-title-gradient: linear-gradient(125deg, #d9f7ff 0%, #6fe3ff 48%, #00d4ff 100%);
+  --modal-btn-primary-bg: linear-gradient(120deg, #00d4ff, #43e3ff);
+  --modal-btn-primary-text: #081018;
+  --modal-popover-bg: rgba(9, 14, 20, 0.97);
+  --modal-icon-btn-bg: rgba(255, 255, 255, 0.05);
+  --modal-highlight-border: rgba(0, 212, 255, 0.9);
 }
 
 /* ── Professional light theme (default for non-technical users) ── */
@@ -62,16 +84,41 @@ html[data-theme="professional"] {
   --color-danger: #b91c1c;
 
   --color-scrollbar-thumb: rgba(11, 107, 203, 0.3);
+
+  --modal-overlay-bg: rgba(15, 23, 42, 0.35);
+  --modal-overlay-startup: rgba(15, 23, 42, 0.28);
+  --modal-surface-bg: linear-gradient(165deg, #ffffff 0%, #f7f8fa 100%);
+  --modal-surface-solid: #ffffff;
+  --modal-panel-bg: #f7f8fa;
+  --modal-item-bg: #ffffff;
+  --modal-item-bg-subtle: #f0f3f7;
+  --modal-border-subtle: rgba(15, 23, 42, 0.08);
+  --modal-shadow: 0 20px 50px rgba(15, 23, 42, 0.12);
+  --modal-dim-bg: rgba(15, 23, 42, 0.35);
+  --modal-action-bg: #ffffff;
+  --modal-action-color: var(--color-neon);
+  --modal-action-border: var(--color-glass-border);
+  --modal-title-gradient: linear-gradient(125deg, #0b6bcb 0%, #095aa8 48%, #074a8f 100%);
+  --modal-btn-primary-bg: linear-gradient(120deg, #0b6bcb, #2580d4);
+  --modal-btn-primary-text: #ffffff;
+  --modal-popover-bg: #ffffff;
+  --modal-icon-btn-bg: rgba(15, 23, 42, 0.04);
+  --modal-highlight-border: rgba(11, 107, 203, 0.85);
 }
 
 :root[data-theme="professional"] .welcome-orb,
-:root[data-theme="professional"] .startup-waves {
+:root[data-theme="professional"] .startup-waves,
+:root[data-theme="light"] .welcome-orb,
+:root[data-theme="light"] .startup-waves {
   display: none;
 }
 
 :root[data-theme="professional"] .send-btn,
 :root[data-theme="professional"] .glass-strong,
-:root[data-theme="professional"] .glass {
+:root[data-theme="professional"] .glass,
+:root[data-theme="light"] .send-btn,
+:root[data-theme="light"] .glass-strong,
+:root[data-theme="light"] .glass {
   box-shadow: none !important;
   backdrop-filter: none !important;
 }
@@ -106,6 +153,26 @@ html[data-theme="light"] {
   --color-danger: #dc2626;
 
   --color-scrollbar-thumb: rgba(0, 153, 204, 0.3);
+
+  --modal-overlay-bg: rgba(15, 23, 42, 0.35);
+  --modal-overlay-startup: rgba(15, 23, 42, 0.28);
+  --modal-surface-bg: linear-gradient(165deg, #ffffff 0%, #f4f4f8 100%);
+  --modal-surface-solid: #ffffff;
+  --modal-panel-bg: #f4f4f8;
+  --modal-item-bg: #ffffff;
+  --modal-item-bg-subtle: #eef1f5;
+  --modal-border-subtle: rgba(0, 0, 0, 0.08);
+  --modal-shadow: 0 20px 50px rgba(15, 23, 42, 0.12);
+  --modal-dim-bg: rgba(15, 23, 42, 0.35);
+  --modal-action-bg: #ffffff;
+  --modal-action-color: var(--color-neon);
+  --modal-action-border: var(--color-glass-border);
+  --modal-title-gradient: linear-gradient(125deg, #0099cc 0%, #007aaa 48%, #006699 100%);
+  --modal-btn-primary-bg: linear-gradient(120deg, #0099cc, #00a8e0);
+  --modal-btn-primary-text: #ffffff;
+  --modal-popover-bg: #ffffff;
+  --modal-icon-btn-bg: rgba(0, 0, 0, 0.04);
+  --modal-highlight-border: rgba(0, 153, 204, 0.85);
 }
 
 /* ── Base Layer ── */

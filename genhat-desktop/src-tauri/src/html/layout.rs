@@ -253,6 +253,8 @@ pub const ARCHETYPE_CSS: &str = r#"
   border: 1px solid color-mix(in srgb, var(--text) 8%, transparent);
 }
 .layout-dashboard .card { border-radius: 10px; }
+.layout-dashboard .chart-section { padding: 1rem 0; }
+.layout-dashboard main .chart-section + .chart-section { margin-top: -0.5rem; }
 
 /* ── Documentation: clean reference layout ── */
 .layout-docs .site-header { background: var(--surface); }

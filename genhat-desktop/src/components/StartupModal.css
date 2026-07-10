@@ -4,8 +4,7 @@
   left: 0;
   width: 100%;
   height: 100%;
-  background: radial-gradient(circle at 16% 20%, rgba(0, 212, 255, 0.08), transparent 42%),
-    rgba(4, 10, 18, 0.72);
+  background: var(--modal-overlay-startup);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -29,10 +28,10 @@
   width: 100%;
   max-width: 820px;
   padding: 20px 10px 20px 10px;
-  background: linear-gradient(165deg, rgba(11, 20, 34, 0.95) 0%, rgba(8, 15, 26, 0.96) 100%);
+  background: var(--modal-surface-bg);
   border: 1px solid var(--color-glass-border);
   border-radius: 18px;
-  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.7), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  box-shadow: var(--modal-shadow);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   animation: startupSlideIn 0.45s cubic-bezier(0.21, 0.95, 0.38, 1);
@@ -83,7 +82,7 @@
   font-family: "Exo 2", "Rajdhani", "Orbitron", "Segoe UI", sans-serif;
   letter-spacing: -0.01em;
   margin: 0 0 2px;
-  background: linear-gradient(125deg, #d9f7ff 0%, #6fe3ff 48%, #00d4ff 100%);
+  background: var(--modal-title-gradient);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -121,9 +120,9 @@
 }
 
 .startup-action {
-  border: 1px solid rgba(0, 212, 255, 0.35);
-  background: linear-gradient(145deg, rgba(11, 30, 48, 0.9), rgba(8, 22, 36, 0.88));
-  color: #9feeff;
+  border: 1px solid var(--modal-action-border);
+  background: var(--modal-action-bg);
+  color: var(--modal-action-color);
   display: flex;
   align-items: center;
   justify-content: flex-start;
@@ -136,11 +135,12 @@
   border-radius: 10px;
   min-height: 44px;
   width: 100%;
-  transition: border-color 0.2s ease;
+  transition: border-color 0.2s ease, background 0.2s ease;
 }
 
 .startup-action:hover:not(:disabled) {
-  border-color: rgba(0, 212, 255, 0.7);
+  border-color: var(--color-neon);
+  background: var(--color-glass-hover);
 }
 
 .startup-action:disabled {
@@ -156,7 +156,7 @@
   width: 100%;
   height: 170px;
   z-index: 1;
-  filter: drop-shadow(0 0 10px rgba(0, 212, 255, 0.18));
+  filter: drop-shadow(0 0 10px var(--color-neon-glow));
 }
 
 .startup-wave-layer {
@@ -180,7 +180,12 @@
   height: 108px;
   object-fit: contain;
   opacity: 0.98;
-  filter: drop-shadow(0 0 28px rgba(0, 212, 255, 0.35));
+  filter: drop-shadow(0 0 28px var(--color-neon-glow));
+}
+
+html[data-theme="professional"] .startup-logo-img,
+html[data-theme="light"] .startup-logo-img {
+  filter: drop-shadow(0 0 16px var(--color-neon-glow));
 }
 
 @media (max-width: 600px) {

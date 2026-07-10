@@ -2,6 +2,7 @@ import React from "react";
 import { createPortal } from "react-dom";
 import { X, Download, Loader2, HardDrive, Trash2 } from "lucide-react";
 import type { ModelFile } from "../types";
+import { modelFileIsDownloadable } from "../app/intelligenceModes";
 import "./InstallModelModal.css";
 
 interface InstallModelModalProps {
@@ -21,7 +22,7 @@ const InstallModelModal: React.FC<InstallModelModalProps> = ({
 }) => {
   if (!isOpen) return null;
 
-  const missingModels = models.filter(m => !m.is_downloaded && m.gdrive_id);
+  const missingModels = models.filter((m) => !m.is_downloaded && modelFileIsDownloadable(m));
   const installedModels = models.filter(m => m.is_downloaded);
   
   const modal = (

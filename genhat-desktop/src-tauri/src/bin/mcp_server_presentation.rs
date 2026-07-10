@@ -69,6 +69,21 @@ struct PresentationSlide {
     #[serde(default)]
     bullets: Vec<String>,
     notes: Option<String>,
+    #[serde(default)]
+    image_index: Option<u32>,
+    #[serde(default)]
+    left_title: Option<String>,
+    #[serde(default)]
+    right_title: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ArtifactImageAsset {
+    data_uri: String,
+    #[serde(default)]
+    caption: String,
+    #[serde(default)]
+    alt: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -76,6 +91,8 @@ struct PresentationPlan {
     slides: Vec<PresentationSlide>,
     theme: Option<String>,
     output_name: Option<String>,
+    #[serde(default)]
+    images: Option<Vec<ArtifactImageAsset>>,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -781,6 +798,22 @@ const BASE_CSS: &str = r#"
             font-size: 1.2rem;
             font-weight: 600;
         }
+        .slide-img-wrap {
+            border-radius: 16px;
+            overflow: hidden;
+            height: 320px;
+            background: var(--mock-image-bg);
+            border: 1px solid var(--border-subtle);
+        }
+        .slide-image {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: block;
+        }
+        .bullets-list li {
+            line-height: 1.45;
+        }
 
         .layout-section {
             align-items: center;
@@ -1137,7 +1170,7 @@ fn generate_html(plan: PresentationPlan) -> Result<PathBuf, String> {
 
     let seed = compute_seed(&plan.slides);
     let theme = resolve_theme(plan.theme.as_deref(), seed);
-    let slides_html = render_slides(&plan.slides, seed);
+    let slides_html = render_slides(&plan.slides, plan.images.as_deref(), seed);
     let theme_class = theme.name;
 
     // Embed the theme's fonts as base64 @font-face so the deck renders offline
@@ -1264,7 +1297,65 @@ fn generate_html(plan: PresentationPlan) -> Result<PathBuf, String> {
     Ok(path)
 }
 
-fn render_slides(slides: &[PresentationSlide], seed: u64) -> String {
+fn slide_image_panel(
+    images: Option<&[ArtifactImageAsset]>,
+    slide: &PresentationSlide,
+    slide_idx: usize,
+) -> String {
+    let Some(pool) = images.filter(|p| !p.is_empty()) else {
+        return r#"<div class="mock-image"></div>"#.to_string();
+    };
+    let idx = slide
+        .image_index
+        .map(|i| i as usize)
+        .unwrap_or(slide_idx % pool.len());
+    let asset = pool.get(idx).or_else(|| pool.first()).unwrap();
+    let alt = escape_html(
+        asset
+            .alt
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .unwrap_or(asset.caption.as_str()),
+    );
+    format!(
+        r#"<div class="slide-img-wrap"><img class="slide-image" src="{}" alt="{alt}" /></div>"#,
+        asset.data_uri
+    )
+}
+
+fn compare_side_labels(slide: &PresentationSlide) -> (String, String) {
+    let left_raw = slide.left_title.as_deref().unwrap_or("").trim();
+    let right_raw = slide.right_title.as_deref().unwrap_or("").trim();
+    if !left_raw.is_empty() && !right_raw.is_empty() {
+        return (escape_html(left_raw), escape_html(right_raw));
+    }
+    let lower = slide.title.to_lowercase();
+    if let Some((a, b)) = slide
+        .title
+        .split_once(" vs ")
+        .or_else(|| slide.title.split_once(" versus "))
+        .or_else(|| slide.title.split_once(" VS "))
+    {
+        return (escape_html(a.trim()), escape_html(b.trim()));
+    }
+    if lower.contains("pros") && lower.contains("cons") {
+        return ("Advantages".to_string(), "Limitations".to_string());
+    }
+    if !left_raw.is_empty() {
+        let right = if right_raw.is_empty() {
+            "Alternative"
+        } else {
+            right_raw
+        };
+        return (escape_html(left_raw), escape_html(right));
+    }
+    (
+        "Primary approach".to_string(),
+        "Alternative approach".to_string(),
+    )
+}
+
+fn render_slides(slides: &[PresentationSlide], images: Option<&[ArtifactImageAsset]>, seed: u64) -> String {
     let assigned = resolve_layouts(slides, seed);
     let mut html = String::new();
 
@@ -1321,7 +1412,10 @@ fn render_slides(slides: &[PresentationSlide], seed: u64) -> String {
                 html.push_str(&format!(
                     r#"<div class="slide-header"><h2 class="title-gradient">{title}</h2></div>"#
                 ));
-                html.push_str(r#"<div class="image-left-grid"><div class="mock-image"></div><ul class="bullets-list">"#);
+                let img_panel = slide_image_panel(images, slide, i);
+                html.push_str(&format!(
+                    r#"<div class="image-left-grid">{img_panel}<ul class="bullets-list">"#
+                ));
                 for bullet in &bullets {
                     html.push_str(&format!("<li>{bullet}</li>"));
                 }
@@ -1377,15 +1471,20 @@ fn render_slides(slides: &[PresentationSlide], seed: u64) -> String {
                 html.push_str(&format!(
                     r#"<div class="slide-header"><h2 class="title-gradient">{title}</h2></div>"#
                 ));
+                let (left_label, right_label) = compare_side_labels(slide);
                 let mid = (bullets.len() + 1) / 2;
                 html.push_str(r#"<div class="compare-grid">"#);
-                html.push_str(r#"<div class="compare-side"><h3 class="title-gradient">Option A</h3><ul class="bullets-list">"#);
+                html.push_str(&format!(
+                    r#"<div class="compare-side"><h3 class="title-gradient">{left_label}</h3><ul class="bullets-list">"#
+                ));
                 for bullet in &bullets[..mid.min(bullets.len())] {
                     html.push_str(&format!("<li>{bullet}</li>"));
                 }
                 html.push_str("</ul></div>");
                 html.push_str(r#"<div class="compare-vs">VS</div>"#);
-                html.push_str(r#"<div class="compare-side"><h3 class="title-gradient">Option B</h3><ul class="bullets-list">"#);
+                html.push_str(&format!(
+                    r#"<div class="compare-side"><h3 class="title-gradient">{right_label}</h3><ul class="bullets-list">"#
+                ));
                 for bullet in &bullets[mid..] {
                     html.push_str(&format!("<li>{bullet}</li>"));
                 }

@@ -8,6 +8,7 @@ use std::time::Instant;
 use serde::{Deserialize, Serialize};
 
 use crate::indexer::db::{Candidate, IndexerDb};
+use crate::indexer::paths::{delete_index_paths, index_path_exists};
 use crate::registry::types::TaskResponse;
 use crate::router::tasks::grade_request;
 use crate::router::TaskRouter;
@@ -82,7 +83,16 @@ pub async fn search_ranked(
 
     // Stage 1: BM25 candidates.
     let mut candidates = db.search_candidates(query, BM25_POOL)?;
-    candidates.retain(|c| !c.is_dir); // we feed file content to the SLM, skip directories
+    candidates.retain(|c| {
+        if c.is_dir {
+            return false;
+        }
+        if index_path_exists(&c.path) {
+            return true;
+        }
+        delete_index_paths(db, std::path::Path::new(&c.path));
+        false
+    });
     if candidates.is_empty() {
         return Ok(Vec::new());
     }
@@ -143,6 +153,15 @@ pub async fn search_ranked(
         }
     }
     out.truncate(TOP_K);
+
+    // Final guard: never return paths that disappeared between BM25 and rerank.
+    out.retain(|r| {
+        if index_path_exists(&r.path) {
+            return true;
+        }
+        delete_index_paths(db, std::path::Path::new(&r.path));
+        false
+    });
 
     log::info!(
         "ambient search_ranked: '{}' -> {} results in {} ms (deadline_hit={})",

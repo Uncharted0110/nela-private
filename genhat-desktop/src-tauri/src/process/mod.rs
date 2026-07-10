@@ -103,13 +103,17 @@ impl ProcessManager {
             );
         }
 
-        // Pick the highest-priority chat model from *registered* models
+        // Pick the highest-priority llama-server chat model. Never default to
+        // auxiliary in-process models (embedder, grader, classifier, etc.).
         let default_llm_id = managed
             .values()
-            .filter(|m| m.def.tasks.contains(&TaskType::Chat))
+            .filter(|m| {
+                m.def.backend == crate::registry::types::BackendKind::LlamaServer
+                    && m.def.kind == crate::registry::types::ModelKind::ChildProcess
+                    && m.def.tasks.contains(&TaskType::Chat)
+            })
             .max_by_key(|m| m.def.priority)
             .map(|m| m.def.id.clone())
-            .or_else(|| managed.keys().next().cloned())
             .unwrap_or_default();
 
         Self {
@@ -780,6 +784,58 @@ impl ProcessManager {
 
         matches.sort_by(|a, b| b.1.cmp(&a.1));
         matches.into_iter().map(|(id, _)| id.to_string()).collect()
+    }
+
+    /// True for llama-server chat models that expose an HTTP port to the frontend.
+    pub async fn is_streaming_chat_model(&self, model_id: &str) -> bool {
+        let Some(def) = self.get_model_def(model_id).await else {
+            return false;
+        };
+        def.backend == crate::registry::types::BackendKind::LlamaServer
+            && def.kind == crate::registry::types::ModelKind::ChildProcess
+            && def.tasks.contains(&TaskType::Chat)
+    }
+
+    /// Ordered chat-model candidates for SSE streaming: optional user selection first,
+    /// then active llama-server chat model (when valid), then others by priority.
+    pub async fn streaming_chat_candidates(&self, preferred_id: Option<&str>) -> Vec<String> {
+        let mut candidates = Vec::new();
+
+        if let Some(pref) = preferred_id {
+            if self.is_streaming_chat_model(pref).await {
+                candidates.push(pref.to_string());
+            } else {
+                log::warn!(
+                    "Preferred chat model '{pref}' is not a streaming llama-server chat model"
+                );
+            }
+        }
+
+        let active = self.active_llm_id().await;
+        if !active.is_empty()
+            && self.is_streaming_chat_model(&active).await
+            && !candidates.iter().any(|id| id == &active)
+        {
+            candidates.push(active);
+        }
+
+        for id in self.find_models_for_task(&TaskType::Chat).await {
+            if self.is_streaming_chat_model(&id).await && !candidates.iter().any(|c| c == &id) {
+                candidates.push(id);
+            }
+        }
+
+        let skipped_active = self.active_llm_id().await;
+        if !skipped_active.is_empty()
+            && !candidates.iter().any(|id| id == &skipped_active)
+            && !self.is_streaming_chat_model(&skipped_active).await
+        {
+            log::warn!(
+                "Active model '{skipped_active}' is not a streaming chat LLM; using chat candidates instead"
+            );
+        }
+
+        candidates
     }
 
     /// Get a clone of the ModelDef for a specific model id.

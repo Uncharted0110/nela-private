@@ -62,6 +62,22 @@ export const COPY = {
   responseStyleCreativeHint:
     "More varied, imaginative answers. (Higher temperature and sampling.)",
 
+  // Intelligence tiers (model mode)
+  intelligenceFast: "Fast",
+  intelligenceFastHint: "Quick answers with the smallest model.",
+  intelligenceSmart: "Smart",
+  intelligenceSmartHint: "Balanced reasoning for everyday questions.",
+  intelligenceDeep: "Deep",
+  intelligenceDeepHint: "Best quality — may take longer to load.",
+  intelligenceCustom: "Custom",
+  intelligenceCustomHint: "A specific model you chose manually.",
+  intelligenceChooseModel: "Choose specific model\u2026",
+  intelligenceBackToTiers: "Back to Fast / Smart / Deep",
+  intelligenceDeepLoadWarning:
+    "Deep mode uses a large model and may take 1\u20132 minutes to load the first time. Continue?",
+  intelligenceDownloadPrompt: (name: string, sizeLabel: string) =>
+    `${name} is not installed yet${sizeLabel ? ` (${sizeLabel})` : ""}. Download it now?`,
+
   // Generic errors (Task 10)
   errorNotReady: "NELA is still getting ready. Please try again in a moment.",
   errorGeneric: "Something went wrong. Please try again.",

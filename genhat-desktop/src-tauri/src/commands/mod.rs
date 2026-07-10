@@ -14,4 +14,5 @@ pub mod playground;
 pub mod web_search;
 pub mod web_tables;
 pub mod artifact;
+pub mod artifact_images;
 pub mod indexer;

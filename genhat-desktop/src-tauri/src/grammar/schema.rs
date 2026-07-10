@@ -118,6 +118,16 @@ pub enum SlideLayout {
     Centered,
 }
 
+/// A bundled image for offline embedding in HTML / presentation artifacts.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArtifactImageAsset {
+    pub data_uri: String,
+    #[serde(default)]
+    pub caption: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alt: Option<String>,
+}
+
 /// A single slide in a presentation plan.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PresentationSlide {
@@ -127,6 +137,15 @@ pub struct PresentationSlide {
     pub bullets: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,
+    /// Index into `PresentationPlan::images` for IMAGE_LEFT (and similar) layouts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_index: Option<u32>,
+    /// Left column heading for COMPARISON slides.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub left_title: Option<String>,
+    /// Right column heading for COMPARISON slides.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub right_title: Option<String>,
 }
 
 /// A complete presentation synthesis plan emitted by the SLM.
@@ -138,6 +157,9 @@ pub struct PresentationPlan {
     pub theme: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_name: Option<String>,
+    /// Embedded images (data URIs) referenced by slide `image_index`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub images: Option<Vec<ArtifactImageAsset>>,
 }
 
 /// A complete HTML synthesis plan emitted by the SLM.
@@ -159,6 +181,15 @@ pub struct HtmlPlan {
     /// Legacy raw-HTML plans (used only when `sections` is empty).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub html: Option<String>,
+    /// Tabular source rows (first row may be headers when `headers` is absent).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_rows: Option<Vec<Vec<String>>>,
+    /// Column headers for `source_rows`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub headers: Option<Vec<String>>,
+    /// Embedded images (data URIs) referenced by section `image_index`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub images: Option<Vec<ArtifactImageAsset>>,
 }
 
 fn default_html_archetype() -> String {
@@ -178,6 +209,8 @@ pub enum HtmlSectionKind {
     Faq,
     Cta,
     Text,
+    Chart,
+    Image,
 }
 
 /// One content block in a page plan.
@@ -191,6 +224,38 @@ pub struct HtmlSection {
     pub body: Option<String>,
     #[serde(default)]
     pub items: Vec<HtmlSectionItem>,
+    /// Chart variant when `kind` is `CHART`: `bar`, `pie`, or `line`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chart_type: Option<String>,
+    /// Source column for category labels (file-backed dashboards).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label_column: Option<String>,
+    /// Source column for numeric values (file-backed dashboards).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value_column: Option<String>,
+    /// Aggregation over duplicate labels: `sum`, `count`, `avg`, `min`, `max`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aggregation: Option<String>,
+    /// Index into `HtmlPlan::images` for IMAGE sections / hero visuals.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_index: Option<u32>,
+}
+
+impl HtmlSection {
+    pub fn with_kind(kind: HtmlSectionKind) -> Self {
+        Self {
+            kind,
+            title: String::new(),
+            subtitle: None,
+            body: None,
+            items: vec![],
+            chart_type: None,
+            label_column: None,
+            value_column: None,
+            aggregation: None,
+            image_index: None,
+        }
+    }
 }
 
 /// Row/card item inside a section (menu item, feature, FAQ, stat, etc.).
