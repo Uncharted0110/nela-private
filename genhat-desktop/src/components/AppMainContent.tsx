@@ -134,7 +134,9 @@ interface AppMainContentProps {
   } | null;
   onCloseDocViewer: () => void;
   onExitPlayground?: () => void;
-  onCloseArtifact?: () => void;
+  generalGenerating?: boolean;
+  generalElapsedTime?: number;
+  generalGenerationTime?: number | null;
   networkActive?: boolean;
 }
 
@@ -227,7 +229,9 @@ export default function AppMainContent({
   docViewerFile,
   onCloseDocViewer,
   onExitPlayground,
-  onCloseArtifact,
+  generalGenerating = false,
+  generalElapsedTime = 0,
+  generalGenerationTime = null,
   networkActive = false,
 }: AppMainContentProps) {
   return (
@@ -340,7 +344,9 @@ export default function AppMainContent({
         docViewerFile={docViewerFile}
         onCloseDocViewer={onCloseDocViewer}
         onExitPlayground={onExitPlayground}
-        onCloseArtifact={onCloseArtifact}
+        generalGenerating={generalGenerating}
+        generalElapsedTime={generalElapsedTime}
+        generalGenerationTime={generalGenerationTime}
       />
     </main>
   );

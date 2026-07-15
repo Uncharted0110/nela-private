@@ -504,6 +504,10 @@ export const Api = {
     await invoke("delete_rag_document", { docId });
   },
 
+  async deleteAllRagDocuments(): Promise<number> {
+    return invoke<number>("delete_all_rag_documents");
+  },
+
   /** Read a file as base64 data URL for the frontend viewer. */
   async readFileBase64(path: string): Promise<string> {
     return invoke<string>("read_file_base64", { path });
@@ -993,14 +997,39 @@ export const Api = {
     return invoke<string>("get_schema_grammar", { schemaId });
   },
 
-  /** Generate spreadsheet artifact using the Excel sidecar. */
-  async generateSpreadsheet(plan: SpreadsheetPlan): Promise<ArtifactResult> {
+  /** Generate spreadsheet artifact (rendered in-process). */
+  async generateSpreadsheet(
+    plan: SpreadsheetPlan | Record<string, unknown>
+  ): Promise<ArtifactResult> {
     return invoke<ArtifactResult>("generate_spreadsheet", { plan });
   },
 
-  /** Generate presentation artifact using the Presentation sidecar. */
-  async generatePresentation(plan: PresentationPlan): Promise<ArtifactResult> {
+  /** Generate presentation artifact (rendered in-process). */
+  async generatePresentation(
+    plan: PresentationPlan | Record<string, unknown>
+  ): Promise<ArtifactResult> {
     return invoke<ArtifactResult>("generate_presentation", { plan });
+  },
+
+  /** Parse a NELA HTML slide deck into slides + theme. */
+  async parsePresentationDeck(path: string): Promise<{
+    theme: string | null;
+    slides: Record<string, unknown>[];
+    slideCount: number;
+    isNelaDeck: boolean;
+  }> {
+    return invoke("parse_presentation_deck", { request: { path } });
+  },
+
+  /** Append slides or replace a NELA HTML deck (parse → edit → re-render). */
+  async editPresentationDeck(request: {
+    path: string;
+    appendSlides?: Record<string, unknown>[];
+    insertAt?: number;
+    replacementPlan?: Record<string, unknown>;
+    outputName?: string;
+  }): Promise<ArtifactResult> {
+    return invoke<ArtifactResult>("edit_presentation_deck", { request });
   },
 
   /** Generate HTML artifact using the HTML sidecar. */
@@ -1009,8 +1038,14 @@ export const Api = {
   },
 
   /** Parse cells/rows of spreadsheet files using Calamine/CSV. */
-  async parseSpreadsheetData(path: string): Promise<{ sheet_name: string; rows: string[][] }> {
-    return invoke<{ sheet_name: string; rows: string[][] }>("parse_spreadsheet_data", { path });
+  async parseSpreadsheetData(
+    path: string,
+    maxRows?: number
+  ): Promise<{ sheet_name: string; rows: string[][]; truncated?: boolean }> {
+    return invoke<{ sheet_name: string; rows: string[][]; truncated?: boolean }>(
+      "parse_spreadsheet_data",
+      { path, maxRows: maxRows ?? null }
+    );
   },
 
   /** Download a remote image as a base64 data URI for artifact embedding. */
@@ -1053,6 +1088,16 @@ export const Api = {
   /** Reveal file in OS file explorer and select it (P4 follow-up) */
   async revealInExplorer(path: string): Promise<void> {
     await invoke("reveal_in_explorer", { path });
+  },
+
+  /** Open a file with the OS default application. */
+  async openPathInOs(path: string): Promise<void> {
+    await invoke("open_path_in_os", { path });
+  },
+
+  /** Copy a file to a new absolute path (artifact download). */
+  async copyFileToPath(source: string, dest: string): Promise<void> {
+    await invoke("copy_file_to_path", { source, dest });
   },
 };
 

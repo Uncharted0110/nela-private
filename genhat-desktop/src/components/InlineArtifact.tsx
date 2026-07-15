@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { openPath } from "@tauri-apps/plugin-opener";
-import { FileText, Eye, EyeOff, Play, AlertCircle, Download, FileType, Presentation, Loader2 } from "lucide-react";
+import { FileText, Eye, EyeOff, Play, AlertCircle, Download, FileType, Presentation, Loader2, FileCode, Table2 } from "lucide-react";
 import { type PipelineStageKind } from "./ProgressSlate";
 import DiffPatchOverlay from "./DiffPatchOverlay";
+import GenerationProgressLabel from "./GenerationProgressLabel";
 import { Api } from "../api";
-import { exportPresentation, type DeckExportFormat } from "../app/exportDeck";
+import { downloadArtifactCopy, exportArtifactDeck } from "../app/artifactDownload";
+import type { DeckExportFormat } from "../app/exportDeck";
 import { prepareArtifactHtmlPreview } from "../app/artifactHtmlPreview";
+import { openArtifactInOs } from "../app/openArtifact";
 
 export interface InlineArtifactProps {
   artifactPath?: string | null;
@@ -14,6 +16,8 @@ export interface InlineArtifactProps {
   /** Optional error detail (shown when the stage is "Error"). */
   errorMessage?: string | null;
 }
+
+type ExportKind = DeckExportFormat | "html" | "copy";
 
 const STAGE_LABELS: Record<PipelineStageKind, { label: string; desc: string; icon: string }> = {
   IntentLocked: { label: "Intent Locked", desc: "Analyzing request...", icon: "🔒" },
@@ -32,35 +36,6 @@ const STAGE_ORDER: PipelineStageKind[] = [
   "LivePreview",
 ];
 
-const SPINNER_VERBS: Record<PipelineStageKind, string[]> = {
-  IntentLocked: [
-    "Analyzing request...",
-    "Ruminating on prompt...",
-    "Locking in intent...",
-    "Forging plan...",
-  ],
-  SearchingDisk: [
-    "Locating dataset files...",
-    "Scanning local indices...",
-    "Querying file database...",
-    "Retrieving system context...",
-  ],
-  CrunchingMetrics: [
-    "Analyzing structure...",
-    "Synthesizing data...",
-    "Crunching metrics...",
-    "Computing aggregates...",
-  ],
-  WritingCode: [
-    "Writing code / layout...",
-    "Forging layouts...",
-    "Polishing cells...",
-    "Formatting stylesheet...",
-  ],
-  LivePreview: ["Artifact generated successfully."],
-  Error: ["Error generating artifact."],
-};
-
 export default function InlineArtifact({ artifactPath, artifactStage, errorMessage }: InlineArtifactProps) {
   const [stage, setStage] = useState<PipelineStageKind>(artifactStage || "IntentLocked");
   const [currentPath, setCurrentPath] = useState<string | null>(artifactPath ?? null);
@@ -69,12 +44,13 @@ export default function InlineArtifact({ artifactPath, artifactStage, errorMessa
   const [showPreview, setShowPreview] = useState(false);
   const [artifactHtml, setArtifactHtml] = useState<string | null>(null);
   const [downloadMenuOpen, setDownloadMenuOpen] = useState(false);
-  const [exporting, setExporting] = useState<DeckExportFormat | null>(null);
+  const [exporting, setExporting] = useState<ExportKind | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
+  const [openError, setOpenError] = useState<string | null>(null);
+  const [stageElapsedSec, setStageElapsedSec] = useState(0);
 
   const [spreadsheetData, setSpreadsheetData] = useState<{ sheetName: string; rows: string[][] } | null>(null);
   const [loadingSpreadsheet, setLoadingSpreadsheet] = useState(false);
-  const [verbIndex, setVerbIndex] = useState(0);
 
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
@@ -89,16 +65,15 @@ export default function InlineArtifact({ artifactPath, artifactStage, errorMessa
     setCurrentPath(artifactPath ?? null);
   }, [artifactPath]);
 
-  // Dynamic spinner verb cycler
   useEffect(() => {
-    setVerbIndex(0);
-  }, [stage]);
-
-  useEffect(() => {
-    if (stage === "LivePreview" || stage === "Error") return;
-    const interval = setInterval(() => {
-      setVerbIndex((prev) => (prev + 1) % (SPINNER_VERBS[stage]?.length || 1));
-    }, 1500);
+    if (stage === "LivePreview" || stage === "Error") {
+      setStageElapsedSec(0);
+      return;
+    }
+    const started = Date.now();
+    const tick = () => setStageElapsedSec((Date.now() - started) / 1000);
+    tick();
+    const interval = setInterval(tick, 100);
     return () => clearInterval(interval);
   }, [stage]);
 
@@ -252,8 +227,42 @@ export default function InlineArtifact({ artifactPath, artifactStage, errorMessa
   const filename = currentPath ? currentPath.split(/[/\\]/).pop() : "artifact";
   const isHtml = currentPath ? (currentPath.endsWith(".html") || currentPath.endsWith(".htm")) : false;
   const isSpreadsheet = currentPath ? (currentPath.endsWith(".xlsx") || currentPath.endsWith(".xls") || currentPath.endsWith(".csv")) : false;
+  const isNativePptx = currentPath ? (currentPath.endsWith(".pptx") || currentPath.endsWith(".ppt")) : false;
 
-  // Load spreadsheet data via Tauri command
+  // Open file in OS default app (browser, Excel, PowerPoint, …)
+  const handleOpenFile = async () => {
+    if (!currentPath) return;
+    setOpenError(null);
+    try {
+      await openArtifactInOs(currentPath);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setOpenError(msg);
+      console.error("Failed to open artifact:", err);
+    }
+  };
+
+  const handleExport = useCallback(
+    async (kind: ExportKind) => {
+      if (!currentPath || exporting) return;
+      setDownloadMenuOpen(false);
+      setExportError(null);
+      setExporting(kind);
+      try {
+        if (kind === "html" || kind === "copy") {
+          await downloadArtifactCopy(currentPath);
+        } else {
+          await exportArtifactDeck(currentPath, kind);
+        }
+      } catch (err: unknown) {
+        console.error(`Failed to export ${kind}:`, err);
+        setExportError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setExporting(null);
+      }
+    },
+    [currentPath, exporting]
+  );
   useEffect(() => {
     if (stage === "LivePreview" && isSpreadsheet && currentPath) {
       setLoadingSpreadsheet(true);
@@ -275,31 +284,6 @@ export default function InlineArtifact({ artifactPath, artifactStage, errorMessa
     }
   }, [stage, isSpreadsheet, currentPath]);
 
-  // Open file in OS
-  const handleOpenFile = () => {
-    if (!currentPath) return;
-    openPath(currentPath).catch((err) => console.error("Failed to open file:", err));
-  };
-
-  // Export the deck to PDF/PPTX at a user-chosen path.
-  const handleExport = useCallback(
-    async (format: DeckExportFormat) => {
-      if (!currentPath || exporting) return;
-      setDownloadMenuOpen(false);
-      setExportError(null);
-      setExporting(format);
-      try {
-        await exportPresentation(currentPath, format);
-      } catch (err: any) {
-        console.error(`Failed to export ${format}:`, err);
-        setExportError(err?.message || String(err));
-      } finally {
-        setExporting(null);
-      }
-    },
-    [currentPath, exporting]
-  );
-
   // Close the download menu when clicking elsewhere.
   useEffect(() => {
     if (!downloadMenuOpen) return;
@@ -312,15 +296,20 @@ export default function InlineArtifact({ artifactPath, artifactStage, errorMessa
   if (stage !== "LivePreview" && stage !== "Error") {
     const stageInfo = STAGE_LABELS[stage] || { label: "Processing", desc: "Working...", icon: "⚙️" };
     const currentIdx = STAGE_ORDER.indexOf(stage);
-    const activeVerb = SPINNER_VERBS[stage]?.[verbIndex] || stageInfo.desc;
 
     return (
-      <div className="w-full rounded-xl bg-void-800/40 border border-neon/20 p-4 shadow-lg backdrop-blur-sm animate-pulse">
+      <div className="w-full rounded-xl border border-neon/20 p-4 shadow-lg backdrop-blur-sm nela-artifact-progress-card">
         <div className="flex items-center gap-3 mb-3">
           <span className="text-xl leading-none">{stageInfo.icon}</span>
           <div className="flex-1 min-w-0">
             <div className="text-[0.84rem] font-semibold text-txt">{stageInfo.label}</div>
-            <div className="text-[0.72rem] text-txt-muted truncate">{activeVerb}</div>
+            <GenerationProgressLabel
+              active
+              mode="artifact"
+              elapsedSec={stageElapsedSec}
+              stage={stage}
+              showEta
+            />
           </div>
         </div>
 
@@ -412,60 +401,110 @@ export default function InlineArtifact({ artifactPath, artifactStage, errorMessa
             </button>
           )}
 
-          {isHtml && (
-            <div className="relative">
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setExportError(null);
-                  setDownloadMenuOpen((o) => !o);
-                }}
-                disabled={!!exporting}
-                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[0.74rem] bg-glass-bg text-txt-secondary border border-glass-border transition-all duration-150 hover:border-neon hover:text-txt disabled:opacity-60 disabled:cursor-not-allowed"
-                title="Download as PDF or PowerPoint"
-              >
-                {exporting ? (
-                  <Loader2 size={13} className="animate-spin" />
-                ) : (
-                  <Download size={13} />
-                )}
-                <span>{exporting ? `Exporting ${exporting.toUpperCase()}…` : "Download"}</span>
-              </button>
+          <div className="relative">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setExportError(null);
+                setDownloadMenuOpen((o) => !o);
+              }}
+              disabled={!!exporting}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[0.74rem] bg-glass-bg text-txt-secondary border border-glass-border transition-all duration-150 hover:border-neon hover:text-txt disabled:opacity-60 disabled:cursor-not-allowed"
+              title="Download artifact"
+            >
+              {exporting ? (
+                <Loader2 size={13} className="animate-spin" />
+              ) : (
+                <Download size={13} />
+              )}
+              <span>
+                {exporting
+                  ? exporting === "html"
+                    ? "Saving HTML…"
+                    : exporting === "copy"
+                      ? "Saving…"
+                      : `Exporting ${exporting.toUpperCase()}…`
+                  : "Download"}
+              </span>
+            </button>
 
-              {downloadMenuOpen && !exporting && (
-                <div
-                  onClick={(e) => e.stopPropagation()}
-                  className="absolute right-0 top-full mt-1 z-20 min-w-[180px] rounded-lg bg-void-900 border border-glass-border shadow-xl overflow-hidden"
-                >
+            {downloadMenuOpen && !exporting && (
+              <div
+                onClick={(e) => e.stopPropagation()}
+                className="absolute right-0 top-full mt-1 z-20 min-w-[200px] rounded-lg bg-void-900 border border-glass-border shadow-xl overflow-hidden"
+              >
+                {isHtml && (
+                  <>
+                    <button
+                      onClick={() => handleExport("html")}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-[0.76rem] text-txt-secondary hover:bg-void-800 hover:text-txt transition-colors"
+                    >
+                      <FileCode size={14} className="text-neon" />
+                      <span>Download as HTML</span>
+                    </button>
+                    <button
+                      onClick={() => handleExport("pdf")}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-[0.76rem] text-txt-secondary hover:bg-void-800 hover:text-txt transition-colors border-t border-glass-border"
+                    >
+                      <FileType size={14} className="text-neon" />
+                      <span>Download as PDF</span>
+                    </button>
+                    <button
+                      onClick={() => handleExport("pptx")}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-[0.76rem] text-txt-secondary hover:bg-void-800 hover:text-txt transition-colors border-t border-glass-border"
+                    >
+                      <Presentation size={14} className="text-neon" />
+                      <span>Download as PowerPoint</span>
+                    </button>
+                  </>
+                )}
+                {isSpreadsheet && (
                   <button
-                    onClick={() => handleExport("pdf")}
+                    onClick={() => handleExport("copy")}
                     className="w-full flex items-center gap-2 px-3 py-2 text-[0.76rem] text-txt-secondary hover:bg-void-800 hover:text-txt transition-colors"
                   >
-                    <FileType size={14} className="text-neon" />
-                    <span>Download as PDF</span>
+                    <Table2 size={14} className="text-neon" />
+                    <span>Download spreadsheet</span>
                   </button>
+                )}
+                {isNativePptx && !isHtml && (
                   <button
-                    onClick={() => handleExport("pptx")}
-                    className="w-full flex items-center gap-2 px-3 py-2 text-[0.76rem] text-txt-secondary hover:bg-void-800 hover:text-txt transition-colors border-t border-glass-border"
+                    onClick={() => handleExport("copy")}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-[0.76rem] text-txt-secondary hover:bg-void-800 hover:text-txt transition-colors"
                   >
                     <Presentation size={14} className="text-neon" />
-                    <span>Download as PowerPoint</span>
+                    <span>Download presentation</span>
                   </button>
-                </div>
-              )}
-            </div>
-          )}
+                )}
+                {!isHtml && !isSpreadsheet && !isNativePptx && (
+                  <button
+                    onClick={() => handleExport("copy")}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-[0.76rem] text-txt-secondary hover:bg-void-800 hover:text-txt transition-colors"
+                  >
+                    <Download size={14} className="text-neon" />
+                    <span>Download file</span>
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
 
           <button
-            onClick={handleOpenFile}
+            onClick={() => void handleOpenFile()}
             className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[0.74rem] bg-neon text-void-900 font-medium border border-neon/50 transition-all duration-150 hover:bg-neon-hover"
-            title="Open file in external application"
+            title="Open in your default app (browser, Excel, PowerPoint, …)"
           >
             <Play size={11} fill="currentColor" />
             <span>Open File</span>
           </button>
         </div>
       </div>
+
+      {openError && (
+        <div className="px-3.5 py-2 text-[0.72rem] text-amber-200 bg-amber-500/10 border-b border-amber-500/20">
+          Could not open file: {openError}
+        </div>
+      )}
 
       {exportError && (
         <div className="px-3.5 py-2 text-[0.72rem] text-red-300 bg-red-500/10 border-b border-red-500/20">

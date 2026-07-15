@@ -63,4 +63,14 @@ impl IntentDecision {
             confidence: 1.0,
         }
     }
+
+    pub fn patch(artifact_path: impl Into<String>) -> Self {
+        Self {
+            kind: IntentKind::Patch {
+                artifact_path: artifact_path.into(),
+            },
+            tier: 0,
+            confidence: 1.0,
+        }
+    }
 }

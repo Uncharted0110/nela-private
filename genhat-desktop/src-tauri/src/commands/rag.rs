@@ -326,6 +326,15 @@ pub async fn delete_rag_document(
     pipeline.delete_document(doc_id).await
 }
 
+/// Delete every document in the active workspace knowledge base.
+#[tauri::command]
+pub async fn delete_all_rag_documents(
+    state: State<'_, RagPipelineState>,
+) -> Result<usize, String> {
+    let pipeline = state.active_pipeline()?;
+    pipeline.delete_all_documents().await
+}
+
 /// Manually trigger a round of background enrichment.
 #[tauri::command]
 pub async fn enrich_rag_documents(

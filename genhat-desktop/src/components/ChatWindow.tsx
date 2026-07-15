@@ -13,6 +13,15 @@ import { friendlyError } from "../app/friendlyError";
 import { useAdvancedMode } from "../hooks/useAdvancedMode";
 import { useSlashCommandInput } from "../hooks/useSlashCommandInput";
 import SlashCommandMenu from "./SlashCommandMenu";
+import GenerationProgressLabel from "./GenerationProgressLabel";
+import type { GenerationProgressMode } from "../app/generationProgress";
+
+function chatModeToProgressMode(mode: string): GenerationProgressMode {
+  if (mode === "vision") return "vision";
+  if (mode === "rag") return "rag";
+  if (mode === "mindmap") return "mindmap";
+  return "chat";
+}
 
 const MODE_ICON_MAP: Record<ChatMode, React.ElementType> = {
   text: MessageSquare,
@@ -1073,9 +1082,12 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
               {streamingContent ? (
                 <MarkdownRenderer content={streamingContent} />
               ) : !advanced || !streamingThinking ? (
-                <div className="typing-dots flex gap-1.5 py-2">
-                  <span></span><span></span><span></span>
-                </div>
+                <GenerationProgressLabel
+                  active
+                  mode={chatModeToProgressMode(chatMode)}
+                  elapsedSec={generalElapsedTime}
+                  showEta
+                />
               ) : null}
             </div>
           </div>
@@ -1091,15 +1103,13 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
 
         {/* Response Time Timer - Chat/Vision/RAG Modes */}
         {chatMode !== "audio" && generalGenerating && (
-          <div className="flex items-center gap-2 py-1.5 px-3 rounded-full bg-neon-subtle border border-neon/20 max-w-3xl mx-auto text-sm text-txt-secondary">
-            <div className="tts-timer-pulse" />
-            <span>
-              {chatMode === "vision" && "Analyzing image... "}
-              {chatMode === "rag" && "Processing query... "}
-              {chatMode === "text" && "Generating response... "}
-              {chatMode === "mindmap" && "Building mindmap... "}
-              <span className="text-neon font-semibold tabular-nums">{generalElapsedTime.toFixed(1)}s</span>
-            </span>
+          <div className="max-w-3xl mx-auto w-full px-2 py-2 rounded-xl border border-neon/20 nela-artifact-progress-card">
+            <GenerationProgressLabel
+              active
+              mode={chatModeToProgressMode(chatMode)}
+              elapsedSec={generalElapsedTime}
+              showEta
+            />
           </div>
         )}
 

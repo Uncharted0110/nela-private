@@ -3,12 +3,11 @@
 //! Exposes the MCP coordinator and intent resolver to the frontend.
 
 use crate::intent::{IntentDecision, IntentResolverState};
-use crate::mcp::coordinator::McpCoordinatorState;
-use crate::mcp::types::{PipelineStage, ToolCall};
-use crate::grammar::schema::{SpreadsheetPlan, PresentationPlan, HtmlPlan};
+use crate::mcp::types::PipelineStage;
+use crate::grammar::schema::HtmlPlan;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use tauri::{AppHandle, Emitter, State, Manager};
+use tauri::{AppHandle, Emitter, State};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DTOs
@@ -49,60 +48,165 @@ pub async fn resolve_intent(
         .await)
 }
 
-/// Generate a spreadsheet artifact from a `SpreadsheetPlan`.
-///
-/// Emits `pipeline-stage` events to the frontend during execution so the
-/// `ProgressSlate` component can show live progress.
+/// Generate a spreadsheet artifact from a plan object (tolerant of minor schema drift).
 #[tauri::command]
 pub async fn generate_spreadsheet(
-    plan: SpreadsheetPlan,
+    plan: serde_json::Value,
     app: AppHandle,
-    coordinator: State<'_, McpCoordinatorState>,
 ) -> Result<ArtifactResult, String> {
     emit_stage(&app, PipelineStage::WritingCode);
 
-    let app_cache_dir = app.path().app_cache_dir().unwrap_or_else(|_| std::env::temp_dir());
-    let call = ToolCall::Excel(plan);
-    let result = coordinator.0.invoke(call, &app_cache_dir)?;
+    let plan = crate::grammar::plan_normalize::parse_spreadsheet_plan(plan)?;
+    let (path, warning) = crate::spreadsheet::write_spreadsheet_plan(plan)?;
 
     emit_stage(
         &app,
         PipelineStage::LivePreview {
-            path: result.path.clone(),
+            path: path.to_string_lossy().to_string(),
         },
     );
 
     Ok(ArtifactResult {
-        path: result.path,
-        kind: result.kind,
-        warning: result.warning,
+        path: path.to_string_lossy().to_string(),
+        kind: "xlsx".to_string(),
+        warning,
     })
 }
 
-/// Generate a presentation artifact from a `PresentationPlan`.
+/// Generate a presentation artifact from a plan object (tolerant of minor schema drift).
 #[tauri::command]
 pub async fn generate_presentation(
-    plan: PresentationPlan,
+    plan: serde_json::Value,
     app: AppHandle,
-    coordinator: State<'_, McpCoordinatorState>,
 ) -> Result<ArtifactResult, String> {
     emit_stage(&app, PipelineStage::WritingCode);
 
-    let app_cache_dir = app.path().app_cache_dir().unwrap_or_else(|_| std::env::temp_dir());
-    let call = ToolCall::Presentation(plan);
-    let result = coordinator.0.invoke(call, &app_cache_dir)?;
+    let prompt = plan
+        .get("_prompt")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let mut plan_value = plan;
+    if let Some(obj) = plan_value.as_object_mut() {
+        obj.remove("_prompt");
+    }
+    let plan = crate::grammar::plan_normalize::parse_presentation_plan(plan_value, &prompt)?;
+    let path = crate::presentation::write_presentation_plan(plan)?;
 
     emit_stage(
         &app,
         PipelineStage::LivePreview {
-            path: result.path.clone(),
+            path: path.to_string_lossy().to_string(),
         },
     );
 
     Ok(ArtifactResult {
-        path: result.path,
-        kind: result.kind,
-        warning: result.warning,
+        path: path.to_string_lossy().to_string(),
+        kind: "html".to_string(),
+        warning: None,
+    })
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ParsePresentationDeckRequest {
+    pub path: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ParsedPresentationDeck {
+    pub theme: Option<String>,
+    pub slides: Vec<serde_json::Value>,
+    pub slide_count: usize,
+    pub is_nela_deck: bool,
+}
+
+/// Parse a NELA HTML slide deck into a compact plan (for edit flows).
+#[tauri::command]
+pub fn parse_presentation_deck(
+    request: ParsePresentationDeckRequest,
+) -> Result<ParsedPresentationDeck, String> {
+    let html = std::fs::read_to_string(&request.path)
+        .map_err(|e| format!("Failed to read presentation: {e}"))?;
+    let is_nela_deck = crate::presentation::is_nela_presentation_html(&html);
+    let plan = crate::presentation::parse_presentation_html(&html)?;
+    let slides: Vec<serde_json::Value> = plan
+        .slides
+        .iter()
+        .map(serde_json::to_value)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("Failed to serialize slides: {e}"))?;
+    let slide_count = slides.len();
+    Ok(ParsedPresentationDeck {
+        theme: plan.theme,
+        slides,
+        slide_count,
+        is_nela_deck,
+    })
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EditPresentationDeckRequest {
+    pub path: String,
+    #[serde(default)]
+    pub append_slides: Vec<crate::grammar::schema::PresentationSlide>,
+    /// Zero-based index to insert new slides. When omitted, slides append at the end.
+    #[serde(default)]
+    pub insert_at: Option<usize>,
+    #[serde(default)]
+    pub replacement_plan: Option<serde_json::Value>,
+    #[serde(default)]
+    pub output_name: Option<String>,
+}
+
+/// Edit an existing NELA HTML deck (append slides or apply a full replacement plan).
+#[tauri::command]
+pub async fn edit_presentation_deck(
+    request: EditPresentationDeckRequest,
+    app: AppHandle,
+) -> Result<ArtifactResult, String> {
+    emit_stage(&app, PipelineStage::WritingCode);
+
+    let out_path = if let Some(plan_value) = request.replacement_plan {
+        let plan: crate::grammar::schema::PresentationPlan =
+            serde_json::from_value(plan_value)
+                .map_err(|e| format!("Invalid replacement plan: {e}"))?;
+        crate::presentation::rewrite_deck_from_plan(
+            &request.path,
+            plan,
+            request.output_name,
+        )?
+    } else if !request.append_slides.is_empty() {
+        let html = std::fs::read_to_string(&request.path)
+            .map_err(|e| format!("Failed to read presentation: {e}"))?;
+        let existing = crate::presentation::parse_presentation_html(&html)?;
+        let insert_at = request
+            .insert_at
+            .unwrap_or(existing.slides.len())
+            .min(existing.slides.len());
+        crate::presentation::insert_slides_to_deck(
+            &request.path,
+            request.append_slides,
+            insert_at,
+            request.output_name,
+        )?
+    } else {
+        return Err("No slides to append and no replacement plan provided".to_string());
+    };
+
+    emit_stage(
+        &app,
+        PipelineStage::LivePreview {
+            path: out_path.to_string_lossy().to_string(),
+        },
+    );
+
+    Ok(ArtifactResult {
+        path: out_path.to_string_lossy().to_string(),
+        kind: "html".to_string(),
+        warning: None,
     })
 }
 
@@ -181,29 +285,44 @@ pub fn get_schema_grammar(schema_id: String) -> Result<String, String> {
 }
 
 /// Parse spreadsheet file cells/rows using calamine or csv parsing library.
+///
+/// When `max_rows` is set, only the header plus that many data rows are returned
+/// (keeps memory bounded for large workbooks during edit flows).
 #[tauri::command]
-pub fn parse_spreadsheet_data(path: String) -> Result<serde_json::Value, String> {
+pub fn parse_spreadsheet_data(
+    path: String,
+    max_rows: Option<usize>,
+) -> Result<serde_json::Value, String> {
+    let row_cap = max_rows.filter(|n| *n > 0);
+
     if path.ends_with(".csv") {
         let mut reader = csv::Reader::from_path(&path)
             .map_err(|e| format!("Failed to open CSV: {e}"))?;
         let mut rows = Vec::new();
-        
-        // Read headers
+        let mut data_rows = 0usize;
+
         if let Ok(headers) = reader.headers() {
             let header_row: Vec<String> = headers.iter().map(|s| s.to_string()).collect();
             if !header_row.is_empty() {
                 rows.push(header_row);
             }
         }
-        
+
         for result in reader.records() {
+            if let Some(cap) = row_cap {
+                if data_rows >= cap {
+                    break;
+                }
+            }
             let record = result.map_err(|e| format!("Failed to read CSV record: {e}"))?;
             let row_data: Vec<String> = record.iter().map(|s| s.to_string()).collect();
             rows.push(row_data);
+            data_rows += 1;
         }
         return Ok(serde_json::json!({
             "sheet_name": "CSV",
             "rows": rows,
+            "truncated": row_cap.is_some_and(|cap| data_rows >= cap),
         }));
     }
 
@@ -211,26 +330,44 @@ pub fn parse_spreadsheet_data(path: String) -> Result<serde_json::Value, String>
     let mut workbook = open_workbook_auto(&path)
         .map_err(|e| format!("Failed to open spreadsheet: {e}"))?;
 
-    let sheet_name = workbook.sheet_names()
+    let sheet_name = workbook
+        .sheet_names()
         .first()
         .cloned()
         .ok_or_else(|| "No sheets found in workbook".to_string())?;
 
-    let range = workbook.worksheet_range(&sheet_name)
+    let range = workbook
+        .worksheet_range(&sheet_name)
         .map_err(|e| format!("Failed to read sheet range: {e}"))?;
 
     let mut rows = Vec::new();
+    let mut data_rows = 0usize;
     for row in range.rows() {
+        if rows.is_empty() {
+            let mut row_data = Vec::new();
+            for cell in row {
+                row_data.push(cell_to_string(cell));
+            }
+            rows.push(row_data);
+            continue;
+        }
+        if let Some(cap) = row_cap {
+            if data_rows >= cap {
+                break;
+            }
+        }
         let mut row_data = Vec::new();
         for cell in row {
             row_data.push(cell_to_string(cell));
         }
         rows.push(row_data);
+        data_rows += 1;
     }
 
     Ok(serde_json::json!({
         "sheet_name": sheet_name,
         "rows": rows,
+        "truncated": row_cap.is_some_and(|cap| data_rows >= cap),
     }))
 }
 
@@ -252,6 +389,13 @@ pub async fn apply_diff_patch(path: String, patch: String) -> Result<String, Str
         .map_err(|e| format!("Failed to read file: {e}"))?;
 
     let patched = apply_patch(&original, &patch)?;
+
+    if patched == original {
+        return Err(
+            "Patch did not change the file — try rephrasing the edit or use a more specific instruction"
+                .to_string(),
+        );
+    }
 
     std::fs::write(&path, &patched)
         .map_err(|e| format!("Failed to write patched file: {e}"))?;

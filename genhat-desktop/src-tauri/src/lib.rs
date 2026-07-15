@@ -38,6 +38,8 @@ pub mod indexer;
 pub mod security;
 pub mod telemetry;
 pub mod html;
+pub mod presentation;
+pub mod spreadsheet;
 
 #[cfg(windows)]
 pub mod windows_spawn;

@@ -170,12 +170,9 @@ function App() {
   const [selectedVisionModel, setSelectedVisionModel] = useState("");
 
   // ── Response time tracking for all modes ────────────────────────────────────
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const [_generalElapsedTime, setGeneralElapsedTime] = useState(0);
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const [_generalGenerationTime, setGeneralGenerationTime] = useState<number | null>(null);
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const [_generalGenerating, setGeneralGenerating] = useState(false);
+  const [generalElapsedTime, setGeneralElapsedTime] = useState(0);
+  const [generalGenerationTime, setGeneralGenerationTime] = useState<number | null>(null);
+  const [generalGenerating, setGeneralGenerating] = useState(false);
   const generalIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // ── Multi-session chat state ───────────────────────────────────────────────
@@ -2028,6 +2025,21 @@ function App() {
     }
   };
 
+  const deleteAllRagDocs = async () => {
+    if (ragDocs.length === 0) return;
+    if (!window.confirm(COPY.libraryDeleteAllConfirm)) return;
+
+    try {
+      setPdfViewerData(null);
+      setDocViewerFile(null);
+      await Api.deleteAllRagDocuments();
+      await loadRagDocs();
+    } catch (e) {
+      console.error(e);
+      showError(`Delete all failed: ${e}`);
+    }
+  };
+
   // ── Viewer handlers ────────────────────────────────────────────────────────
 
   /** Open the right viewer for any supported document format. */
@@ -2310,12 +2322,6 @@ function App() {
     updateSession(activeSession.id, (prev) => ({
       messages: prev.messages.map((m, i) => i === msgIdx ? { ...m, audioSaved: true } : m)
     }));
-  };
-
-  // Handler to close artifact panel
-  const handleCloseArtifact = () => {
-    if (!activeSession) return;
-    updateSession(activeSession.id, { artifactVisible: false });
   };
 
   const handleManualContextCompaction = useCallback(async () => {
@@ -2612,7 +2618,9 @@ function App() {
         docViewerFile={docViewerFile}
         onCloseDocViewer={closeDocViewer}
         onExitPlayground={handleExitPlayground}
-        onCloseArtifact={handleCloseArtifact}
+        generalGenerating={generalGenerating}
+        generalElapsedTime={generalElapsedTime}
+        generalGenerationTime={generalGenerationTime}
         networkActive={networkActive}
       />
 
@@ -2659,6 +2667,9 @@ function App() {
         onOpenDocViewer={openDocViewer}
         onDeleteRagDoc={(docId) => {
           void deleteRagDoc(docId);
+        }}
+        onDeleteAllRagDocs={() => {
+          void deleteAllRagDocs();
         }}
       />
     </div>

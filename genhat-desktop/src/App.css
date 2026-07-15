@@ -391,6 +391,53 @@
   animation: pulse-glow 1.5s ease-in-out infinite;
 }
 
+.nela-gradient-verb {
+  background: linear-gradient(
+    90deg,
+    var(--color-neon),
+    #a855f7,
+    #f472b6,
+    #fbbf24,
+    var(--color-neon)
+  );
+  background-size: 300% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: nela-gradient-shift 5s ease-in-out infinite;
+}
+
+@keyframes nela-gradient-shift {
+  0%,
+  100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+}
+
+.nela-artifact-progress-card {
+  background: linear-gradient(
+    135deg,
+    rgba(0, 212, 255, 0.06),
+    rgba(168, 85, 247, 0.08),
+    rgba(244, 114, 182, 0.05)
+  );
+  background-size: 200% 200%;
+  animation: nela-artifact-shimmer 6s ease infinite;
+}
+
+@keyframes nela-artifact-shimmer {
+  0%,
+  100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+}
+
 
 /* ══════════════════════════════════════════════════════════════════════════════
    SEND BUTTON HOVER PULSE

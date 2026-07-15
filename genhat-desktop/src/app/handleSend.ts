@@ -20,6 +20,10 @@ import type {
 import type { PipelineStageKind } from "../components/ProgressSlate";
 import { extractTaskText, parseMindMapGraph } from "./mindmapUtils";
 import { parseArtifactPlanJson, parseHtmlPlanJson } from "./artifactPlanJson";
+import {
+  normalizePresentationPlan,
+  normalizeSpreadsheetPlan,
+} from "./artifactPlanNormalize";
 import { deriveTitleFromMessage } from "./sessionUtils";
 import {
   applyCompactionResultToSession,
@@ -31,6 +35,19 @@ import {
   resolveReservedOutputTokens,
   toContextMessages,
 } from "./contextCompaction";
+import {
+  extractAmbientSearchQuery,
+  hasDocumentFileIntent,
+  hasSearchKeywords,
+  selectAmbientResultsForInjection,
+  shouldRunAmbientFileSearch,
+} from "./ambientSearch";
+import {
+  formatAmbientFileSection,
+  hasLocalFilePathReference,
+  loadAmbientFileBody,
+  MAX_ARTIFACT_SOURCE_CHARS,
+} from "./ambientFileContent";
 import { parseSlashCommands, slashPromptForSend } from "./slashCommands";
 import {
   HTML_PLAN_MAX_TOKENS,
@@ -47,6 +64,22 @@ import {
   spreadsheetFromParsed,
   type SpreadsheetData,
 } from "./htmlChartData";
+import {
+  artifactKindFromPath,
+  buildSpreadsheetEditSample,
+  editedOutputName,
+  findSessionArtifactPath,
+  isEditableArtifactPath,
+  isNelaPresentationDeckHtml,
+  isPresentationSlideAddRequest,
+  matchesArtifactEditIntent,
+  MAX_EDIT_SPREADSHEET_ROWS,
+  MAX_PATCH_SOURCE_CHARS,
+  parseAddSlideFromPrompt,
+  parseSlideInsertIndex,
+  truncateForPatchEdit,
+  type ArtifactEditKind,
+} from "./artifactEdit";
 import {
   attachImagesToHtmlPlan,
   attachImagesToPresentationPlan,
@@ -210,8 +243,36 @@ export async function executeHandleSend(
 
   // ── Intent Resolution (Revamp P3/P5) ──────────────────────────────────────
   if (ctx.chatMode === "text") {
+    const sessionArtifactPath = findSessionArtifactPath(session);
+    const attachedEditable = promptDocumentPaths.filter(isEditableArtifactPath);
+    const editTargetPath =
+      attachedEditable[0] ??
+      sessionArtifactPath ??
+      null;
+
+    if (
+      matchesArtifactEditIntent(promptText, {
+        artifactPath: editTargetPath,
+        attachedPaths: promptDocumentPaths,
+      })
+    ) {
+      await handleArtifactEdit(
+        promptText,
+        editTargetPath ?? "",
+        sid,
+        ctx,
+        ctrl,
+        { attachedPaths: promptDocumentPaths }
+      );
+      return;
+    }
+
     try {
-      const intent = await Api.resolveIntent(promptText);
+      const intentExtra: Record<string, string> = {};
+      if (sessionArtifactPath) {
+        intentExtra.artifact_path = sessionArtifactPath;
+      }
+      const intent = await Api.resolveIntent(promptText, intentExtra);
       resolvedIntentKind = intent.kind.kind;
       if (intent.kind.kind === "Artifact") {
         const { tool, schema_id } = intent.kind;
@@ -228,7 +289,14 @@ export async function executeHandleSend(
       }
       if (intent.kind.kind === "Patch") {
         const { artifact_path } = intent.kind;
-        await handlePatchApplication(promptText, artifact_path || "", sid, ctx, ctrl);
+        await handleArtifactEdit(
+          promptText,
+          artifact_path || sessionArtifactPath || "",
+          sid,
+          ctx,
+          ctrl,
+          { attachedPaths: promptDocumentPaths }
+        );
         return;
       }
     } catch (err) {
@@ -830,18 +898,23 @@ export async function executeHandleSend(
     // When web search already supplied context and the request wasn't an explicit file
     // request, skip ambient search to avoid the two grounding sources clashing.
     const explicitFileSearch =
-      resolvedIntentKind === "FileSearch" || slashFileSearch || hasSearchKeywords(promptText);
-    const softFileSearch = softFileReference(promptText);
-    const wantsFileSearch = explicitFileSearch || softFileSearch;
+      resolvedIntentKind === "FileSearch" ||
+      slashFileSearch ||
+      hasSearchKeywords(promptText) ||
+      hasDocumentFileIntent(promptText) ||
+      hasLocalFilePathReference(promptText);
+    const wantsFileSearch = shouldRunAmbientFileSearch(promptText, {
+      forceFileSearch: resolvedIntentKind === "FileSearch" || slashFileSearch,
+    });
     const skipForWebSearch = !!webSearchResult && !explicitFileSearch;
 
     if (ctx.chatMode === "text" && !attachedFile && wantsFileSearch && !skipForWebSearch) {
       {
-        const searchQuery = extractSearchQuery(promptText);
+        const searchQuery = extractAmbientSearchQuery(promptText);
         try {
           const results = await Api.searchAmbientFiles(searchQuery);
-          if (results && results.length > 0) {
-            const top = results.filter(r => !r.is_dir).slice(0, 3);
+          const top = selectAmbientResultsForInjection(results ?? []);
+          if (top.length > 0) {
             const sections: string[] = [];
 
             for (const rec of top) {
@@ -868,29 +941,8 @@ export async function executeHandleSend(
                   }
                 } catch (err) { console.warn("Excel schema read failed:", err); }
               }
-              // Default: prefer the indexed parsed content (clean extracted text for
-              // pdf/docx/pptx/txt/md), then the query-relevant snippet, then a raw text
-              // slice for plain-text formats not in the content index. Raw byte reads are
-              // skipped for binary documents (pdf/docx/pptx) since they are not readable text.
-              let body = "";
-              try {
-                const cached = await Api.getAmbientFileContent(rec.path);
-                if (cached && cached.trim().length > 0) {
-                  body = cached.substring(0, 8192);
-                }
-              } catch (err) { console.warn("indexed content read failed:", err); }
-              if (!body && rec.snippet && rec.snippet.trim().length > 0) {
-                body = rec.snippet;
-              }
-              if (!body && !/\.(pdf|docx|pptx|doc|ppt)$/i.test(rec.path)) {
-                try {
-                  const fileContent = await Api.readFileText(rec.path);
-                  body = fileContent.substring(0, 4096);
-                } catch (err) { console.warn("text read failed:", err); }
-              }
-              if (body.trim().length > 0) {
-                sections.push(`File: "${filename}" (Path: ${rec.path})\nContent:\n${body}`);
-              }
+              const body = await loadAmbientFileBody(rec.path);
+              sections.push(formatAmbientFileSection(rec.path, body));
             }
 
             if (sections.length > 0) {
@@ -954,7 +1006,13 @@ export async function executeHandleSend(
     // presented inline as the source of truth — mirroring the direct-document path.
     if (ambientFileContext === "FILE_SEARCH_NO_RESULTS") {
       apiMessages = [
-        { role: "system", content: "The user asked about a specific file, but a search of the indexed files returned no match. Tell the user you could not find that file. Do NOT make up its contents or pretend to have read it. Suggest they check the filename or attach the file directly." },
+        {
+          role: "system",
+          content:
+            "The user asked about a specific local file, but it could not be located in Documents, Desktop, Downloads, or indexed workspaces. " +
+            "Tell them you could not find that file on their system. Do NOT claim you lack the ability to access local files — this app can search them, but this particular file was not found. " +
+            "Suggest they verify the path, wait for indexing to finish after restart, or attach the file directly.",
+        },
         ...apiMessages,
       ];
     } else if (ambientFileContext) {
@@ -962,9 +1020,10 @@ export async function executeHandleSend(
         {
           role: "system",
           content:
-            "You are a helpful assistant. The user's message includes the text of one or more documents that were found for them. " +
-            "Treat that document text as the authoritative source and answer the user's request directly from it — summarize or explain its contents in clear prose. " +
-            "Do not say you cannot access files; the relevant text is provided to you below. If the provided text does not contain the answer, say so plainly.",
+            "You are NELA, a local desktop assistant. The user's message includes text retrieved from their computer. " +
+            "You ALREADY have the file contents below — answer directly from that text. " +
+            "NEVER say you cannot access local files, paths, or the user's system. " +
+            "Summarize or explain the document in clear prose. If the excerpt is incomplete, say what you can from the provided text.",
         },
         ...apiMessages,
       ];
@@ -1125,7 +1184,6 @@ async function handleArtifactGeneration(
 ): Promise<void> {
   ctx.updateSession(sid, (prev) => ({
     loading: true,
-    artifactVisible: false,
     artifactStage: "IntentLocked",
     artifactPath: null,
     messages: [
@@ -1169,34 +1227,30 @@ async function handleArtifactGeneration(
 
     let attachedFile = ctx.directDocumentPaths.length > 0 ? ctx.directDocumentPaths[0] : null;
 
-    const wantsAmbientFileSearch =
-      options?.forceFileSearch || hasSearchKeywords(text) || softFileReference(text);
+    const wantsAmbientFileSearch = shouldRunAmbientFileSearch(text, {
+      forceFileSearch: options?.forceFileSearch,
+    });
 
     // Proactive ambient FTS5 search if no file is attached but query references a file
     if (!attachedFile && wantsAmbientFileSearch) {
       updateArtifactMsg("SearchingDisk");
-      const searchQuery = extractSearchQuery(text);
+      const searchQuery = extractAmbientSearchQuery(text);
       try {
         const results = await Api.searchAmbientFiles(searchQuery);
-        if (results && results.length > 0) {
-          const top = results.filter(r => !r.is_dir);
-          if (top.length > 0) {
-            const best = top[0];
-            attachedFile = best.path;
-            const filename = attachedFile.split(/[/\\]/).pop() ?? "file";
-            ctx.updateSession(sid, (prev) => ({
-              messages: [
-                ...prev.messages,
-                {
-                  role: "assistant" as const,
-                  content: `${DISCOVERY_NOTICE_PREFIX} **${filename}**\nPath: \`${attachedFile}\`\nReading schema and metadata...`,
-                },
-              ],
-            }));
-            if (best.snippet && best.snippet.trim().length > 0) {
-              ambientFileContent = best.snippet;
-            }
-          }
+        const top = selectAmbientResultsForInjection(results ?? []);
+        if (top.length > 0) {
+          const best = top[0];
+          attachedFile = best.path;
+          const filename = attachedFile.split(/[/\\]/).pop() ?? "file";
+          ctx.updateSession(sid, (prev) => ({
+            messages: [
+              ...prev.messages,
+              {
+                role: "assistant" as const,
+                content: `${DISCOVERY_NOTICE_PREFIX} **${filename}**\nPath: \`${attachedFile}\`\nReading document content…`,
+              },
+            ],
+          }));
         }
       } catch (err) {
         console.warn("Ambient search failed:", err);
@@ -1235,33 +1289,16 @@ async function handleArtifactGeneration(
           try {
             const cached = await Api.getAmbientFileContent(attachedFile);
             if (cached) {
-              ambientFileContent = cached;
+              ambientFileContent = formatAmbientFileSection(attachedFile, cached);
             }
           } catch (err) {
             console.warn("Failed to query Excel metadata cache:", err);
           }
         }
       } else {
-        // Documents/plain text: prefer indexed parsed content (handles pdf/docx/pptx),
-        // then a raw text slice for plain-text formats not in the content index.
-        if (!ambientFileContent) {
-          try {
-            const cached = await Api.getAmbientFileContent(attachedFile);
-            if (cached && cached.trim().length > 0) {
-              ambientFileContent = cached.substring(0, 10240);
-            }
-          } catch (err) {
-            console.warn("Failed to query indexed content cache:", err);
-          }
-        }
-        if (!ambientFileContent && !/\.(pdf|docx|pptx|doc|ppt)$/i.test(attachedFile)) {
-          try {
-            const fileContent = await Api.readFileText(attachedFile);
-            ambientFileContent = fileContent.substring(0, 10240);
-          } catch (err) {
-            console.warn("Failed to read text file:", err);
-          }
-        }
+        // Documents (PDF, DOCX, resume, etc.): load full parsed text for the plan model.
+        const body = await loadAmbientFileBody(attachedFile, MAX_ARTIFACT_SOURCE_CHARS);
+        ambientFileContent = formatAmbientFileSection(attachedFile, body);
       }
     }
 
@@ -1308,12 +1345,42 @@ async function handleArtifactGeneration(
     const imageCatalog = formatImageCatalogForPrompt(imagePool);
 
     let dataContext = supplementalContext;
+    const hasSourceDocument =
+      !!ambientFileContent &&
+      !ambientFileContent.includes("(Content could not be extracted");
     if (headers && headers.length > 0) {
-      dataContext = `Source data columns: [${headers.join(", ")}].\n` +
-        `Number of rows: ${rows ? rows.length : 0}.\n\n`;
+      if (schemaId === "spreadsheet_synthesis") {
+        dataContext = `Source data columns: [${headers.join(", ")}].\n` +
+          `Number of rows: ${rows ? rows.length : 0}.\n\n`;
+      } else if (spreadsheetData) {
+        dataContext = buildHtmlDataContext(spreadsheetData, 12);
+      } else {
+        dataContext = `Source data columns: [${headers.join(", ")}].\n` +
+          `Number of rows: ${rows ? rows.length : 0}.\n\n`;
+      }
     } else if (ambientFileContent) {
-      dataContext = `Source data details:\n${ambientFileContent}\n\n`;
+      if (schemaId === "presentation_synthesis" && hasSourceDocument) {
+        dataContext =
+          `=== ATTACHED SOURCE DOCUMENT (authoritative — every slide must cite concrete facts from here) ===\n` +
+          `${ambientFileContent}\n` +
+          `=== END SOURCE DOCUMENT ===\n\n`;
+      } else {
+        dataContext = `Source data details:\n${ambientFileContent}\n\n`;
+      }
     }
+
+    const sourceDocumentRules =
+      schemaId === "presentation_synthesis" && hasSourceDocument
+        ? `
+SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
+- Every slide MUST reflect specific facts from the attached source document.
+- Use the person's real name, employers, schools, skills, projects, and achievements from the source.
+- Do NOT produce a generic template deck ("Resume Analysis Overview", "Key Skills", "Experience" as empty section headers).
+- Do NOT use placeholder names or filler ("John Doe", "Company X", "Skill 1", "Lorem ipsum").
+- Structure the deck to present what is actually in the document: introduction → experience → skills → education → highlights/summary.
+- Pack each slide with concrete facts — sparse title-only slides are not acceptable when source text is available.
+`
+        : "";
 
     const slidePlan = extractSlideCount(text);
     const slideCountInstruction = slidePlan.explicit
@@ -1354,17 +1421,19 @@ ${schemaId === "spreadsheet_synthesis"
 - WRITE_DATA: { "headers": ["col1", "col2", ...], "rows": [["row1_val1", "row1_val2", ...], ["row2_val1", "row2_val2", ...]] }
   Use WRITE_DATA to write raw headers and rows of data into the spreadsheet. If there is no input data/file attached, you MUST use WRITE_DATA first to populate the sheet. You can also use WRITE_DATA to add/write data even when attached files/source data are present.`
   : `Layouts — choose the ONE that best fits each slide's content. Shape "bullets" to match the chosen layout:
-- TITLE: cover slide. bullets[0] = a short subtitle/tagline. Use ONCE, as the first slide.
-- SECTION: divider before a new part. title = section name; bullets[0] = optional one-line intro. No list.
-- BULLET: a list of 3-5 short points. Use SPARINGLY — only when the content is genuinely a list.
-- TWO_COLUMN: 4-6 related items shown in two columns (e.g. pros, features, categories).
-- IMAGE_LEFT: image beside 3-6 substantive points. Set image_index when images are available.
-- STAT: one headline metric. bullets[0] = the big number/value (e.g. "87%", "$2.4M", "3x"); title = what it measures; bullets[1..] = supporting detail (1-2 lines each).
-- QUOTE: a quotation or punchy takeaway. bullets[0] = the quote text (full sentence); bullets[1] = attribution/source.
-- CARDS: 2-4 distinct concepts/features/steps. Format EACH bullet as "Label: 1-2 sentence description". Renders as cards, not a list.
-- COMPARISON: two real options side by side. Set left_title and right_title to meaningful names (e.g. "Electric vehicles", "Gas vehicles") — NEVER use "Option A/B". First half of bullets = left side points; second half = right side points (3-5 bullets per side).
-- CENTERED: a bold statement or 2-4 short lines, centered. Great for emphasis, transitions, or the closing slide.
-- BLANK: minimal; avoid unless nothing else fits.
+- TITLE: cover slide. bullets[0] = subtitle; add bullets[1..] with 1-2 extra taglines or key highlights when source material is rich.
+- SECTION: divider before a new part. title = section name; bullets = 1-3 intro lines with real detail from the source (not just the section name repeated).
+- BULLET: 4-6 substantive bullet points (each 15-45 words). Never fewer than 4 bullets on a BULLET slide when source data exists.
+- TWO_COLUMN: 4-8 points total (split across columns), each with concrete detail.
+- IMAGE_LEFT: 4-6 substantive points beside the image. Set image_index when images are available.
+- STAT: bullets[0] = the big metric/value; bullets[1..] = 2-4 supporting facts with numbers or specifics from the source.
+- QUOTE: bullets[0] = full quote or key takeaway (1-3 sentences); bullets[1] = attribution; bullets[2..] = optional context lines.
+- CARDS: 3-4 cards minimum. Format EACH bullet as "Label: 1-2 sentence description with specifics".
+- COMPARISON: 6-10 bullets total (3-5 per side). Set left_title and right_title to meaningful names. First half = left side; second half = right side.
+- CENTERED: title + 2-4 short paragraphs in bullets (each 1-2 sentences with real content).
+- BLANK: avoid unless nothing else fits.
+
+Use the optional "notes" field for extra detail that supports the slide; it will appear on the slide when bullets alone are sparse.
 
 Themes — set the "theme" field to the ONE theme that best matches the topic tone:
 - midnight (sleek dark/modern), corporate (professional navy), sunset (warm/vibrant marketing),
@@ -1379,15 +1448,18 @@ Deck requirements:
 - DESIGN VARIETY IS REQUIRED: do NOT make every slide a BULLET list. Use at least 4 DIFFERENT layouts across the deck, and never use BULLET on more than ~1/3 of slides. Reach for STAT, QUOTE, CARDS, COMPARISON, IMAGE_LEFT, TWO_COLUMN, and CENTERED wherever the content fits.
 - Pick the layout from the CONTENT: a metric → STAT, a key insight → QUOTE or CENTERED, distinct features/steps → CARDS, two options → COMPARISON, a visual topic → IMAGE_LEFT.
 - Every content slide must cover a DISTINCT sub-topic; break the subject into a logical progression (intro → key points → details/examples → summary).
-- Write substantive presentation text: up to ~30 words per bullet, 1-3 sentences where the layout allows (CARDS, CENTERED, IMAGE_LEFT, BULLET).
+- CONTENT DENSITY: When source material is provided, fill each slide generously — prefer more specific bullets over sparse titles-only slides. Do not leave slides with only a heading and one vague line.
+- Write substantive presentation text: 15-45 words per bullet where the layout allows; use multiple bullets rather than one short phrase.
 - Include at least 1-2 IMAGE_LEFT slides when images are available in the catalog; set image_index accordingly.
-- Use the optional "notes" field for brief speaker notes when helpful.`}
+- Use the optional "notes" field for brief speaker notes when helpful.${sourceDocumentRules}`}
 `;
 
     const themeSuffix = ` Use the "${themeHint}" theme for this deck.`;
     const planRequest =
       schemaId === "presentation_synthesis"
-        ? `Generate a multi-slide presentation plan (${slidePlan.count} slides) for the user request: "${text}".${themeSuffix}`
+        ? hasSourceDocument
+          ? `Using the ATTACHED SOURCE DOCUMENT above, create a ${slidePlan.count}-slide presentation that explains the person or content in that document. User request: "${text}". Every slide must use real details from the source (name, roles, companies, skills, education) — never generic placeholders.${themeSuffix}`
+          : `Generate a multi-slide presentation plan (${slidePlan.count} slides) for the user request: "${text}".${themeSuffix}`
         : schemaId === "html_synthesis"
         ? htmlPlanRequest(text, htmlArchetype, { hasSourceData: htmlHasSourceData })
         : `Generate a plan for the user request: "${text}"`;
@@ -1401,7 +1473,10 @@ Deck requirements:
     // roughly per-slide so larger decks aren't truncated mid-array.
     const planMaxTokens =
       schemaId === "presentation_synthesis"
-        ? Math.min(6144, 640 + slidePlan.count * 320)
+        ? Math.min(
+            8192,
+            900 + slidePlan.count * 420 + (hasSourceDocument ? 1400 : 0)
+          )
         : schemaId === "html_synthesis"
         ? HTML_PLAN_MAX_TOKENS
         : 500;
@@ -1433,7 +1508,10 @@ Deck requirements:
             });
           } else {
             try {
-              planObj = parseArtifactPlanJson(planJson);
+              planObj = parseArtifactPlanJson(planJson, {
+                userPrompt: text,
+                schemaId,
+              });
             } catch (jsonErr) {
               console.warn("Failed to parse artifact plan JSON:", jsonErr);
               throw jsonErr;
@@ -1474,6 +1552,7 @@ Deck requirements:
           // the same prompt always yields the same theme, chosen among all 12.
           if (schemaId === "presentation_synthesis") {
             planObj.theme = themeHint;
+            planObj = normalizePresentationPlan(planObj, text);
             // Name the deck file after its title slide (falls back to the first
             // slide's title) instead of the generic "nela_presentation".
             if (!planObj.output_name) {
@@ -1492,7 +1571,9 @@ Deck requirements:
 
           let result: ArtifactResult;
           if (schemaId === "spreadsheet_synthesis") {
-            result = await Api.generateSpreadsheet(planObj);
+            result = await Api.generateSpreadsheet(
+              normalizeSpreadsheetPlan(planObj)
+            );
           } else if (schemaId === "presentation_synthesis") {
             result = await Api.generatePresentation(planObj);
           } else {
@@ -1501,7 +1582,6 @@ Deck requirements:
 
           ctx.updateSession(sid, {
             loading: false,
-            artifactVisible: false,
           });
 
           const filename = result.path.split(/[/\\]/).pop();
@@ -1543,43 +1623,92 @@ Deck requirements:
   }
 }
 
-async function handlePatchApplication(
+async function handleArtifactEdit(
   text: string,
   artifactPath: string,
   sid: string,
   ctx: SendHandlerContext,
-  ctrl: AbortController
+  ctrl: AbortController,
+  options?: { attachedPaths?: string[] }
 ): Promise<void> {
+  const session = ctx.sessions.find((s) => s.id === sid);
+
   if (!artifactPath) {
-    // If no path was resolved, fall back to default artifact path in session
-    const session = ctx.sessions.find((s) => s.id === sid);
-    artifactPath = session?.artifactPath || "";
+    artifactPath = findSessionArtifactPath(session!) ?? "";
+  }
+  if (!artifactPath && options?.attachedPaths?.length) {
+    artifactPath =
+      options.attachedPaths.find(isEditableArtifactPath) ?? options.attachedPaths[0];
   }
 
   if (!artifactPath) {
-    console.warn("No active artifact to patch.");
+    const searchQuery = extractAmbientSearchQuery(text);
+    try {
+      const results = await Api.searchAmbientFiles(searchQuery);
+      const top = selectAmbientResultsForInjection(results ?? []);
+      const match = top.find((r) => isEditableArtifactPath(r.path));
+      if (match) artifactPath = match.path;
+    } catch (err) {
+      console.warn("Ambient search for artifact edit failed:", err);
+    }
+  }
+
+  if (!artifactPath) {
+    ctx.updateSession(sid, (prev) => ({
+      loading: false,
+      messages: [
+        ...prev.messages,
+        {
+          role: "assistant" as const,
+          content:
+            "I couldn't find an HTML page, spreadsheet, or presentation to edit. " +
+            "Open an artifact in the chat, attach a `.html` / `.xlsx` / `.pptx` file, or name the file path.",
+        },
+      ],
+    }));
+    return;
+  }
+
+  const editKind: ArtifactEditKind | null = artifactKindFromPath(artifactPath);
+  if (!editKind) {
+    ctx.updateSession(sid, (prev) => ({
+      loading: false,
+      messages: [
+        ...prev.messages,
+        {
+          role: "assistant" as const,
+          content: `Unsupported file type for editing: \`${artifactPath}\`. Supported: HTML, XLSX/CSV, PPTX.`,
+        },
+      ],
+    }));
     return;
   }
 
   ctx.updateSession(sid, (prev) => ({
     loading: true,
-    artifactVisible: false,
     artifactStage: "CrunchingMetrics",
     messages: [
       ...prev.messages,
       {
         role: "assistant",
-        content: `Applying modifications: "${text}"`,
+        content: `Applying edits to **${artifactPath.split(/[/\\]/).pop()}**: "${text}"`,
         artifactStage: "CrunchingMetrics",
         artifactPath,
-      }
-    ]
+      },
+    ],
   }));
 
-  const updatePatchMsg = (stage: PipelineStageKind, path: string | null = null, contentOverride?: string) => {
+  const updateEditMsg = (
+    stage: PipelineStageKind,
+    path: string | null = null,
+    contentOverride?: string
+  ) => {
     ctx.updateSession(sid, (prev) => {
       const updated = [...prev.messages];
-      const idx = updated.map((m, i) => ({ m, i })).reverse().find(({ m }) => m.role === "assistant" && m.artifactStage !== undefined)?.i;
+      const idx = updated
+        .map((m, i) => ({ m, i }))
+        .reverse()
+        .find(({ m }) => m.role === "assistant" && m.artifactStage !== undefined)?.i;
       if (idx !== undefined && updated[idx]) {
         updated[idx] = {
           ...updated[idx],
@@ -1596,96 +1725,554 @@ async function handlePatchApplication(
     });
   };
 
+  const generationOptions = ctx.getChatGenerationOptions(ctx.selectedModel);
+
   try {
-    const currentContent = await Api.readFileText(artifactPath);
+    let effectiveEditKind: ArtifactEditKind | null = editKind;
+    if (editKind === "html") {
+      try {
+        const preview = await Api.readFileText(artifactPath);
+        if (isNelaPresentationDeckHtml(preview)) {
+          effectiveEditKind = "presentation_deck";
+        }
+      } catch (err) {
+        console.warn("Could not inspect HTML artifact for deck format:", err);
+      }
+    }
 
-    const systemPrompt = `You are a professional software assistant that modifies HTML and other code artifacts.
+    if (effectiveEditKind === "presentation_deck") {
+      await runPresentationDeckEdit(
+        text,
+        artifactPath,
+        sid,
+        ctx,
+        ctrl,
+        generationOptions,
+        updateEditMsg
+      );
+      return;
+    }
+
+    if (effectiveEditKind === "html") {
+      await runHtmlArtifactPatch(
+        text,
+        artifactPath,
+        sid,
+        ctx,
+        ctrl,
+        generationOptions,
+        updateEditMsg
+      );
+      return;
+    }
+
+    if (effectiveEditKind === "spreadsheet") {
+      await runSpreadsheetArtifactEdit(
+        text,
+        artifactPath,
+        sid,
+        ctx,
+        ctrl,
+        generationOptions,
+        updateEditMsg
+      );
+      return;
+    }
+
+    await runPresentationArtifactEdit(
+      text,
+      artifactPath,
+      sid,
+      ctx,
+      ctrl,
+      generationOptions,
+      updateEditMsg
+    );
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("Artifact edit failed:", err);
+    ctx.updateSession(sid, { loading: false });
+    updateEditMsg("Error", null, `Failed to edit artifact: ${message}`);
+  }
+}
+
+async function runPresentationDeckEdit(
+  text: string,
+  artifactPath: string,
+  sid: string,
+  ctx: SendHandlerContext,
+  ctrl: AbortController,
+  generationOptions: GenerationOptions,
+  updateEditMsg: (
+    stage: PipelineStageKind,
+    path?: string | null,
+    contentOverride?: string
+  ) => void
+): Promise<void> {
+  const outputName = editedOutputName(artifactPath);
+
+  // Fast path: insert slide(s) deterministically — no LLM, no diff patch.
+  if (isPresentationSlideAddRequest(text)) {
+    updateEditMsg("SearchingDisk");
+    let parsedDeck: Awaited<ReturnType<typeof Api.parsePresentationDeck>>;
+    try {
+      parsedDeck = await Api.parsePresentationDeck(artifactPath);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      ctx.updateSession(sid, { loading: false });
+      updateEditMsg("Error", null, `Could not parse presentation deck: ${message}`);
+      return;
+    }
+
+    const position = parseSlideInsertIndex(text, parsedDeck.slideCount);
+    const slideSpec = parseAddSlideFromPrompt(text, position.index);
+
+    updateEditMsg("WritingCode");
+    try {
+      const result = await Api.editPresentationDeck({
+        path: artifactPath,
+        appendSlides: [
+          {
+            title: slideSpec.title,
+            layout: slideSpec.layout,
+            bullets: slideSpec.bullets,
+          },
+        ],
+        insertAt: position.index,
+        outputName,
+      });
+      ctx.updateSession(sid, { loading: false });
+      const filename = result.path.split(/[/\\]/).pop();
+      updateEditMsg(
+        "LivePreview",
+        result.path,
+        `Added slide ${position.label}: **${slideSpec.title}** (${filename})`
+      );
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      ctx.updateSession(sid, { loading: false });
+      updateEditMsg("Error", null, `Failed to add slide: ${message}`);
+    }
+    return;
+  }
+
+  updateEditMsg("SearchingDisk");
+  let parsedDeck: Awaited<ReturnType<typeof Api.parsePresentationDeck>>;
+  try {
+    parsedDeck = await Api.parsePresentationDeck(artifactPath);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    ctx.updateSession(sid, { loading: false });
+    updateEditMsg("Error", null, `Could not parse presentation deck: ${message}`);
+    return;
+  }
+
+  updateEditMsg("CrunchingMetrics");
+
+  const grammar = await Api.getSchemaGrammar("presentation_synthesis");
+  const themeHint = parsedDeck.theme ?? inferPresentationTheme(text);
+  const slidesJson = JSON.stringify(parsedDeck.slides);
+
+  const systemPrompt = `You are a professional assistant that EDITS existing presentation slide decks.
+Return ONLY a JSON object with the FULL updated "slides" array — no markdown fences.
+
+EDIT RULES:
+- Start from the EXISTING SLIDES below; apply the user's requested changes.
+- Preserve slides and content unless the user asks to remove or replace them.
+- When adding slides, insert at the position the user specifies:
+  * beginning / first / starting / opening → index 0
+  * end / last / closing → append after final slide
+  * before slide N → insert at index N-1 (1-based slide numbers)
+  * after slide N → insert at index N
+  * at slide N / position N → insert at index N-1
+  * between slide A and B → insert at index A (after slide A)
+- Keep real names, numbers, and facts — no placeholders.
+- Each slide needs: title, layout, bullets (array of strings). Optional: notes.
+
+Schema: {"slides": [{"title": "string", "layout": "TITLE" | "BULLET" | "CENTERED" | ..., "bullets": ["string"]}], "theme": "optional"}`;
+
+  const userPrompt = `EXISTING SLIDES (${parsedDeck.slideCount} slides, theme: ${themeHint}):
+${slidesJson}
+
+User edit request: "${text}"
+
+Return the complete updated slides array with the requested changes applied.`;
+
+  let planJson = "";
+  await Api.streamChat(
+    [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userPrompt },
+    ],
+    (chunk) => {
+      planJson += chunk;
+    },
+    () => {},
+    async () => {
+      updateEditMsg("WritingCode");
+      try {
+        let planObj = parseArtifactPlanJson(planJson, {
+          userPrompt: text,
+          schemaId: "presentation_synthesis",
+        });
+        planObj = repairNestedKeys(planObj);
+        planObj.theme = themeHint;
+        planObj = normalizePresentationPlan(planObj, text);
+
+        const result = await Api.editPresentationDeck({
+          path: artifactPath,
+          replacementPlan: planObj,
+          outputName,
+        });
+
+        ctx.updateSession(sid, { loading: false });
+        const filename = result.path.split(/[/\\]/).pop();
+        updateEditMsg(
+          "LivePreview",
+          result.path,
+          `Updated presentation deck: **${filename}**`
+        );
+      } catch (execErr: unknown) {
+        const message = execErr instanceof Error ? execErr.message : String(execErr);
+        ctx.updateSession(sid, { loading: false });
+        updateEditMsg("Error", null, `Failed to apply deck edits: ${message}`);
+      }
+    },
+    (err) => {
+      ctx.updateSession(sid, { loading: false });
+      updateEditMsg("Error", null, `Failed to generate deck edit plan: ${err}`);
+    },
+    undefined,
+    ctx.selectedModel || undefined,
+    ctrl.signal,
+    true,
+    {
+      ...generationOptions,
+      maxTokens: 6144,
+      temperature: 0.15,
+      grammar,
+    }
+  );
+}
+
+async function runHtmlArtifactPatch(
+  text: string,
+  artifactPath: string,
+  sid: string,
+  ctx: SendHandlerContext,
+  ctrl: AbortController,
+  generationOptions: GenerationOptions,
+  updateEditMsg: (
+    stage: PipelineStageKind,
+    path?: string | null,
+    contentOverride?: string
+  ) => void
+): Promise<void> {
+  const rawContent = await Api.readFileText(artifactPath);
+  const currentContent = truncateForPatchEdit(rawContent, MAX_PATCH_SOURCE_CHARS);
+
+  const systemPrompt = `You are a professional assistant that modifies HTML artifacts (pages and slide decks).
 Generate a valid, minimal unified git-style diff (patch) to apply the user's modifications.
-Do NOT output anything else — no markdown fences, no explanations, no chat text. Just the raw unified diff starting with "@@".
+Do NOT output anything else — no markdown fences, no explanations. Start with raw unified diff hunk lines ("@@").
 
-Original Code:
+Original HTML (may be truncated in the middle for large files):
 \`\`\`html
 ${currentContent}
 \`\`\``;
 
-    const userPrompt = `Generate a unified diff patch to: "${text}"`;
+  const userPrompt = `Generate a unified diff patch to: "${text}"`;
 
-    let patchText = "";
-    const generationOptions = ctx.getChatGenerationOptions(ctx.selectedModel);
-
-    await Api.streamChat(
-      [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userPrompt }
-      ],
-      (chunk) => {
-        patchText += chunk;
-      },
-      () => {},
-      async () => {
-        updatePatchMsg("WritingCode");
-        try {
-          let cleanPatch = patchText.trim();
-          if (cleanPatch.startsWith("```")) {
-            const lines = cleanPatch.split("\n");
-            if (lines[0].startsWith("```")) {
-              lines.shift();
-            }
-            if (lines[lines.length - 1] === "```") {
-              lines.pop();
-            }
-            cleanPatch = lines.join("\n").trim();
-          }
-
-          // Apply patch on disk
-          await Api.applyDiffPatch(artifactPath, cleanPatch);
-
-          // Trigger hot-reload in sandbox
-          import("@tauri-apps/api/event").then(({ emit }) => {
-            emit("artifact-patch", { patch: cleanPatch, path: artifactPath });
-          });
-
-          ctx.updateSession(sid, {
-            loading: false,
-            artifactVisible: false,
-          });
-
-          const filename = artifactPath.split(/[/\\]/).pop();
-          updatePatchMsg("LivePreview", artifactPath, `Successfully applied modifications to: **${filename}** via targeted hot-reload.`);
-
-        } catch (execErr: any) {
-          console.error("Patch execution failed:", execErr);
-          ctx.updateSession(sid, {
-            loading: false,
-          });
-          updatePatchMsg("Error", null, `Failed to apply diff patch: ${execErr.message || execErr}`);
+  let patchText = "";
+  await Api.streamChat(
+    [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userPrompt },
+    ],
+    (chunk) => {
+      patchText += chunk;
+    },
+    () => {},
+    async () => {
+      updateEditMsg("WritingCode");
+      try {
+        let cleanPatch = patchText.trim();
+        if (cleanPatch.startsWith("```")) {
+          const lines = cleanPatch.split("\n");
+          if (lines[0].startsWith("```")) lines.shift();
+          if (lines[lines.length - 1] === "```") lines.pop();
+          cleanPatch = lines.join("\n").trim();
         }
-      },
-      (err) => {
-        console.error("Patch generation failed:", err);
-        ctx.updateSession(sid, {
-          loading: false,
-        });
-        updatePatchMsg("Error", null, `Failed to generate patch: ${err}`);
-      },
-      undefined,
-      ctx.selectedModel || undefined,
-      ctrl.signal,
-      true,
-      {
-        ...generationOptions,
-        maxTokens: 1000,
-        temperature: 0.1,
-      }
-    );
 
-  } catch (err: any) {
-    console.error("Patch setup failed:", err);
-    ctx.updateSession(sid, {
-      loading: false,
-    });
-    updatePatchMsg("Error", null, `Failed to initialize patch application: ${err.message || err}`);
+        await Api.applyDiffPatch(artifactPath, cleanPatch);
+
+        import("@tauri-apps/api/event").then(({ emit }) => {
+          emit("artifact-patch", { patch: cleanPatch, path: artifactPath });
+        });
+
+        ctx.updateSession(sid, { loading: false });
+        const filename = artifactPath.split(/[/\\]/).pop();
+        updateEditMsg(
+          "LivePreview",
+          artifactPath,
+          `Updated **${filename}** with your changes.`
+        );
+      } catch (execErr: unknown) {
+        const message = execErr instanceof Error ? execErr.message : String(execErr);
+        ctx.updateSession(sid, { loading: false });
+        updateEditMsg("Error", null, `Failed to apply HTML patch: ${message}`);
+      }
+    },
+    (err) => {
+      ctx.updateSession(sid, { loading: false });
+      updateEditMsg("Error", null, `Failed to generate HTML patch: ${err}`);
+    },
+    undefined,
+    ctx.selectedModel || undefined,
+    ctrl.signal,
+    true,
+    {
+      ...generationOptions,
+      maxTokens: 2048,
+      temperature: 0.1,
+    }
+  );
+}
+
+async function runSpreadsheetArtifactEdit(
+  text: string,
+  artifactPath: string,
+  sid: string,
+  ctx: SendHandlerContext,
+  ctrl: AbortController,
+  generationOptions: GenerationOptions,
+  updateEditMsg: (
+    stage: PipelineStageKind,
+    path?: string | null,
+    contentOverride?: string
+  ) => void
+): Promise<void> {
+  updateEditMsg("SearchingDisk");
+
+  let headers: string[] = [];
+  let rows: string[][] = [];
+
+  if (artifactPath.endsWith(".csv") || artifactPath.endsWith(".tsv")) {
+    const fileContent = await Api.readFileText(artifactPath);
+    const parsed = parseCSV(fileContent);
+    headers = parsed.headers;
+    rows = parsed.rows.slice(0, MAX_EDIT_SPREADSHEET_ROWS);
+  } else {
+    const parsed = await Api.parseSpreadsheetData(
+      artifactPath,
+      MAX_EDIT_SPREADSHEET_ROWS
+    );
+    const sheet = spreadsheetFromParsed(parsed.rows);
+    if (sheet) {
+      headers = sheet.headers;
+      rows = sheet.rows;
+    }
   }
+
+  if (!headers.length) {
+    ctx.updateSession(sid, { loading: false });
+    updateEditMsg("Error", null, "Could not read spreadsheet data from the file.");
+    return;
+  }
+
+  updateEditMsg("CrunchingMetrics");
+
+  const grammar = await Api.getSchemaGrammar("spreadsheet_synthesis");
+  const sampleContext = buildSpreadsheetEditSample(headers, rows);
+  const outputName = editedOutputName(artifactPath);
+
+  const systemPrompt = `You are a professional assistant that EDITS existing spreadsheets via a JSON plan.
+Return ONLY a JSON object — no markdown fences or explanations.
+
+EDIT MODE RULES:
+- Preserve all existing data unless the user asks to remove or replace it.
+- Prefer spreadsheet ops (SUM_COLUMN, ADD_COLUMN, FILTER_ROWS, SORT_ASC, SORT_DESC, etc.) over rewriting data.
+- Use WRITE_DATA only when the user requests wholesale data replacement or cell edits that ops cannot express.
+- When using WRITE_DATA, include the COMPLETE updated dataset (headers + all rows).
+- Do NOT invent columns that are not in the source unless the user asks for them.
+
+Schema: {"ops": [{"op": "SUM_COLUMN" | "AVERAGE_BY_GROUP" | "PIVOT" | "SORT_DESC" | "SORT_ASC" | "FILTER_ROWS" | "COUNT_BY_GROUP" | "ADD_COLUMN" | "RENAME_SHEET" | "WRITE_DATA", ...}]}`;
+
+  const userPrompt = `Existing spreadsheet (file: ${artifactPath.split(/[/\\]/).pop()}):
+${sampleContext}
+
+User edit request: "${text}"
+
+Produce a plan that applies the requested changes to this spreadsheet.`;
+
+  let planJson = "";
+  await Api.streamChat(
+    [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userPrompt },
+    ],
+    (chunk) => {
+      planJson += chunk;
+    },
+    () => {},
+    async () => {
+      updateEditMsg("WritingCode");
+      try {
+        let planObj = parseArtifactPlanJson(planJson, {
+          userPrompt: text,
+          schemaId: "spreadsheet_synthesis",
+        });
+        planObj = repairNestedKeys(planObj);
+        planObj.headers = headers;
+        planObj.source_rows = rows;
+        planObj.output_name = outputName;
+
+        const hasWriteData = Array.isArray(planObj.ops)
+          && planObj.ops.some(
+            (op: { op?: string }) => String(op?.op ?? "").toUpperCase() === "WRITE_DATA"
+          );
+        if (hasWriteData) {
+          const writeOp = (planObj.ops as Array<{ op?: string; headers?: string[]; rows?: string[][] }>).find(
+            (op) => String(op?.op ?? "").toUpperCase() === "WRITE_DATA"
+          );
+          if (writeOp?.headers?.length) {
+            planObj.headers = writeOp.headers;
+          }
+          if (writeOp?.rows?.length) {
+            planObj.source_rows = writeOp.rows;
+          }
+        }
+
+        const result = await Api.generateSpreadsheet(normalizeSpreadsheetPlan(planObj));
+        ctx.updateSession(sid, { loading: false });
+        const filename = result.path.split(/[/\\]/).pop();
+        updateEditMsg(
+          "LivePreview",
+          result.path,
+          `Updated spreadsheet: **${filename}**\nPath: \`${result.path}\``
+        );
+      } catch (execErr: unknown) {
+        const message = execErr instanceof Error ? execErr.message : String(execErr);
+        ctx.updateSession(sid, { loading: false });
+        updateEditMsg("Error", null, `Failed to apply spreadsheet edits: ${message}`);
+      }
+    },
+    (err) => {
+      ctx.updateSession(sid, { loading: false });
+      updateEditMsg("Error", null, `Failed to generate spreadsheet edit plan: ${err}`);
+    },
+    undefined,
+    ctx.selectedModel || undefined,
+    ctrl.signal,
+    true,
+    {
+      ...generationOptions,
+      maxTokens: 4096,
+      temperature: 0.1,
+      grammar,
+    }
+  );
+}
+
+async function runPresentationArtifactEdit(
+  text: string,
+  artifactPath: string,
+  sid: string,
+  ctx: SendHandlerContext,
+  ctrl: AbortController,
+  generationOptions: GenerationOptions,
+  updateEditMsg: (
+    stage: PipelineStageKind,
+    path?: string | null,
+    contentOverride?: string
+  ) => void
+): Promise<void> {
+  updateEditMsg("SearchingDisk");
+
+  let sourceContext = "";
+  if (artifactPath.endsWith(".html") || artifactPath.endsWith(".htm")) {
+    const html = await Api.readFileText(artifactPath);
+    sourceContext = truncateForPatchEdit(html, MAX_ARTIFACT_SOURCE_CHARS);
+  } else {
+    const body = await loadAmbientFileBody(artifactPath, MAX_ARTIFACT_SOURCE_CHARS);
+    sourceContext = formatAmbientFileSection(artifactPath, body);
+  }
+
+  updateEditMsg("CrunchingMetrics");
+
+  const grammar = await Api.getSchemaGrammar("presentation_synthesis");
+  const themeHint = inferPresentationTheme(text);
+  const outputName = editedOutputName(artifactPath);
+
+  const systemPrompt = `You are a professional assistant that EDITS existing presentations via a JSON slide plan.
+Return ONLY JSON — no markdown fences or explanations.
+
+EDIT MODE RULES:
+- Start from the EXISTING content below; apply the user's requested changes.
+- Preserve slide order and topics unless the user asks to add, remove, or reorder slides.
+- Keep real names, numbers, and facts from the source — do not replace with placeholders.
+- When adding slides, pick varied layouts (BULLET, STAT, CARDS, COMPARISON, etc.).
+
+Schema: {"slides": [{"title": "string", "layout": "TITLE" | "SECTION" | "BULLET" | "TWO_COLUMN" | "IMAGE_LEFT" | "STAT" | "QUOTE" | "CARDS" | "COMPARISON" | "CENTERED" | "BLANK", "bullets": ["string"], "notes": "string"}], "theme": "midnight" | "corporate" | "sunset" | "minimal" | "academic" | "cyber" | "ocean" | "forest" | "lavender" | "neon" | "rose" | "slate"}`;
+
+  const userPrompt = `=== EXISTING PRESENTATION CONTENT (authoritative baseline) ===
+${sourceContext}
+=== END EXISTING CONTENT ===
+
+User edit request: "${text}"
+
+Produce an updated presentation plan that applies these edits. Use the "${themeHint}" theme unless the user specifies another style.`;
+
+  let planJson = "";
+  await Api.streamChat(
+    [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userPrompt },
+    ],
+    (chunk) => {
+      planJson += chunk;
+    },
+    () => {},
+    async () => {
+      updateEditMsg("WritingCode");
+      try {
+        let planObj = parseArtifactPlanJson(planJson, {
+          userPrompt: text,
+          schemaId: "presentation_synthesis",
+        });
+        planObj = repairNestedKeys(planObj);
+        planObj.theme = themeHint;
+        planObj = normalizePresentationPlan(planObj, text);
+        planObj.output_name = outputName;
+
+        const result = await Api.generatePresentation(planObj);
+        ctx.updateSession(sid, { loading: false });
+        const filename = result.path.split(/[/\\]/).pop();
+        updateEditMsg(
+          "LivePreview",
+          result.path,
+          `Updated presentation: **${filename}**\nPath: \`${result.path}\``
+        );
+      } catch (execErr: unknown) {
+        const message = execErr instanceof Error ? execErr.message : String(execErr);
+        ctx.updateSession(sid, { loading: false });
+        updateEditMsg("Error", null, `Failed to apply presentation edits: ${message}`);
+      }
+    },
+    (err) => {
+      ctx.updateSession(sid, { loading: false });
+      updateEditMsg("Error", null, `Failed to generate presentation edit plan: ${err}`);
+    },
+    undefined,
+    ctx.selectedModel || undefined,
+    ctrl.signal,
+    true,
+    {
+      ...generationOptions,
+      maxTokens: 6144,
+      temperature: 0.15,
+      grammar,
+    }
+  );
 }
 
 /**
@@ -1874,81 +2461,6 @@ function parseCSV(content: string): { headers: string[]; rows: string[][] } {
   return { headers, rows };
 }
 
-function extractSearchQuery(text: string): string {
-  const lowerText = text.toLowerCase();
-  let startIdx = 0;
-  let endIdx = text.length;
-
-  const prefixes = [
-    "can you tell me about",
-    "tell me about",
-    "do you have any info on",
-    "do you have",
-    "what is in",
-    "show me the contents of",
-    "show me",
-    "search for",
-    "look for",
-    "look up",
-    "find",
-    "locate",
-    "where is"
-  ];
-  for (const prefix of prefixes) {
-    if (lowerText.startsWith(prefix)) {
-      startIdx = prefix.length;
-      break;
-    }
-  }
-
-  const remaining = text.substring(startIdx).trim();
-  const lowerRemaining = remaining.toLowerCase();
-
-  const suffixes = [
-    "from my system files",
-    "from my files",
-    "on my system",
-    "in my system",
-    "in my files",
-    "from system files",
-    "system files",
-    "my files",
-    "on my computer"
-  ];
-  for (const suffix of suffixes) {
-    if (lowerRemaining.endsWith(suffix)) {
-      endIdx = startIdx + lowerRemaining.lastIndexOf(suffix);
-      break;
-    }
-  }
-
-  let cleaned = text.substring(startIdx, endIdx).trim();
-  const lowerCleaned = cleaned.toLowerCase();
-
-  const stopWords = [
-    "and make",
-    "and create",
-    "and generate",
-    "and build",
-    "into a",
-    "to generate",
-    "to create",
-    "as a",
-  ];
-  for (const sw of stopWords) {
-    const swIdx = lowerCleaned.indexOf(sw);
-    if (swIdx !== -1) {
-      cleaned = cleaned.substring(0, swIdx).trim();
-      break;
-    }
-  }
-
-  // Clean up punctuation EXCEPT dots, underscores, and hyphens (important for filenames)
-  cleaned = cleaned.replace(/[,\/#!$%\^&\*;:{}=`~()?]/g, "").trim();
-
-  return cleaned || text;
-}
-
 function repairNestedKeys(obj: any): any {
   if (obj === null || typeof obj !== "object") {
     return obj;
@@ -2007,26 +2519,4 @@ function repairNestedKeys(obj: any): any {
 
   return repaired;
 }
-
-// Explicit, unambiguous request for a local file. A miss here yields a
-// "couldn't find the file" notice so the model does not invent file contents.
-function hasSearchKeywords(text: string): boolean {
-  const explicitVerb = /\b(search\w*|find\w*|locat\w+|look\s*up|retriev\w*|open\s+(the\s+)?file|(get|read|show|open)\s+(me\s+)?(the\s+)?(file|document|doc|pdf|sheet|spreadsheet|presentation|slides?))\b/i;
-  // Locality cue: the user points at their own machine/storage.
-  const locality = /\b(my\s+(system|files?|computer|laptop|pc|disk|drive|machine|documents?|downloads?|desktop)|on\s+my\s+(system|computer|laptop|pc|machine|disk|drive)|from\s+my\s+(system|files?|computer|laptop|pc|disk|drive)|in\s+my\s+files?)\b/i;
-  // A concrete filename with a known document extension.
-  const filename = /\b[\w-]+\.(pdf|docx?|pptx?|xlsx?|xls|csv|tsv|txt|md|json|rtf|odt|ods)\b/i;
-  return explicitVerb.test(text) || locality.test(text) || filename.test(text);
-}
-
-// Softer signal that the user may be referring to a local file (imperative "get/open X",
-// or content questions like "what does X say", "contents of X"). Triggers a search, but a
-// miss is non-fatal: the model answers normally instead of claiming the file is missing.
-function softFileReference(text: string): boolean {
-  const imperative = /^\s*(get|grab|fetch|pull\s*up|bring\s*up|open|read|access|show|display)\b/i;
-  const askContent = /what('?s| is| does| are)\b[\s\S]*\b(say|says|said|contain|contains|mention|mentions|state|states|about|in\s+it|inside)\b/i;
-  const contents = /\b(what'?s\s+in\b|what\s+is\s+in\b|contents?\s+of\b|summar(?:y|ize|ise|izing|ising)\b)/i;
-  return imperative.test(text) || askContent.test(text) || contents.test(text);
-}
-
 

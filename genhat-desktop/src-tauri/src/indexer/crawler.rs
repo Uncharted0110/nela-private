@@ -1,8 +1,8 @@
 use crate::governor::{CancellationToken, Governor};
 use crate::indexer::db::IndexerDb;
 use crate::indexer::paths::{
-    collect_index_roots, index_path_exists, is_blacklisted, normalize_index_path,
-    remove_from_path_set,
+    collect_index_roots, index_path_exists, is_blacklisted, is_under_index_roots,
+    normalize_index_path, remove_from_path_set,
 };
 use calamine::{Reader, open_workbook_auto};
 use std::collections::HashSet;
@@ -156,6 +156,38 @@ fn prune_missing_files(
     }
 }
 
+/// Remove index rows outside the active crawl roots (e.g. after narrowing scope).
+fn prune_out_of_scope(
+    db: &IndexerDb,
+    roots: &[PathBuf],
+    governor: &Arc<Governor>,
+    cancel_token: &CancellationToken,
+) {
+    log::info!("Pruning ambient index entries outside scoped roots...");
+    let paths = db.get_all_paths().unwrap_or_default();
+    let mut duty_guard = governor.indexer_duty_cycle();
+    let mut pruned = 0usize;
+
+    for path_key in paths {
+        if cancel_token.is_cancelled() {
+            return;
+        }
+        duty_guard.checkpoint_sync();
+
+        if is_under_index_roots(&path_key, roots) {
+            continue;
+        }
+
+        if db.delete(&path_key).is_ok() {
+            pruned += 1;
+        }
+    }
+
+    if pruned > 0 {
+        log::info!("Pruned {pruned} out-of-scope ambient index record(s).");
+    }
+}
+
 /// Main background crawling logic.
 pub fn run_crawler(
     home_dir: PathBuf,
@@ -167,6 +199,9 @@ pub fn run_crawler(
     log::info!("Starting background ambient crawler...");
 
     prune_missing_files(&db, &governor, &cancel_token);
+
+    let targets = collect_index_roots(&home_dir, &workspace_paths);
+    prune_out_of_scope(&db, &targets, &governor, &cancel_token);
 
     // Gather all existing paths from database for deletion sync
     let mut db_paths: HashSet<String> = db.get_all_paths().unwrap_or_default().into_iter().collect();

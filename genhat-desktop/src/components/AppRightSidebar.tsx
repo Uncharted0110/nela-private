@@ -20,6 +20,7 @@ interface AppRightSidebarProps {
   onIngestDir: () => void;
   onOpenDocViewer: (doc: IngestionStatus) => void;
   onDeleteRagDoc: (docId: number) => void;
+  onDeleteAllRagDocs: () => void;
 }
 
 export default function AppRightSidebar({
@@ -38,6 +39,7 @@ export default function AppRightSidebar({
   onIngestDir,
   onOpenDocViewer,
   onDeleteRagDoc,
+  onDeleteAllRagDocs,
 }: AppRightSidebarProps) {
   const { advanced } = useAdvancedMode();
 
@@ -70,6 +72,7 @@ export default function AppRightSidebar({
         onIngestDir={onIngestDir}
         onOpenDocViewer={onOpenDocViewer}
         onDeleteRagDoc={onDeleteRagDoc}
+        onDeleteAllRagDocs={onDeleteAllRagDocs}
       />
     </aside>
   );

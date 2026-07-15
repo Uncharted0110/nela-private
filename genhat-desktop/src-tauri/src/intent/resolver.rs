@@ -93,6 +93,13 @@ impl IntentResolver {
             return Some(self.parse_explicit_intent(intent_key));
         }
 
+        // Active artifact edit — frontend passes the live preview path.
+        if let Some(path) = extra.get("artifact_path") {
+            if !path.is_empty() && matches_artifact_edit_trigger(prompt) {
+                return Some(IntentDecision::patch(path.clone()));
+            }
+        }
+
         let trimmed = prompt.trim();
 
         // Slash commands: /web /excel /ppt /html /rag /files (combinable at start)
@@ -322,6 +329,68 @@ fn matches_artifact_trigger_presentation(lower: &str) -> bool {
         || lower.contains("convert");
 
     has_presentation_noun && has_create_verb
+}
+
+fn matches_artifact_edit_trigger(prompt: &str) -> bool {
+    let lower = prompt.to_lowercase();
+    let has_edit_verb = lower.contains("edit")
+        || lower.contains("modify")
+        || lower.contains("update")
+        || lower.contains("change")
+        || lower.contains("revise")
+        || lower.contains("fix")
+        || lower.contains("adjust")
+        || lower.contains("tweak")
+        || lower.contains("improve")
+        || lower.contains("enhance")
+        || lower.contains("refine")
+        || lower.contains("rewrite")
+        || lower.contains("reformat")
+        || lower.contains("add ")
+        || lower.contains("remove ")
+        || lower.contains("delete ")
+        || lower.contains("insert ")
+        || lower.contains("replace ")
+        || lower.contains("polish")
+        || lower.contains("correct")
+        || lower.contains("amend")
+        || lower.contains("patch");
+
+    if !has_edit_verb {
+        return false;
+    }
+
+    let strong_create = lower.contains("from scratch")
+        || lower.contains("brand new")
+        || lower.contains("create a new")
+        || lower.contains("make a new")
+        || lower.contains("build a new")
+        || lower.contains("generate a new");
+
+    let references_existing = lower.contains("this file")
+        || lower.contains("this deck")
+        || lower.contains("this slide")
+        || lower.contains("this spreadsheet")
+        || lower.contains("this sheet")
+        || lower.contains("this page")
+        || lower.contains("this presentation")
+        || lower.contains("the file")
+        || lower.contains("the deck")
+        || lower.contains("the spreadsheet")
+        || lower.contains("the sheet")
+        || lower.contains("the page")
+        || lower.contains("the presentation")
+        || lower.contains("my deck")
+        || lower.contains("my spreadsheet")
+        || lower.contains("my presentation")
+        || lower.contains("current artifact")
+        || lower.contains("above file")
+        || lower.contains("attached file")
+        || lower.contains("open file")
+        || lower.contains("same file")
+        || lower.contains("same deck");
+
+    !strong_create || references_existing
 }
 
 fn matches_artifact_trigger_html(lower: &str) -> bool {

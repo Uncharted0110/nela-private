@@ -198,6 +198,18 @@ fn resolve_mcp_binary(name: &str) -> Result<std::path::PathBuf, String> {
         return Ok(path);
     }
 
+    // Dev fallback: target/debug or target/release next to the crate.
+    #[cfg(debug_assertions)]
+    {
+        let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        for profile in ["debug", "release"] {
+            let candidate = manifest.join("target").join(profile).join(name);
+            if candidate.exists() {
+                return Ok(candidate);
+            }
+        }
+    }
+
     // Dev fallback: look next to the current executable.
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {

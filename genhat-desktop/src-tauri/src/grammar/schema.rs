@@ -102,7 +102,7 @@ pub struct SpreadsheetPlan {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Approved slide layout types for `mcp-server-presentation`.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum SlideLayout {
     Title,
@@ -131,7 +131,9 @@ pub struct ArtifactImageAsset {
 /// A single slide in a presentation plan.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PresentationSlide {
+    #[serde(default, alias = "heading", alias = "name", alias = "topic", alias = "label")]
     pub title: String,
+    #[serde(default = "default_slide_layout")]
     pub layout: SlideLayout,
     #[serde(default)]
     pub bullets: Vec<String>,
@@ -194,6 +196,10 @@ pub struct HtmlPlan {
 
 fn default_html_archetype() -> String {
     "landing".to_string()
+}
+
+fn default_slide_layout() -> SlideLayout {
+    SlideLayout::Bullet
 }
 
 /// Section kinds understood by the HTML renderer.

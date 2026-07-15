@@ -281,8 +281,6 @@ export interface ChatSession {
   artifactPath?: string | null;
   /** The current pipeline stage of the generating artifact. */
   artifactStage?: string | null;
-  /** Whether the artifact sandbox is currently visible for this session. */
-  artifactVisible?: boolean;
 }
 
 /** Available KittenTTS voice names. */

@@ -347,10 +347,63 @@ export function parseHtmlPlanJson(
   };
 }
 
+/** Salvage slide objects from broken presentation JSON. */
+export function extractSlidesFromBrokenJson(raw: string): Record<string, unknown>[] {
+  const text = stripArtifactModelOutput(raw);
+  const slides: Record<string, unknown>[] = [];
+  const seen = new Set<string>();
+
+  const marker =
+    /"layout"\s*:\s*"(TITLE|SECTION|BULLET|TWO_COLUMN|IMAGE_LEFT|STAT|QUOTE|CARDS|COMPARISON|CENTERED|BLANK)"/gi;
+  let match: RegExpExecArray | null;
+
+  while ((match = marker.exec(text)) !== null) {
+    let start = match.index;
+    while (start > 0 && text[start] !== "{") start--;
+
+    const slice = extractBalancedJsonObject(text.slice(start));
+    if (!slice || seen.has(slice)) continue;
+
+    const obj = tryParseObject(slice) ?? tryParseObject(escapeControlCharsInJsonStrings(slice));
+    if (obj) {
+      seen.add(slice);
+      slides.push(obj);
+    }
+  }
+
+  return slides;
+}
+
+export function extractPresentationPlanFallback(
+  raw: string,
+  userPrompt: string
+): Record<string, unknown> | null {
+  const slides = extractSlidesFromBrokenJson(raw);
+  if (slides.length === 0) return null;
+
+  const text = stripArtifactModelOutput(raw);
+  const theme = readJsonStringField(text, "theme");
+  const output_name = readJsonStringField(text, "output_name");
+
+  const plan: Record<string, unknown> = { slides };
+  if (theme) plan.theme = theme;
+  if (output_name) plan.output_name = output_name;
+  plan._prompt = userPrompt;
+  return plan;
+}
+
 /** Parse an artifact plan object from raw model output. */
-export function parseArtifactPlanJson(raw: string): Record<string, unknown> {
+export function parseArtifactPlanJson(
+  raw: string,
+  options?: { userPrompt?: string; schemaId?: string }
+): Record<string, unknown> {
   const parsed = parseJsonCandidates(raw);
   if (parsed) return parsed;
+
+  if (options?.schemaId === "presentation_synthesis" && options.userPrompt) {
+    const presentation = extractPresentationPlanFallback(raw, options.userPrompt);
+    if (presentation) return presentation;
+  }
 
   const structured = extractStructuredHtmlPlanFallback(raw);
   if (structured) return structured;

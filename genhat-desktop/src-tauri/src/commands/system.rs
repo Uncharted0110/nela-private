@@ -124,3 +124,56 @@ pub fn reveal_in_explorer(path: String) -> Result<(), String> {
     }
 }
 
+/// Open a file with the OS default application (browser, Excel, PowerPoint, etc.).
+#[tauri::command]
+pub fn open_path_in_os(path: String) -> Result<(), String> {
+    let p = std::path::Path::new(&path);
+    if !p.exists() {
+        return Err(format!("File not found: {}", p.display()));
+    }
+    if !p.is_file() {
+        return Err(format!("Not a file: {}", p.display()));
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| format!("Failed to open file: {e}"))?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| format!("Failed to open file: {e}"))?;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("cmd")
+            .args(["/C", "start", "", &path])
+            .spawn()
+            .map_err(|e| format!("Failed to open file: {e}"))?;
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+    {
+        return Err("Unsupported OS".to_string());
+    }
+    Ok(())
+}
+
+/// Copy a file to a new absolute destination path.
+#[tauri::command]
+pub fn copy_file_to_path(source: String, dest: String) -> Result<(), String> {
+    let src = std::path::Path::new(&source);
+    if !src.exists() {
+        return Err(format!("Source file not found: {}", src.display()));
+    }
+    if let Some(parent) = std::path::Path::new(&dest).parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("Failed to create parent dir: {e}"))?;
+    }
+    std::fs::copy(src, &dest).map_err(|e| format!("Failed to copy file: {e}"))?;
+    Ok(())
+}
+

@@ -23,6 +23,9 @@ export const COPY = {
   // Knowledge base (was: Knowledge Base / chunks / phaseN / ingesting)
   libraryTitle: "Document Library",
   libraryEmpty: "No documents yet. Use \u201CAdd documents\u201D to get started.",
+  libraryDeleteAll: "Delete all",
+  libraryDeleteAllConfirm:
+    "Remove every document from the library? This cannot be undone.",
   docStateAdding: "Adding\u2026",
   docStateReady: "Ready",
   docStateEnhanced: "Enhanced",

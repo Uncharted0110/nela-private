@@ -1,6 +1,8 @@
 pub mod crawler;
 pub mod db;
+pub mod disk;
 pub mod paths;
+pub mod query;
 pub mod watcher;
 pub mod rank;
 

@@ -4,6 +4,16 @@ use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
+fn filename_matches_doc_types(filename: &str, doc_types: &[String]) -> bool {
+    let hay = filename.to_lowercase();
+    doc_types.iter().any(|dt| match dt.as_str() {
+        "resume" => hay.contains("resume") || hay.contains("résumé") || hay.contains("resumé"),
+        "cv" => hay.contains("cv") || hay.contains("curriculum"),
+        "cover" => hay.contains("cover") && hay.contains("letter"),
+        other => hay.contains(other),
+    })
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileRecord {
     pub path: String,
@@ -206,54 +216,23 @@ impl IndexerDb {
 
     /// BM25-ranked candidate retrieval. Returns up to `limit` rows, best-first.
     pub fn search_candidates(&self, query_str: &str, limit: usize) -> Result<Vec<Candidate>, String> {
+        use crate::indexer::query::parse_search_hints;
+
+        let hints = parse_search_hints(query_str);
         let conn = self.pool.get().map_err(|e| format!("Database connection error: {e}"))?;
 
-        // 1. Tokenize the query: drop stop words, keep meaningful terms.
-        let stop_words = [
-            "can","you","tell","me","about","from","my","system","files","to","and","the","a","an",
-            "for","in","on","of","with","at","by","this","that","these","those","is","are","was",
-            "were","be","been","have","has","had","do","does","did","please","find","show","get",
-            "open","read","where","what","i","want","all","any","some","each","every","file","folder",
-            "folders","directory","directories","path","paths","location","locations","document",
-            "documents","pdf","pdfs","docx","xlsx","txt","csv","md","named","called","titled",
-            "containing","contains","content","contents","here","there",
-        ];
-        let words: Vec<String> = query_str
-            .split_whitespace()
-            .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase())
-            .filter(|w| !w.is_empty() && !stop_words.contains(&w.as_str()))
-            .collect();
+        // Search terms: explicit terms plus document-type tokens (resume, cv, …).
+        let mut words: Vec<String> = hints.terms.clone();
+        for dt in &hints.doc_type_tokens {
+            if !words.iter().any(|w| w == dt) {
+                words.push(dt.clone());
+            }
+        }
 
-        if words.is_empty() {
+        if words.is_empty() && hints.filename_literal.is_none() && hints.doc_type_tokens.is_empty() {
             return Ok(Vec::new());
         }
 
-        // Each term becomes a quoted prefix token: "tax"*  (quoting avoids FTS syntax errors).
-        let terms: Vec<String> = words.iter().map(|w| format!("\"{}\"*", w.replace('"', ""))).collect();
-
-        // 2. AND-first (precision), OR-fallback (recall).
-        let and_query = terms.join(" AND ");
-        let or_query = terms.join(" OR ");
-
-        // Multi-word filename boost: when the user typed 2+ words, also match them as an
-        // adjacent phrase scoped to the `name` column (e.g. "form 1a" -> form-1a.pdf,
-        // whose tokenized name is "form 1a pdf"). Quotes around terms are stripped; the
-        // trailing `*` makes the last token a prefix. This recovers multi-word filenames
-        // that BM25 alone buries behind content matches.
-        let name_phrase_query = if words.len() >= 2 {
-            let phrase = words
-                .iter()
-                .map(|w| w.replace('"', ""))
-                .collect::<Vec<_>>()
-                .join(" ");
-            Some(format!("{{name}} : \"{phrase}\" *"))
-        } else {
-            None
-        };
-
-        // bm25 weights map to indexed columns in declared order: name, location, content, path(UNINDEXED).
-        // (path is UNINDEXED and contributes nothing.) Lower bm25() = more relevant, so ORDER BY ASC.
-        // snippet(files_fts, 2, ...) -> excerpt from the `content` column (index 2).
         let sql = "
             SELECT f.path, f.filename, f.is_dir, f.size, f.mtime,
                    fts.location AS location,
@@ -261,7 +240,7 @@ impl IndexerDb {
             FROM files_fts fts
             JOIN files f ON f.path = fts.path
             WHERE files_fts MATCH ?1
-            ORDER BY bm25(files_fts, 10.0, 4.0, 1.0, 1.0)
+            ORDER BY bm25(files_fts, 20.0, 6.0, 1.0, 1.0)
             LIMIT ?2";
 
         let run = |match_expr: &str| -> Result<Vec<Candidate>, String> {
@@ -280,14 +259,14 @@ impl IndexerDb {
                 })
                 .map_err(|e| format!("FTS query_map failed: {e}"))?;
             let mut out = Vec::new();
-            for r in rows { if let Ok(c) = r { out.push(c); } }
+            for r in rows {
+                if let Ok(c) = r {
+                    out.push(c);
+                }
+            }
             Ok(out)
         };
 
-        // Merge results in priority order, deduping by path and capping at `limit`:
-        //   1. exact multi-word filename phrase (strongest signal)
-        //   2. AND of prefix terms (precision)
-        //   3. OR of prefix terms (recall) — only consulted if 1+2 found nothing.
         let mut out: Vec<Candidate> = Vec::new();
         let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
         let merge = |src: Vec<Candidate>, out: &mut Vec<Candidate>, seen: &mut std::collections::HashSet<String>| {
@@ -301,42 +280,119 @@ impl IndexerDb {
             }
         };
 
-        if let Some(ref np) = name_phrase_query {
-            match run(np) {
+        // 1. Exact filename literal (strongest signal).
+        if let Some(ref literal) = hints.filename_literal {
+            let tokenized = literal.replace('.', " ").replace('_', " ").replace('-', " ");
+            let name_query = format!("{{name}} : \"{tokenized}\"");
+            match run(&name_query) {
                 Ok(v) => merge(v, &mut out, &mut seen),
-                Err(e) => log::warn!("FTS name-phrase query failed: {e}; continuing"),
+                Err(e) => log::warn!("FTS filename-literal query failed: {e}"),
             }
         }
-        match run(&and_query) {
-            Ok(v) => merge(v, &mut out, &mut seen),
-            Err(e) => log::warn!("FTS AND query failed: {e}; trying OR"),
+
+        // 2. Document-type tokens scoped to filename (resume, cv, …).
+        if !hints.doc_type_tokens.is_empty() {
+            let doc_terms: Vec<String> = hints
+                .doc_type_tokens
+                .iter()
+                .map(|w| format!("\"{}\"*", w.replace('"', "")))
+                .collect();
+            let doc_name_query = format!("{{name}} : ({})", doc_terms.join(" OR "));
+            match run(&doc_name_query) {
+                Ok(v) => {
+                    let filtered: Vec<Candidate> = v
+                        .into_iter()
+                        .filter(|c| filename_matches_doc_types(&c.filename, &hints.doc_type_tokens))
+                        .collect();
+                    merge(filtered, &mut out, &mut seen);
+                }
+                Err(e) => log::warn!("FTS doc-type query failed: {e}"),
+            }
         }
-        if out.is_empty() {
+
+        // 3. Multi-word filename phrase from remaining terms.
+        if words.len() >= 2 {
+            let phrase = words
+                .iter()
+                .map(|w| w.replace('"', ""))
+                .collect::<Vec<_>>()
+                .join(" ");
+            let name_phrase_query = format!("{{name}} : \"{phrase}\" *");
+            match run(&name_phrase_query) {
+                Ok(v) => merge(v, &mut out, &mut seen),
+                Err(e) => log::warn!("FTS name-phrase query failed: {e}"),
+            }
+        }
+
+        // 4. AND of prefix terms (precision) — require all meaningful tokens.
+        if !words.is_empty() {
+            let terms: Vec<String> = words
+                .iter()
+                .map(|w| format!("\"{}\"*", w.replace('"', "")))
+                .collect();
+            let and_query = terms.join(" AND ");
+            match run(&and_query) {
+                Ok(v) => merge(v, &mut out, &mut seen),
+                Err(e) => log::warn!("FTS AND query failed: {e}"),
+            }
+        }
+
+        // 5. OR fallback only for a single-token query (avoid broad multi-word noise).
+        if out.is_empty() && words.len() == 1 {
+            let or_query = format!("\"{}\"*", words[0].replace('"', ""));
             match run(&or_query) {
                 Ok(v) => merge(v, &mut out, &mut seen),
-                Err(e) => log::warn!("FTS OR query failed: {e}; falling back to LIKE"),
+                Err(e) => log::warn!("FTS single-term OR query failed: {e}"),
             }
         }
+
         if !out.is_empty() {
             return Ok(out);
         }
 
-        // 3. LIKE fallback (filename/path only).
-        let like = format!("%{}%", words.join("%"));
-        let mut stmt = conn.prepare(
-            "SELECT path, filename, is_dir, size, mtime FROM files
-             WHERE filename LIKE ?1 OR path LIKE ?1 LIMIT ?2",
-        ).map_err(|e| format!("Prepare LIKE fallback failed: {e}"))?;
-        let rows = stmt.query_map(params![like, limit as i64], |row| {
-            Ok(Candidate {
-                path: row.get(0)?, filename: row.get(1)?,
-                is_dir: row.get::<_, i32>(2)? == 1, size: row.get(3)?, mtime: row.get(4)?,
-                location: String::new(), // files table has no location
-                snippet: String::new(),
+        // 6. Filename LIKE fallback — doc-type aware when possible.
+        let like_pattern = if !hints.doc_type_tokens.is_empty() {
+            format!("%{}%", hints.doc_type_tokens.join("%"))
+        } else if !words.is_empty() {
+            format!("%{}%", words.join("%"))
+        } else {
+            return Ok(Vec::new());
+        };
+
+        let mut stmt = conn
+            .prepare(
+                "SELECT path, filename, is_dir, size, mtime FROM files
+                 WHERE filename LIKE ?1 COLLATE NOCASE LIMIT ?2",
+            )
+            .map_err(|e| format!("Prepare LIKE fallback failed: {e}"))?;
+        let rows = stmt
+            .query_map(params![like_pattern, limit as i64], |row| {
+                Ok(Candidate {
+                    path: row.get(0)?,
+                    filename: row.get(1)?,
+                    is_dir: row.get::<_, i32>(2)? == 1,
+                    size: row.get(3)?,
+                    mtime: row.get(4)?,
+                    location: String::new(),
+                    snippet: String::new(),
+                })
             })
-        }).map_err(|e| format!("LIKE query_map failed: {e}"))?;
-        let mut out = Vec::new();
-        for r in rows { if let Ok(c) = r { out.push(c); } }
+            .map_err(|e| format!("LIKE query_map failed: {e}"))?;
+        for r in rows {
+            if let Ok(c) = r {
+                if !hints.doc_type_tokens.is_empty()
+                    && !filename_matches_doc_types(&c.filename, &hints.doc_type_tokens)
+                {
+                    continue;
+                }
+                if out.len() >= limit {
+                    break;
+                }
+                if seen.insert(c.path.clone()) {
+                    out.push(c);
+                }
+            }
+        }
         Ok(out)
     }
 

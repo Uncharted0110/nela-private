@@ -64,11 +64,37 @@ pub fn index_path_exists(path_key: &str) -> bool {
     Path::new(path_key).exists()
 }
 
-/// Collect crawl/watch roots: home (recursive) plus workspaces outside home.
-pub fn collect_index_roots(home_dir: &Path, workspace_paths: &[PathBuf]) -> Vec<PathBuf> {
-    let mut roots: Vec<PathBuf> = Vec::new();
+/// User-facing folders we index by default (not the entire home directory).
+fn default_user_folders(home_dir: &Path) -> Vec<PathBuf> {
+    const CANDIDATES: &[&str] = &[
+        "Documents",
+        "Desktop",
+        "Downloads",
+        "documents",
+        "desktop",
+        "downloads",
+    ];
 
-    if home_dir.exists() {
+    let mut out = Vec::new();
+    for name in CANDIDATES {
+        let p = home_dir.join(name);
+        if p.exists() && !out.iter().any(|existing: &PathBuf| existing == &p) {
+            out.push(p);
+        }
+    }
+    out
+}
+
+/// Collect crawl/watch roots: Documents, Desktop, Downloads under home, plus workspaces
+/// outside home. Deliberately excludes the full home tree (avoids indexing dev packages).
+///
+/// Each root is walked **recursively** — e.g. `~/Documents/Work/2024/resume.pdf` is indexed.
+/// Subtrees under blacklisted segments (`node_modules`, `.git`, …) are skipped.
+pub fn collect_index_roots(home_dir: &Path, workspace_paths: &[PathBuf]) -> Vec<PathBuf> {
+    let mut roots: Vec<PathBuf> = default_user_folders(home_dir);
+
+    if roots.is_empty() && home_dir.exists() {
+        // Fallback when standard folders are missing (minimal home layout).
         roots.push(home_dir.to_path_buf());
     }
 
@@ -77,12 +103,27 @@ pub fn collect_index_roots(home_dir: &Path, workspace_paths: &[PathBuf]) -> Vec<
             continue;
         }
         if home_dir.exists() && is_path_under(ws, home_dir) {
-            continue;
+            // Already covered when under Documents/Desktop/Downloads; still add if under
+            // a non-default folder inside home (e.g. ~/Projects).
+            if default_user_folders(home_dir)
+                .iter()
+                .any(|root| is_path_under(ws, root))
+            {
+                continue;
+            }
         }
-        roots.push(ws.clone());
+        if !roots.iter().any(|r| is_path_under(ws, r) || is_path_under(r, ws)) {
+            roots.push(ws.clone());
+        }
     }
 
     roots
+}
+
+/// True when an indexed path lies under any of the active crawl roots.
+pub fn is_under_index_roots(path_key: &str, roots: &[PathBuf]) -> bool {
+    let path = Path::new(path_key);
+    roots.iter().any(|root| is_path_under(path, root))
 }
 
 /// Remove a path from a deletion-sync set, accounting for legacy (non-normalized) keys.
@@ -127,6 +168,34 @@ pub(crate) fn is_blacklisted(path: &Path) -> bool {
     })
 }
 
+/// Paths that should never rank highly even if still present in a legacy index.
+pub fn is_low_value_path(path_key: &str) -> bool {
+    let lower = path_key.to_lowercase().replace('\\', "/");
+    const BAD_FRAGMENTS: &[&str] = &[
+        "/site-packages/",
+        "/dist-packages/",
+        "/lib/python",
+        "/.local/lib/",
+        "/__pycache__/",
+        "/node_modules/",
+        "/.git/",
+        "/target/",
+        "/.cargo/registry/",
+        "/.rustup/",
+        "/miniconda/",
+        "/anaconda/",
+        "/.conda/",
+        "/.pyenv/",
+        "/go/pkg/",
+        "/.gradle/",
+        "/.m2/",
+        "/.npm/",
+        "/venv/",
+        "/.venv/",
+    ];
+    BAD_FRAGMENTS.iter().any(|frag| lower.contains(frag))
+}
+
 const BLACKLIST: &[&str] = &[
     // VCS / package managers / build output (all platforms)
     ".git",
@@ -141,6 +210,23 @@ const BLACKLIST: &[&str] = &[
     ".venv",
     "env",
     ".env",
+    // Python / ML package trees
+    "site-packages",
+    "dist-packages",
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".tox",
+    "miniconda3",
+    "anaconda3",
+    ".conda",
+    ".pyenv",
+    // Rust / Go / Java tooling
+    ".cargo",
+    ".rustup",
+    "go",
+    ".gradle",
+    ".m2",
     // Linux
     "lost+found",
     // macOS (harmless on Linux/Windows)
@@ -201,5 +287,23 @@ mod tests {
         assert!(is_blacklisted(Path::new("/home/user/node_modules/pkg/index.js")));
         assert!(is_blacklisted(Path::new("C:/Users/foo/AppData/Local/Temp/x")));
         assert!(!is_blacklisted(Path::new("/home/user/Documents/report.pdf")));
+    }
+
+    #[test]
+    fn low_value_detects_site_packages() {
+        assert!(is_low_value_path(
+            "/home/user/.local/lib/python3.12/site-packages/torch/autograd/__init__.py"
+        ));
+        assert!(!is_low_value_path("/home/user/Documents/resume.pdf"));
+    }
+
+    #[test]
+    fn collect_roots_uses_existing_user_folders() {
+        let dir = std::env::temp_dir().join("nela_indexer_roots_test");
+        let docs = dir.join("Documents");
+        fs::create_dir_all(&docs).unwrap();
+        let roots = collect_index_roots(&dir, &[]);
+        assert!(roots.iter().any(|p| p.ends_with("Documents")));
+        fs::remove_dir_all(&dir).ok();
     }
 }

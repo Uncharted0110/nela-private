@@ -360,6 +360,7 @@ fn main() {
             app_lib::commands::rag::query_rag,
             app_lib::commands::rag::list_rag_documents,
             app_lib::commands::rag::delete_rag_document,
+            app_lib::commands::rag::delete_all_rag_documents,
             app_lib::commands::rag::enrich_rag_documents,
             // RAPTOR commands
             app_lib::commands::rag::build_raptor_tree,
@@ -392,6 +393,8 @@ fn main() {
             app_lib::commands::system::detect_model_params,
             app_lib::commands::system::export_telemetry_logs,
             app_lib::commands::system::reveal_in_explorer,
+            app_lib::commands::system::open_path_in_os,
+            app_lib::commands::system::copy_file_to_path,
             // Playground commands
             app_lib::commands::playground::playground_list_pipelines,
             app_lib::commands::playground::playground_load_pipeline,
@@ -407,6 +410,8 @@ fn main() {
             app_lib::commands::artifact::resolve_intent,
             app_lib::commands::artifact::generate_spreadsheet,
             app_lib::commands::artifact::generate_presentation,
+            app_lib::commands::artifact::parse_presentation_deck,
+            app_lib::commands::artifact::edit_presentation_deck,
             app_lib::commands::artifact::generate_html,
             app_lib::commands::artifact::parse_spreadsheet_data,
             app_lib::commands::artifact_images::download_image_data_uri,

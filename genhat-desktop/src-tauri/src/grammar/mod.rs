@@ -16,6 +16,7 @@
 //! - `repair` — JSON key repair with Levenshtein distance
 
 pub mod gbnf;
+pub mod plan_normalize;
 pub mod repair;
 pub mod schema;
 

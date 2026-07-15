@@ -1785,6 +1785,31 @@ impl RagPipeline {
         Ok(())
     }
 
+    /// Delete all documents and their chunks from DB + search indexes.
+    pub async fn delete_all_documents(&self) -> Result<usize, String> {
+        let _lock = self.ingest_lock.lock().await;
+        let docs = self.db.list_documents()?;
+        let mut deleted = 0usize;
+
+        for doc in docs {
+            let chunk_ids = self.db.get_chunk_ids_for_doc(doc.id)?;
+            if !chunk_ids.is_empty() {
+                let chunks = self.db.get_chunks_by_ids(&chunk_ids)?;
+                let ids: Vec<i64> = chunks.iter().map(|c| c.id).collect();
+                if !ids.is_empty() {
+                    self.bm25.delete_chunks(&ids)?;
+                    for &id in &ids {
+                        self.remove_vec_or_defer(id);
+                    }
+                }
+            }
+            self.db.delete_document(doc.id)?;
+            deleted += 1;
+        }
+
+        Ok(deleted)
+    }
+
     /// List all ingested documents with their status.
     pub fn list_documents(&self) -> Result<Vec<IngestionStatus>, String> {
         let docs = self.db.list_documents()?;

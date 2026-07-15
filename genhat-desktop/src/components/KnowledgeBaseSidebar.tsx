@@ -34,6 +34,7 @@ interface KnowledgeBaseSidebarProps {
   onIngestDir: () => void;
   onOpenDocViewer: (doc: IngestionStatus) => void;
   onDeleteRagDoc: (docId: number) => void;
+  onDeleteAllRagDocs: () => void;
 }
 
 /** Map internal ingestion phase + placeholder state to a friendly status. */
@@ -69,6 +70,7 @@ export default function KnowledgeBaseSidebar({
   onIngestDir,
   onOpenDocViewer,
   onDeleteRagDoc,
+  onDeleteAllRagDocs,
 }: KnowledgeBaseSidebarProps) {
   const [watchedPaths, setWatchedPaths] = useState<WatchedPath[]>([]);
   const [scanProgress, setScanProgress] = useState<ScanProgress | null>(null);
@@ -176,6 +178,17 @@ export default function KnowledgeBaseSidebar({
           >
             <FolderOpen size={14} /> {COPY.addFolderTitle}
           </button>
+          {ragDocs.length > 0 && (
+            <button
+              onClick={onDeleteAllRagDocs}
+              disabled={ragIngesting}
+              aria-label={COPY.libraryDeleteAll}
+              title={COPY.libraryDeleteAll}
+              className="glass-btn ml-auto inline-flex items-center gap-1.5 py-1.5 px-3 text-[0.78rem] font-medium rounded-lg cursor-pointer text-danger border border-transparent transition-all duration-200 hover:border-danger/40 hover:bg-[rgba(239,68,68,0.08)] disabled:opacity-45 disabled:cursor-not-allowed"
+            >
+              <Trash2 size={14} /> {COPY.libraryDeleteAll}
+            </button>
+          )}
         </div>
 
         {(ragIngesting || enrichmentStatus) && (
