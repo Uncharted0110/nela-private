@@ -165,6 +165,14 @@ export interface WebSearchResult {
   query: string;
   results: SearchHit[];
   formatted_context: string;
+  extracted_tables?: ExtractedWebTable[];
+}
+
+export interface ExtractedWebTable {
+  headers: string[];
+  rows: string[][];
+  source_url: string;
+  source_title: string;
 }
 
 export interface RagStreamSetup {

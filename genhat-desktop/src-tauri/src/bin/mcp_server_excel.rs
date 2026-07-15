@@ -1,17 +1,14 @@
 //! mcp-server-excel — MCP tool sidecar for spreadsheet synthesis.
+//!
+//! Reads one JSON-RPC 2.0 request from stdin, generates an `.xlsx` file via
+//! `app_lib::spreadsheet`, and writes one JSON-RPC 2.0 response to stdout, then exits.
 
 use std::io::{self, BufRead};
 
 use app_lib::grammar::plan_normalize::parse_spreadsheet_plan;
 use app_lib::grammar::schema::SpreadsheetPlan;
 use app_lib::spreadsheet::write_spreadsheet_plan;
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Deserialize)]
-struct JsonRpcRequest {
-    id: u64,
-    params: serde_json::Value,
-}
+use serde::Serialize;
 
 #[derive(Debug, Serialize)]
 struct JsonRpcResponse {
@@ -60,7 +57,10 @@ fn main() {
     };
 
     let id = raw["id"].as_u64().unwrap_or(0);
-    let params = raw.get("params").cloned().unwrap_or(serde_json::json!({ "ops": [] }));
+    let params = raw
+        .get("params")
+        .cloned()
+        .unwrap_or(serde_json::json!({ "ops": [] }));
 
     let plan: SpreadsheetPlan = match parse_spreadsheet_plan(params) {
         Ok(p) => p,
