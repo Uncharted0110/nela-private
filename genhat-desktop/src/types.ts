@@ -65,6 +65,18 @@ export interface ChatContextMessage {
   content: string;
 }
 
+/** Internal LLM API message (may include tool roles not shown in the chat UI). */
+export type LlmMessageRole = "system" | "user" | "assistant" | "tool";
+
+export interface LlmMessage {
+  role: LlmMessageRole;
+  content: string;
+  /** OpenAI-style tool call id when role is tool. */
+  tool_call_id?: string;
+  /** Tool name when role is tool or for assistant tool requests. */
+  name?: string;
+}
+
 export interface ChatContextUsage {
   contextWindowTokens: number;
   usedTokens: number;

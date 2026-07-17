@@ -257,6 +257,8 @@ fn spawn_router_process(preset_path: &Path, port: u16) -> Result<Child, String> 
         "1".to_string(),
         "-fit".to_string(),
         "off".to_string(),
+        // Jinja chat templates are required for OpenAI-style tools / tool_calls.
+        "--jinja".to_string(),
     ];
     if use_no_mmap {
         args.push("--no-mmap".to_string());

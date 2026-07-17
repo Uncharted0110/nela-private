@@ -25,6 +25,7 @@ import type {
   ArtifactResult,
   ArtifactImageAsset,
   FileRecord,
+  LlmMessage,
 } from "./types";
 
 export interface HFModel {
@@ -633,12 +634,104 @@ export const Api = {
 
   // ── Streaming Chat (HTTP → llama-server) ───────────────────────────────────
 
+  /** Map internal LLM messages to OpenAI chat roles llama-server accepts. */
+  llmMessagesForApi(
+    messages: Array<Pick<ChatMessage, "role" | "content"> | LlmMessage>
+  ): Array<{ role: string; content: string }> {
+    return messages.map((m) => {
+      if (m.role === "tool") {
+        const name = "name" in m && m.name ? m.name : "tool";
+        return {
+          role: "user",
+          content: `Tool result (${name}):\n${m.content}`,
+        };
+      }
+      return { role: m.role, content: m.content };
+    });
+  },
+
+  /**
+   * Non-streaming chat completion via llama-server's OpenAI-compatible endpoint.
+   * Used for tool-decision rounds and short structured completions.
+   */
+  async completeChat(
+    messages: Array<Pick<ChatMessage, "role" | "content"> | LlmMessage>,
+    options?: {
+      port?: number;
+      modelId?: string | null;
+      signal?: AbortSignal;
+      disableThinking?: boolean;
+      maxTokens?: number;
+      temperature?: number;
+      topP?: number;
+      topK?: number;
+      repeatPenalty?: number;
+      grammar?: string;
+    }
+  ): Promise<{ content: string; thinking: string }> {
+    const llamaPort =
+      options?.port ||
+      (await invoke<number>("get_llama_port", {
+        modelId: options?.modelId?.trim() ? options.modelId.trim() : null,
+      }));
+
+    const requestBody: Record<string, unknown> = {
+      messages: this.llmMessagesForApi(messages),
+      stream: false,
+      model: options?.modelId?.trim() || "local",
+      cache_prompt: true,
+      max_tokens: options?.maxTokens ?? 512,
+      temperature: options?.temperature ?? 0.3,
+      top_p: options?.topP ?? 0.95,
+      top_k: options?.topK ?? 40,
+      repeat_penalty: options?.repeatPenalty ?? 1.1,
+    };
+
+    if (options?.grammar) {
+      requestBody.grammar = options.grammar;
+    }
+
+    const shouldDisableThinking = options?.disableThinking ?? true;
+    if (!shouldDisableThinking) {
+      requestBody.reasoning_format = "deepseek";
+      requestBody.reasoning_budget = -1;
+      requestBody.chat_template_kwargs = { enable_thinking: true };
+    } else {
+      requestBody.reasoning_format = "none";
+      requestBody.reasoning_budget = 0;
+      requestBody.chat_template_kwargs = { enable_thinking: false };
+    }
+
+    const res = await fetch(`http://127.0.0.1:${llamaPort}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(requestBody),
+      signal: options?.signal,
+    });
+
+    if (!res.ok) {
+      const errBody = await res.text().catch(() => res.statusText);
+      throw new Error(`LLM server returned ${res.status}: ${errBody}`);
+    }
+
+    const parsed = (await res.json()) as {
+      choices?: Array<{
+        message?: { content?: string; reasoning_content?: string };
+      }>;
+    };
+    const message = parsed.choices?.[0]?.message;
+    return {
+      content: (message?.content ?? "").trim(),
+      thinking: (message?.reasoning_content ?? "").trim(),
+    };
+  },
+
   /**
    * Stream a chat completion via llama-server's OpenAI-compatible SSE endpoint.
    * Fetches the dynamic port from the backend unless one is provided.
    */
   async streamChat(
-    messages: ChatMessage[],
+    messages: Array<Pick<ChatMessage, "role" | "content"> | LlmMessage>,
     onChunk: (chunk: string) => void,
     onThinking: (thinking: string) => void,
     onFinish: () => void,
@@ -657,7 +750,7 @@ export const Api = {
     }
   ) {
     try {
-      const apiMessages = messages.map(({ role, content }) => ({ role, content }));
+      const apiMessages = this.llmMessagesForApi(messages);
 
       const llamaPort =
         port ||

@@ -21,9 +21,9 @@ import {
   hasLocalFilePathReference,
   loadAmbientFileBody,
 } from "../ambientFileContent";
-import { extractWebSearchQuery } from "../webSearchQuery";
 import { parseCSV } from "./csvParse";
 import type { SendHandlerContext } from "./types";
+import { runWebSearchToolLoop } from "./webSearchToolLoop";
 
 export async function handleSendTextChat(
   text: string,
@@ -36,22 +36,6 @@ export async function handleSendTextChat(
   slashFileSearch: boolean
 ): Promise<void> {
   const sid = ctx.activeSessionId;
-  
-  // ── Web search context injection ───────────────────────────────────────
-  let webSearchResult: WebSearchResult | null = null;
-  if (effectiveWebEnabled) {
-    try {
-      const searchQuery = extractWebSearchQuery(text);
-      const fetchContent = ctx.webDepth === "full";
-      const maxResults = fetchContent ? 4 : 5;
-      const result = await Api.webSearch(searchQuery, maxResults, fetchContent);
-      if (result.results.length > 0) {
-        webSearchResult = result;
-      }
-    } catch (e) {
-      console.warn("[web_search] Failed, continuing without web context:", e);
-    }
-  }
 
   // ── Ambient FTS5 file search context injection (Revamp P4 grounding) ───
   let ambientFileContext = "";
@@ -65,8 +49,8 @@ export async function handleSendTextChat(
   //  - soft: a likely file reference ("get form 1a", "what does X say", "contents of X").
   //    These trigger the search too, but on a miss they silently continue so general
   //    questions are not hijacked into a false "I couldn't find the file" answer.
-  // When web search already supplied context and the request wasn't an explicit file
-  // request, skip ambient search to avoid the two grounding sources clashing.
+  // When web search is available and the request wasn't an explicit file request,
+  // skip soft ambient search so the model can use the web_search tool instead.
   const explicitFileSearch =
     resolvedIntentKind === "FileSearch" ||
     slashFileSearch ||
@@ -76,7 +60,7 @@ export async function handleSendTextChat(
   const wantsFileSearch = shouldRunAmbientFileSearch(text, {
     forceFileSearch: resolvedIntentKind === "FileSearch" || slashFileSearch,
   });
-  const skipForWebSearch = !!webSearchResult && !explicitFileSearch;
+  const skipForWebSearch = effectiveWebEnabled && !explicitFileSearch;
 
   if (!attachedFile && wantsFileSearch && !skipForWebSearch) {
     {
@@ -160,6 +144,7 @@ export async function handleSendTextChat(
   let fullResponse = "";
   let fullThinking = "";
   let textFirstTokenTimeMs: number | null = null;
+  let webSearchResult: WebSearchResult | null = null;
 
   const sessionMessages = session.messages;
   const fullSessionMessages: ChatMessage[] = [
@@ -212,14 +197,6 @@ export async function handleSendTextChat(
     }
   }
 
-  // Prepend web search context as a system message so the model can cite it
-  if (webSearchResult && webSearchResult.formatted_context) {
-    apiMessages = [
-      { role: "system", content: webSearchResult.formatted_context },
-      ...apiMessages,
-    ];
-  }
-
   const generationOptions = ctx.getChatGenerationOptions(ctx.selectedModel);
 
   try {
@@ -252,74 +229,108 @@ export async function handleSendTextChat(
     console.warn("Context compaction failed; continuing with original context:", err);
   }
 
-  // Collapse every injected `system` message (web search, ambient file context,
+  // Collapse every injected `system` message (ambient file context,
   // auto-compaction summary) into a single leading system message and strip the
   // UI-only discovery notice. This prevents llama-server's strict chat template
   // from rejecting the request with "System message must be at the beginning".
   apiMessages = normalizeMessagesForLlm(apiMessages);
 
-  Api.streamChat(
-    apiMessages,
-    (chunk) => {
-      if (textFirstTokenTimeMs === null) {
-        textFirstTokenTimeMs = Date.now();
-      }
-      ctx.updateSession(sid, (prev) => ({
-        streamingContent: prev.streamingContent + chunk,
-      }));
-      fullResponse += chunk;
-    },
-    (thinkingChunk) => {
-      fullThinking += thinkingChunk;
-      ctx.setStreamingThinking(fullThinking);
-    },
-    () => {
-      if (ctx.generalIntervalRef.current) clearInterval(ctx.generalIntervalRef.current);
-      const totalTime = Math.floor((Date.now() - chatStartTime) / 100) / 10;
-      const timeToFirstToken =
-        textFirstTokenTimeMs
-          ? Math.floor((textFirstTokenTimeMs - chatStartTime) / 100) / 10
-          : null;
+  const finishOk = (response: string, thinking: string, web: WebSearchResult | null) => {
+    if (ctx.generalIntervalRef.current) clearInterval(ctx.generalIntervalRef.current);
+    const totalTime = Math.floor((Date.now() - chatStartTime) / 100) / 10;
+    const timeToFirstToken =
+      textFirstTokenTimeMs
+        ? Math.floor((textFirstTokenTimeMs - chatStartTime) / 100) / 10
+        : null;
 
-      ctx.setGeneralGenerating(false);
-      ctx.setGeneralElapsedTime(totalTime);
-      ctx.setGeneralGenerationTime(totalTime);
-      ctx.setStreamingThinking("");
+    ctx.setGeneralGenerating(false);
+    ctx.setGeneralElapsedTime(totalTime);
+    ctx.setGeneralGenerationTime(totalTime);
+    ctx.setStreamingThinking("");
 
-      if (fullResponse) {
-        ctx.updateSession(sid, (prev) => ({
-          messages: [
-            ...prev.messages,
-            {
-              role: "assistant" as const,
-              content: fullResponse,
-              thinking: fullThinking || undefined,
-              webSearchResult: webSearchResult ?? undefined,
-              generateTime: totalTime,
-              firstTokenTime:
-                timeToFirstToken !== null ? timeToFirstToken : undefined,
-            },
-          ],
-          streamingContent: "",
-          loading: false,
-        }));
-      } else {
-        ctx.updateSession(sid, { loading: false });
-      }
-    },
-    (err) => {
-      if (ctx.generalIntervalRef.current) clearInterval(ctx.generalIntervalRef.current);
-      ctx.setGeneralGenerating(false);
-      ctx.setStreamingThinking("");
-      console.error("Stream error", err);
+    if (response) {
       ctx.updateSession(sid, (prev) => ({
         messages: [
           ...prev.messages,
-          { role: "assistant" as const, content: `Error: ${err}` },
+          {
+            role: "assistant" as const,
+            content: response,
+            thinking: thinking || undefined,
+            webSearchResult: web ?? undefined,
+            generateTime: totalTime,
+            firstTokenTime:
+              timeToFirstToken !== null ? timeToFirstToken : undefined,
+          },
         ],
+        streamingContent: "",
         loading: false,
       }));
-    },
+    } else {
+      ctx.updateSession(sid, { loading: false });
+    }
+  };
+
+  const finishErr = (err: unknown) => {
+    if (ctx.generalIntervalRef.current) clearInterval(ctx.generalIntervalRef.current);
+    ctx.setGeneralGenerating(false);
+    ctx.setStreamingThinking("");
+    console.error("Stream error", err);
+    ctx.updateSession(sid, (prev) => ({
+      messages: [
+        ...prev.messages,
+        { role: "assistant" as const, content: `Error: ${err}` },
+      ],
+      loading: false,
+    }));
+  };
+
+  const onChunk = (chunk: string) => {
+    if (textFirstTokenTimeMs === null) {
+      textFirstTokenTimeMs = Date.now();
+    }
+    ctx.updateSession(sid, (prev) => ({
+      streamingContent: prev.streamingContent + chunk,
+    }));
+    fullResponse += chunk;
+  };
+
+  const onThinking = (thinkingChunk: string) => {
+    fullThinking += thinkingChunk;
+    ctx.setStreamingThinking(fullThinking);
+  };
+
+  if (effectiveWebEnabled) {
+    runWebSearchToolLoop({
+      messages: apiMessages,
+      webDepth: ctx.webDepth,
+      modelId: ctx.selectedModel || undefined,
+      signal: ctrl.signal,
+      disableThinking: !ctx.thinkingEnabled,
+      generationOptions,
+      onChunk,
+      onThinking,
+    })
+      .then((result) => {
+        webSearchResult = result.webSearchResult;
+        if (result.thinking && !fullThinking) {
+          fullThinking = result.thinking;
+        }
+        // Prefer streamed/accumulated fullResponse; fall back to result.content.
+        finishOk(fullResponse || result.content, fullThinking || result.thinking, webSearchResult);
+      })
+      .catch((err) => {
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        finishErr(err);
+      });
+    return;
+  }
+
+  Api.streamChat(
+    apiMessages,
+    onChunk,
+    onThinking,
+    () => finishOk(fullResponse, fullThinking, null),
+    finishErr,
     undefined,
     ctx.selectedModel || undefined,
     ctrl.signal,

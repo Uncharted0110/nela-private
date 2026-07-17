@@ -36,11 +36,11 @@ import {
   mapHtmlRendererTheme,
 } from "../htmlArtifactPrompt";
 import {
-  extractWebSearchQuery,
   webArtifactGroundingPreamble,
   webContextCharLimit,
   webSearchOptionsForArtifact,
 } from "../webSearchQuery";
+import { formulateArtifactWebQueries, mergeWebSearchResults } from "./webSearchToolLoop";
 import {
   extractAmbientSearchQuery,
   selectAmbientResultsForInjection,
@@ -242,36 +242,52 @@ export async function handleArtifactGeneration(
           schemaId,
           contextWindowTokens
         );
-        const searchQuery = extractWebSearchQuery(text);
-        const result = await Api.webSearch(searchQuery, maxResults, fetchContent);
-        if (
-          schemaId === "spreadsheet_synthesis" &&
-          result.extracted_tables &&
-          result.extracted_tables.length > 0
-        ) {
-          deterministicWebPlan = tryBuildDeterministicWebSpreadsheetPlan(
-            result.extracted_tables,
-            text,
-            rowPlan.explicit ? rowPlan.count : null
-          );
-          if (deterministicWebPlan) {
-            console.info(
-              "Using deterministic web table for spreadsheet:",
-              result.extracted_tables[0]?.source_url
-            );
+        const queries = await formulateArtifactWebQueries(text, {
+          modelId: ctx.selectedModel || undefined,
+          maxQueries: 3,
+        });
+        let merged = null as import("../../types").WebSearchResult | null;
+        // Cap total hits across queries so context stays within budget.
+        const perQuery = Math.max(1, Math.ceil(maxResults / Math.max(queries.length, 1)));
+        for (const searchQuery of queries) {
+          if (!searchQuery.trim()) continue;
+          try {
+            const result = await Api.webSearch(searchQuery, perQuery, fetchContent);
+            merged = mergeWebSearchResults(merged, result);
+          } catch (err) {
+            console.warn("Web search query failed:", searchQuery, err);
           }
         }
-        if (result.formatted_context) {
-          const webLimit = webContextCharLimit(contextWindowTokens);
-          const trimmedWeb =
-            result.formatted_context.length > webLimit
-              ? result.formatted_context.slice(0, webLimit) +
-                "\n\n[...web excerpts truncated for context limit]\n--- End of web sources ---\n"
-              : result.formatted_context;
-          supplementalContext +=
-            webArtifactGroundingPreamble() + `${trimmedWeb}\n\n`;
+        if (merged) {
+          if (
+            schemaId === "spreadsheet_synthesis" &&
+            merged.extracted_tables &&
+            merged.extracted_tables.length > 0
+          ) {
+            deterministicWebPlan = tryBuildDeterministicWebSpreadsheetPlan(
+              merged.extracted_tables,
+              text,
+              rowPlan.explicit ? rowPlan.count : null
+            );
+            if (deterministicWebPlan) {
+              console.info(
+                "Using deterministic web table for spreadsheet:",
+                merged.extracted_tables[0]?.source_url
+              );
+            }
+          }
+          if (merged.formatted_context) {
+            const webLimit = webContextCharLimit(contextWindowTokens);
+            const trimmedWeb =
+              merged.formatted_context.length > webLimit
+                ? merged.formatted_context.slice(0, webLimit) +
+                  "\n\n[...web excerpts truncated for context limit]\n--- End of web sources ---\n"
+                : merged.formatted_context;
+            supplementalContext +=
+              webArtifactGroundingPreamble() + `${trimmedWeb}\n\n`;
+          }
+          webHitsForImages = merged.results ?? [];
         }
-        webHitsForImages = result.results ?? [];
       } catch (err) {
         console.warn("Web grounding for artifact generation failed:", err);
       }
