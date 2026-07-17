@@ -27,6 +27,30 @@ import type {
   FileRecord,
   LlmMessage,
 } from "./types";
+import {
+  llamaContextKey,
+  resolveLlamaSlot,
+} from "./app/llamaSlotAffinity";
+import { useWorkspaceStore } from "./stores/workspaceStore";
+import { useSessionStore } from "./stores/sessionStore";
+
+/** Pin chat completions to a per-session/workspace llama-server KV slot. */
+function resolveRequestIdSlot(opts?: {
+  idSlot?: number | null;
+  sessionId?: string | null;
+  workspaceId?: string | null;
+}): number {
+  if (typeof opts?.idSlot === "number" && Number.isFinite(opts.idSlot) && opts.idSlot >= 0) {
+    return Math.floor(opts.idSlot);
+  }
+  const workspaceId =
+    opts?.workspaceId ??
+    useWorkspaceStore.getState().activeWorkspace?.id ??
+    "default";
+  const sessionId =
+    opts?.sessionId ?? useSessionStore.getState().activeSessionId || "anon";
+  return resolveLlamaSlot(llamaContextKey(workspaceId, sessionId));
+}
 
 export interface HFModel {
   _id: string;
@@ -667,6 +691,10 @@ export const Api = {
       topK?: number;
       repeatPenalty?: number;
       grammar?: string;
+      /** Override llama-server KV slot; defaults to active workspace+session affinity. */
+      idSlot?: number | null;
+      sessionId?: string | null;
+      workspaceId?: string | null;
     }
   ): Promise<{ content: string; thinking: string }> {
     const llamaPort =
@@ -680,6 +708,7 @@ export const Api = {
       stream: false,
       model: options?.modelId?.trim() || "local",
       cache_prompt: true,
+      id_slot: resolveRequestIdSlot(options),
       max_tokens: options?.maxTokens ?? 512,
       temperature: options?.temperature ?? 0.3,
       top_p: options?.topP ?? 0.95,
@@ -747,6 +776,10 @@ export const Api = {
       topK?: number;
       repeatPenalty?: number;
       grammar?: string;
+      /** Override llama-server KV slot; defaults to active workspace+session affinity. */
+      idSlot?: number | null;
+      sessionId?: string | null;
+      workspaceId?: string | null;
     }
   ) {
     try {
@@ -766,6 +799,8 @@ export const Api = {
         // Reuse KV cache prefix across turns (O(1) decode). Without this,
         // llama-server may re-prefill the entire growing transcript each request.
         cache_prompt: true,
+        // Isolate prompt cache per chat/workspace (see llamaSlotAffinity).
+        id_slot: resolveRequestIdSlot(generationOptions),
         max_tokens: generationOptions?.maxTokens ?? 2048,
         temperature: generationOptions?.temperature ?? 0.7,
         top_p: generationOptions?.topP ?? 0.95,

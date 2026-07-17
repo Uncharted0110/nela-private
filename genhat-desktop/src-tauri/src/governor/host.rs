@@ -121,13 +121,17 @@ impl HostProfile {
 
     /// Max models the llama-server router may keep resident (`--models-max`).
     ///
+    /// Cap is 3 so a few chat/embed/helper weights can co-reside without unbounded RAM.
     /// - ≤16 GB → 1 (anti-swap; chat↔embed may unload/reload)
-    /// - \>16 GB → 2 (chat + embed can co-reside)
+    /// - ≤32 GB → 2
+    /// - \>32 GB → 3
     pub fn models_max(&self) -> u32 {
         if self.total_ram_mb <= 16 * 1024 {
             1
-        } else {
+        } else if self.total_ram_mb <= 32 * 1024 {
             2
+        } else {
+            3
         }
     }
 }
@@ -309,7 +313,7 @@ mod tests {
         );
         assert_eq!(
             HostProfile::synthetic(16, 32, 64 * 1024, 48 * 1024).models_max(),
-            2
+            3
         );
     }
 }

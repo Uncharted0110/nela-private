@@ -227,6 +227,7 @@ fn spawn_router_process(preset_path: &Path, port: u16) -> Result<Child, String> 
     let threads = host.inference_threads(gov.on_battery(), gov.thermal_pressure());
     let models_max = host.models_max();
     let use_no_mmap = host.prefer_no_mmap();
+    let parallel = crate::backends::llama_router_preset::LLAMA_ROUTER_PARALLEL_SLOTS;
 
     let log_path = std::env::temp_dir().join(format!("genhat-llama-router-{port}.log"));
     if let Ok(mut log_file) = std::fs::OpenOptions::new()
@@ -238,6 +239,7 @@ fn spawn_router_process(preset_path: &Path, port: u16) -> Result<Child, String> 
         let _ = writeln!(log_file, "exe: {}", exe.display());
         let _ = writeln!(log_file, "preset: {}", preset_path.display());
         let _ = writeln!(log_file, "models-max: {models_max}");
+        let _ = writeln!(log_file, "parallel: {parallel}");
     }
 
     let mut args = vec![
@@ -254,7 +256,10 @@ fn spawn_router_process(preset_path: &Path, port: u16) -> Result<Child, String> 
         "--threads-batch".to_string(),
         threads.to_string(),
         "--parallel".to_string(),
-        "1".to_string(),
+        parallel.to_string(),
+        // GenHat assigns id_slot per chat/workspace — do not auto-match by prompt similarity.
+        "--slot-prompt-similarity".to_string(),
+        "0".to_string(),
         "-fit".to_string(),
         "off".to_string(),
         // Jinja chat templates are required for OpenAI-style tools / tool_calls.
@@ -285,10 +290,11 @@ fn spawn_router_process(preset_path: &Path, port: u16) -> Result<Child, String> 
     attach_log_pipes(&mut child, &log_path);
 
     log::info!(
-        "llama-server router spawned: pid={}, port={}, models_max={}, threads={}, preset={}",
+        "llama-server router spawned: pid={}, port={}, models_max={}, parallel={}, threads={}, preset={}",
         child.id(),
         port,
         models_max,
+        parallel,
         threads,
         preset_path.display()
     );
@@ -747,6 +753,12 @@ impl ModelBackend for LlamaServerBackend {
             "cache_prompt": true,
             "stream": false
         });
+
+        if let Some(slot) = request.extra.get("id_slot") {
+            if let Ok(n) = slot.parse::<i64>() {
+                body["id_slot"] = serde_json::json!(n);
+            }
+        }
 
         if let Some(grammar) = request.extra.get("grammar") {
             if !grammar.is_empty() {

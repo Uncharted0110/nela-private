@@ -4,7 +4,9 @@ import type {
   ChatContextUsage 
 } from "../types";
 import { createEmptySession } from "../app/sessionUtils";
+import { llamaContextKey, releaseLlamaSlot } from "../app/llamaSlotAffinity";
 import { useChatModeStore } from "./chatModeStore";
+import { useWorkspaceStore } from "./workspaceStore";
 
 // Module-level AbortControllers map for session management
 export const abortControllers = new Map<string, AbortController>();
@@ -138,6 +140,14 @@ export const useSessionStore = create<SessionState & SessionActions>((set, get) 
     if (controller) {
       controller.abort();
       abortControllers.delete(sessionId);
+    }
+
+    // Free this chat's llama-server KV slot so a new chat can take it.
+    try {
+      const workspaceId = useWorkspaceStore.getState().activeWorkspace?.id ?? "default";
+      releaseLlamaSlot(llamaContextKey(workspaceId, sessionId));
+    } catch (error) {
+      console.warn("Failed to release llama slot for closed session:", error);
     }
     
     set((state) => {

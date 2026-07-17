@@ -1,6 +1,7 @@
 import { open, save } from "@tauri-apps/plugin-dialog";
 import type { Dispatch, SetStateAction } from "react";
 import { Api } from "../api";
+import { clearLlamaSlots } from "./llamaSlotAffinity";
 import type {
   ChatSession,
   IngestionStatus,
@@ -81,6 +82,8 @@ function resetSessionState(ctx: WorkspaceMutationContext): void {
   ctx.setActiveSessionId("");
   ctx.setMindmapsBySession({});
   ctx.setActiveMindmapOverlay(null);
+  // Drop all KV-slot affinities so the next workspace gets fresh contexts.
+  clearLlamaSlots();
 }
 
 export async function switchWorkspaceByIdAction(

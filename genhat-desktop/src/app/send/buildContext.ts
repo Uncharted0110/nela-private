@@ -11,6 +11,7 @@ import {
   setTtsInterval,
 } from "../../stores/chatModeStore";
 import { useModelStore } from "../../stores/modelStore";
+import { useWorkspaceStore } from "../../stores/workspaceStore";
 import type { SendHandlerContext } from "./types";
 
 export const abortControllersRef: MutableRefObject<Map<string, AbortController>> = {
@@ -54,6 +55,7 @@ export function buildSendHandlerContext(): SendHandlerContext {
   const sessionStore = useSessionStore.getState();
   const chatModeStore = useChatModeStore.getState();
   const modelStore = useModelStore.getState();
+  const workspaceId = useWorkspaceStore.getState().activeWorkspace?.id ?? "default";
   const advanced = getAdvancedMode();
 
   return {
@@ -90,6 +92,11 @@ export function buildSendHandlerContext(): SendHandlerContext {
     clearImage: chatModeStore.clearImage,
     clearDirectDocuments: chatModeStore.clearDirectDocuments,
     getContextWindowTokens: modelStore.getContextWindowTokens,
-    getChatGenerationOptions: modelStore.getChatGenerationOptions,
+    getChatGenerationOptions: (modelIdentifier) => ({
+      ...modelStore.getChatGenerationOptions(modelIdentifier),
+      // Freeze affinity to the session that started this send (not the later active tab).
+      sessionId: sessionStore.activeSessionId,
+      workspaceId,
+    }),
   };
 }

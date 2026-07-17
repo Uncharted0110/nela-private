@@ -208,6 +208,9 @@ export async function runWebSearchToolLoop(
       topP: opts.generationOptions?.topP,
       topK: opts.generationOptions?.topK,
       repeatPenalty: opts.generationOptions?.repeatPenalty,
+      idSlot: opts.generationOptions?.idSlot,
+      sessionId: opts.generationOptions?.sessionId,
+      workspaceId: opts.generationOptions?.workspaceId,
     });
 
     if (decision.thinking) thinking += decision.thinking;

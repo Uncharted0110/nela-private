@@ -17,6 +17,10 @@ export interface GenerationOptions {
   topP?: number;
   topK?: number;
   repeatPenalty?: number;
+  /** Pin llama-server KV slot; usually set via session/workspace affinity. */
+  idSlot?: number | null;
+  sessionId?: string | null;
+  workspaceId?: string | null;
 }
 
 export type UpdateSessionFn = (
