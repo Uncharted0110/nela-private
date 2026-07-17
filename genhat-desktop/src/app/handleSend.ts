@@ -1422,7 +1422,6 @@ async function handleArtifactGeneration(
         const result = await Api.generateSpreadsheet(deterministicWebPlan);
         ctx.updateSession(sid, {
           loading: false,
-          artifactVisible: false,
         });
         const filename = result.path.split(/[/\\]/).pop();
         updateArtifactMsg(
