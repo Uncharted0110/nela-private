@@ -2627,3 +2627,109 @@ html[data-theme="light"] .podcast-source-chunk {
   border-radius: 8px;
   height: 36px;
 }
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   SLASH COMMAND HIGHLIGHTS (/ppt, /web, /html, …)
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+.slash-cmd-chip {
+  font-weight: 600;
+  border-radius: 0.35rem;
+  white-space: pre;
+}
+
+/* Overlay variant: no padding/border/bold so caret stays aligned with the transparent textarea */
+.slash-cmd-chip--overlay {
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  border: none !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  font-weight: inherit !important;
+}
+
+/* Message-bubble pills */
+.slash-cmd-chip--bubble {
+  display: inline;
+  padding: 0.05em 0.35em;
+  margin: 0 0.05em;
+  border: 1px solid transparent;
+  line-height: inherit;
+}
+
+.slash-cmd-chip--artifact {
+  color: var(--color-neon);
+  background: color-mix(in srgb, var(--color-neon) 16%, transparent);
+  border-color: color-mix(in srgb, var(--color-neon) 35%, transparent);
+}
+
+.slash-cmd-chip--overlay.slash-cmd-chip--artifact {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-neon) 28%, transparent);
+}
+
+.slash-cmd-chip--web {
+  color: var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 16%, transparent);
+  border-color: color-mix(in srgb, var(--color-warning) 35%, transparent);
+}
+
+.slash-cmd-chip--overlay.slash-cmd-chip--web {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-warning) 28%, transparent);
+}
+
+.slash-cmd-chip--rag {
+  color: var(--color-success);
+  background: color-mix(in srgb, var(--color-success) 14%, transparent);
+  border-color: color-mix(in srgb, var(--color-success) 32%, transparent);
+}
+
+.slash-cmd-chip--overlay.slash-cmd-chip--rag {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-success) 26%, transparent);
+}
+
+.slash-cmd-chip--files {
+  color: #c4b5fd;
+  background: color-mix(in srgb, #a78bfa 16%, transparent);
+  border-color: color-mix(in srgb, #a78bfa 35%, transparent);
+}
+
+.slash-cmd-chip--overlay.slash-cmd-chip--files {
+  box-shadow: 0 0 0 1px color-mix(in srgb, #a78bfa 28%, transparent);
+}
+
+html[data-theme="professional"] .slash-cmd-chip--files {
+  color: #6d28d9;
+  background: color-mix(in srgb, #7c3aed 12%, transparent);
+  border-color: color-mix(in srgb, #7c3aed 28%, transparent);
+}
+
+.slash-cmd-chip--default {
+  color: var(--color-neon);
+  background: var(--color-neon-subtle);
+  border-color: color-mix(in srgb, var(--color-neon) 30%, transparent);
+}
+
+.slash-input-highlight {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  color: var(--color-txt);
+  z-index: 0;
+}
+
+.slash-input-textarea {
+  position: relative;
+  z-index: 1;
+  color: transparent !important;
+  caret-color: var(--color-txt);
+  background: transparent !important;
+}
+
+.slash-input-textarea::placeholder {
+  color: var(--color-txt-muted);
+  opacity: 1;
+}

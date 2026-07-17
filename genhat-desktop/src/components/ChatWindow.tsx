@@ -13,6 +13,7 @@ import { friendlyError } from "../app/friendlyError";
 import { useAdvancedMode } from "../hooks/useAdvancedMode";
 import { useSlashCommandInput } from "../hooks/useSlashCommandInput";
 import SlashCommandMenu from "./SlashCommandMenu";
+import { SlashHighlightedText } from "./SlashHighlightedText";
 import GenerationProgressLabel from "./GenerationProgressLabel";
 import type { GenerationProgressMode } from "../app/generationProgress";
 
@@ -308,6 +309,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
   const modeMenuRef = useRef<HTMLDivElement>(null);
   const toolsMenuRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const highlightMirrorRef = useRef<HTMLDivElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
 
   /** Tracks the number of messages that have already been rendered and animated.
@@ -377,19 +379,41 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
           onSelect={slash.applyCommand}
         />
       )}
-      <textarea
-        ref={textareaRef}
-        value={inputObj}
-        onChange={(e) => slash.handleChange(e.target.value)}
-        onKeyDown={handleKeyDown}
-        onClick={slash.syncCursor}
-        onSelect={slash.syncCursor}
-        onKeyUp={slash.syncCursor}
-        placeholder={placeholder}
-        rows={1}
-        className="w-full bg-transparent border-none outline-none text-txt text-[0.92rem] py-2 px-1 min-h-[40px] max-h-[200px] resize-none leading-relaxed font-inherit placeholder:text-txt-muted"
-        data-tour="chat-input"
-      />
+      <div className="relative">
+        {/* Highlight mirror — colored /commands behind transparent textarea text */}
+        <div
+          ref={highlightMirrorRef}
+          aria-hidden
+          className="slash-input-highlight text-[0.92rem] py-2 px-1 min-h-[40px] max-h-[200px] leading-relaxed font-inherit"
+        >
+          {inputObj ? (
+            <SlashHighlightedText text={inputObj} variant="overlay" />
+          ) : (
+            "\u00a0"
+          )}
+        </div>
+        <textarea
+          ref={textareaRef}
+          value={inputObj}
+          onChange={(e) => slash.handleChange(e.target.value)}
+          onKeyDown={handleKeyDown}
+          onClick={slash.syncCursor}
+          onSelect={slash.syncCursor}
+          onKeyUp={slash.syncCursor}
+          onScroll={() => {
+            const ta = textareaRef.current;
+            const mirror = highlightMirrorRef.current;
+            if (ta && mirror) {
+              mirror.scrollTop = ta.scrollTop;
+              mirror.scrollLeft = ta.scrollLeft;
+            }
+          }}
+          placeholder={placeholder}
+          rows={1}
+          className="slash-input-textarea w-full border-none outline-none text-[0.92rem] py-2 px-1 min-h-[40px] max-h-[200px] resize-none leading-relaxed font-inherit placeholder:text-txt-muted"
+          data-tour="chat-input"
+        />
+      </div>
     </div>
   );
 
@@ -978,7 +1002,9 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
                             ))}
                           </div>
                         )}
-                        {msg.content}
+                        {msg.content ? (
+                          <SlashHighlightedText text={msg.content} variant="bubble" />
+                        ) : null}
                       </div>
                     </div>
                     <div className="w-8 h-8 rounded-xl bg-neon-subtle text-neon flex items-center justify-center shrink-0 border border-neon/15">
