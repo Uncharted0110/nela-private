@@ -41,7 +41,10 @@ rename-op ::= "{" ws "\"op\"" ws ":" ws "\"RENAME_SHEET\"" ws "," ws "\"name\"" 
 
 str-array ::= "[" ws (string ("," ws string)*)? "]" ws
 str-array-array ::= "[" ws (str-array ("," ws str-array)*)? "]" ws
-string    ::= "\"" ([^"\\] | "\\" .)* "\"" ws
+string ::= "\"" (
+    [^"\\] |
+    "\\" (["\\/bfnrt] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F])
+  )* "\"" ws
 number    ::= "-"? [0-9]+ ("." [0-9]+)?
 ws        ::= ([ \t\n] ws)?
 "#;
@@ -54,18 +57,14 @@ pub const PRESENTATION_PLAN_GBNF: &str = r#"root         ::= "{" ws "\"slides\""
 theme-field  ::= "\"theme\"" ws ":" ws theme-name
 theme-name   ::= "\"midnight\"" | "\"corporate\"" | "\"sunset\"" | "\"minimal\"" | "\"academic\"" | "\"cyber\"" | "\"ocean\"" | "\"forest\"" | "\"lavender\"" | "\"neon\"" | "\"rose\"" | "\"slate\""
 slide-list   ::= slide ("," ws slide)*
-slide        ::= "{" ws "\"title\"" ws ":" ws string ws
-                 "," ws "\"layout\"" ws ":" ws layout-type ws
-                 ("," ws "\"bullets\"" ws ":" ws bullet-list)?
-                 ("," ws "\"notes\"" ws ":" ws string)?
-                 ("," ws "\"image_index\"" ws ":" ws number)?
-                 ("," ws "\"left_title\"" ws ":" ws string)?
-                 ("," ws "\"right_title\"" ws ":" ws string)?
-                 ws "}"
+slide        ::= "{" ws "\"title\"" ws ":" ws string ws "," ws "\"layout\"" ws ":" ws layout-type ws ("," ws "\"bullets\"" ws ":" ws bullet-list)? ("," ws "\"notes\"" ws ":" ws string)? ("," ws "\"image_index\"" ws ":" ws number)? ("," ws "\"left_title\"" ws ":" ws string)? ("," ws "\"right_title\"" ws ":" ws string)? ws "}"
 layout-type  ::= "\"TITLE\"" | "\"BULLET\"" | "\"TWO_COLUMN\"" | "\"IMAGE_LEFT\"" | "\"BLANK\"" | "\"SECTION\"" | "\"STAT\"" | "\"QUOTE\"" | "\"CARDS\"" | "\"COMPARISON\"" | "\"CENTERED\""
 bullet-list  ::= "[" ws (string ("," ws string)*)? "]" ws
 number       ::= [0-9]+ ws
-string       ::= "\"" ([^"\\] | "\\" .)* "\"" ws
+string ::= "\"" (
+    [^"\\] |
+    "\\" (["\\/bfnrt] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F])
+  )* "\"" ws
 ws           ::= ([ \t\n] ws)?
 "#;
 
@@ -92,7 +91,10 @@ item-list       ::= "[" ws (item ("," ws item)*)? "]"
 item            ::= "{" ws "\"label\"" ws ":" ws string ("," ws "\"detail\"" ws ":" ws string)? ("," ws "\"meta\"" ws ":" ws string)? ws "}"
 archetype       ::= "\"landing\"" | "\"local_business\"" | "\"article\"" | "\"portfolio\"" | "\"dashboard\"" | "\"documentation\"" | "\"event\"" | "\"comparison\"" | "\"catalog\"" | "\"resume\"" | "\"infographic\"" | "\"newsletter\"" | "\"interactive\""
 theme-name      ::= "\"midnight\"" | "\"corporate\"" | "\"sunset\"" | "\"minimal\"" | "\"forest\"" | "\"rose\"" | "\"cyber\"" | "\"ocean\"" | "\"academic\"" | "\"lavender\"" | "\"neon\"" | "\"slate\"" | "\"aurora\"" | "\"paper\""
-string          ::= "\"" ([^"\\] | "\\" .)* "\"" ws
+string ::= "\"" (
+    [^"\\] |
+    "\\" (["\\/bfnrt] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F])
+  )* "\"" ws
 ws              ::= ([ \t\n] ws)?
 "#;
 
@@ -120,7 +122,10 @@ pair    ::= allowed-key ws ":" ws value ws
 value   ::= string | number | "true" | "false" | "null" | object | array
 object  ::= "{{" ws (pair ("," ws pair)*)? "}}" ws
 array   ::= "[" ws (value ("," ws value)*)? "]" ws
-string  ::= "\"" ([^"\\] | "\\" .)* "\"" ws
+string  ::= "\"" (
+    [^"\\] |
+    "\\" (["\\/bfnrt] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F])
+  )* "\"" ws
 number  ::= "-"? [0-9]+ ("." [0-9]+)? ([eE] [-+]? [0-9]+)?
 ws      ::= ([ \t\n] ws)?
 "#

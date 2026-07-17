@@ -793,21 +793,46 @@ export const Api = {
         requestBody.chat_template_kwargs = { enable_thinking: false };
       }
 
-      const res = await fetch(
-        `http://127.0.0.1:${llamaPort}/v1/chat/completions`,
-        {
+      const postCompletion = async (body: Record<string, unknown>) =>
+        fetch(`http://127.0.0.1:${llamaPort}/v1/chat/completions`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(requestBody),
+          body: JSON.stringify(body),
           signal,
-        }
-      );
+        });
 
-      if (!res.ok) {
+      let res = await postCompletion(requestBody);
+
+      // If llama-server rejects the GBNF (parse/sampler init), retry without grammar.
+      // Artifact plan parsers already repair free-form JSON.
+      if (
+        !res.ok &&
+        generationOptions?.grammar &&
+        requestBody.grammar
+      ) {
         const errBody = await res.text().catch(() => res.statusText);
-        throw new Error(
-          `LLM server returned ${res.status}: ${errBody}`
-        );
+        const grammarRejected =
+          /failed to parse grammar|Failed to initialize samplers|grammar/i.test(
+            errBody
+          );
+        if (grammarRejected) {
+          console.warn(
+            "LLM rejected grammar constraint; retrying without grammar:",
+            errBody
+          );
+          const retryBody = { ...requestBody };
+          delete retryBody.grammar;
+          res = await postCompletion(retryBody);
+          if (!res.ok) {
+            const retryErr = await res.text().catch(() => res.statusText);
+            throw new Error(`LLM server returned ${res.status}: ${retryErr}`);
+          }
+        } else {
+          throw new Error(`LLM server returned ${res.status}: ${errBody}`);
+        }
+      } else if (!res.ok) {
+        const errBody = await res.text().catch(() => res.statusText);
+        throw new Error(`LLM server returned ${res.status}: ${errBody}`);
       }
 
       if (!res.body)
