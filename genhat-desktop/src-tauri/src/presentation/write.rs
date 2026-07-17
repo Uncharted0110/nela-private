@@ -1043,6 +1043,7 @@ pub fn write_presentation_plan(plan: PresentationPlan) -> Result<PathBuf, String
     let theme = resolve_theme(plan.theme.as_deref(), seed);
     let slides_html = render_slides(&plan.slides, plan.images.as_deref(), seed);
     let theme_class = theme.name;
+    let slide_count = plan.slides.len().max(1);
 
     // Embed the theme's fonts as base64 @font-face so the deck renders offline
     // inside the sandboxed blob iframe (no network / asset-protocol access).
@@ -1071,7 +1072,7 @@ pub fn write_presentation_plan(plan: PresentationPlan) -> Result<PathBuf, String
             </div>
         </div>
         <div class="deck-footer">
-            <div class="slide-counter" id="counter">1 / 1</div>
+            <div class="slide-counter" id="counter">1 / {slide_count}</div>
             <div class="progress-bar-container">
                 <div class="progress-bar" id="progress"></div>
             </div>

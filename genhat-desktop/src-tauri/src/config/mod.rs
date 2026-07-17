@@ -152,7 +152,7 @@ mod tests {
 
         let lfm = lfm.unwrap();
         assert_eq!(lfm.backend, BackendKind::LlamaServer);
-        assert!(lfm.tasks.contains(&TaskType::Chat));
-        assert_eq!(lfm.max_instances, 2);
+        assert!(lfm.tasks.contains(&TaskType::Enrich));
+        assert_eq!(lfm.max_instances, 1);
     }
 }

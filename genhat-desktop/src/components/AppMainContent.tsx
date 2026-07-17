@@ -1,249 +1,200 @@
-import type {
-  ChatContextUsage,
-  ChatMode,
-  ChatSession,
-  IngestionStatus,
-  MindMapGraph,
-  ModelFile,
-  RegisteredModel,
-  WorkspaceRecord,
-} from "../types";
-import type { DownloadStateMap } from "../app/types";
-import type { IntelligenceMode } from "../app/intelligenceModes";
-import type { RuntimeParamsTarget } from "./ActiveModelParamsDock";
+import type { ChatSession } from "../types";
+import { MODE_CONFIG } from "../app/constants";
+import {
+  switchWorkspaceById,
+  createNewWorkspace,
+  deleteWorkspaceById,
+  renameWorkspaceById,
+} from "../app/workspaceBridge";
+import {
+  handleDownloadModel,
+  handleCancelDownload,
+  handleUninstall,
+  handleIntelligenceModeSelect,
+  handleModelChangeFromPicker,
+  handleChooseSpecificModel,
+  handleBackToIntelligenceTiers,
+  handleApplyRuntimeParams,
+  getActiveRuntimeParamTarget,
+  intelligenceDisplayMode,
+} from "../app/modelActions";
+import {
+  selectImage,
+  attachDirectDocuments,
+  ingestFile,
+  ingestDir,
+} from "../app/ragUiActions";
+import {
+  handleCancel,
+  handleSend,
+  handleModeSwitch,
+  handleManualContextCompaction,
+  getPlaceholder,
+} from "../app/sessionSendActions";
+import { useAdvancedMode } from "../hooks/useAdvancedMode";
+import { useNetworkActivity } from "../hooks/useNetworkActivity";
+import { useSessionStore } from "../stores/sessionStore";
+import { useWorkspaceStore } from "../stores/workspaceStore";
+import { useChatModeStore } from "../stores/chatModeStore";
+import { useModelStore } from "../stores/modelStore";
+import { useUIStore } from "../stores/uiStore";
+import { useDownloadStore } from "../stores/downloadStore";
 import ChatTabBar from "./ChatTabBar";
 import AppMainTopBar from "./AppMainTopBar";
 import AppMainModeControls from "./AppMainModeControls";
 import AppMainContentArea from "./AppMainContentArea";
 
-interface ModeOption {
-  mode: ChatMode;
-  label: string;
-}
-
 interface AppMainContentProps {
-  chatMode: ChatMode;
-  openViewerSessions: ChatSession[];
-  activeSessionId: string;
-  onSelectSession: (sessionId: string) => void;
-  onNewSession: () => void;
-  onCloseSession: (sessionId: string) => void;
-  onReorderSessions: (reordered: ChatSession[]) => void;
-  currentModeConfig: {
-    icon: React.ElementType;
-    label: string;
-    desc: string;
-  };
-  workspaces: WorkspaceRecord[];
-  activeWorkspace: WorkspaceRecord | null;
-  onSelectWorkspace: (workspaceId: string) => void;
-  onCreateWorkspace: () => void;
-  onDeleteWorkspace: (workspaceId: string) => void;
-  onRenameWorkspace: (workspaceId: string, name: string) => void;
-  workspaceBusy: boolean;
-  modelLoadingStatus: {
-    loading: boolean;
-    modelId: string;
-    message: string;
-  };
-  modelSwitching?: boolean;
-  modelSwitchingLabel?: string;
-  intelligenceMode: IntelligenceMode | "custom";
-  useSpecificModelPicker: boolean;
-  onSelectIntelligenceMode: (mode: IntelligenceMode) => void;
-  onChooseSpecificModel: () => void;
-  onBackToIntelligenceTiers: () => void;
-  models: ModelFile[];
-  selectedModel: string;
-  onModelChange: (path: string) => void;
-  onAddModel: () => void;
-  onDownloadModel: (modelId: string) => void;
-  onCancelDownload: (modelId: string) => void;
-  onUninstallModel: (modelId: string) => void;
-  onConfirmAction: (
-    title: string,
-    message: string,
-    confirmLabel?: string,
-    cancelLabel?: string
-  ) => Promise<boolean>;
-  downloads: DownloadStateMap;
-  ttsEngines: RegisteredModel[];
-  selectedTtsEngine: string;
-  onSelectTtsEngine: (engineId: string) => void;
-  visionModels: RegisteredModel[];
-  selectedVisionModel: string;
-  onSelectVisionModel: (modelId: string) => void;
-  onAddVisionModel: () => void;
-  activeRuntimeParamTarget: RuntimeParamsTarget | null;
-  paramsDockOpen: boolean;
-  onToggleParamsDock: () => void;
-  onApplyRuntimeParams: (nextParams: Record<string, string>) => Promise<void>;
-  contextUsage: ChatContextUsage | null;
-  onCompactContext: () => void;
-  canCompactContext: boolean;
-  isCompactingContext: boolean;
-  ragDocs: IngestionStatus[];
-  ragEnabled: boolean;
-  modeOptions: ModeOption[];
-  onSelectMode: (mode: ChatMode) => void;
-  onToggleRagEnabled: (enabled: boolean) => void;
-  webEnabled?: boolean;
-  onToggleWebEnabled?: (enabled: boolean) => void;
-  webDepth?: "snippets" | "full";
-  onWebDepthChange?: (depth: "snippets" | "full") => void;
-  activeSession: ChatSession | null;
-  onSend: (text: string) => void;
-  onCancel: () => void;
-  placeholder: string;
-  ragIngesting: boolean;
-  enrichmentStatus: string | null;
-  onIngestFile: () => void;
-  onIngestDir: () => void;
-  onAttachDirectDocuments: () => void;
-  directDocumentPaths: string[];
-  onRemoveDirectDocument: (path: string) => void;
-  onClearDirectDocuments: () => void;
-  onSelectVisionImage: () => void;
-  visionImagePath: string | null;
-  visionImagePreview: string | null;
-  onClearVisionImage: () => void;
-  docPanelOpen: boolean;
-  onToggleDocPanel: () => void;
-  modeSwitchNotice: string | null;
-  onSaveAudioToSidebar: (msgIdx: number) => void;
-  streamingThinking: string;
-  thinkingEnabled: boolean;
-  onToggleThinking: () => void;
-  activeMindmapOverlay: {
-    sessionId: string;
-    mindmapId: string | null;
-    isGenerating?: boolean;
-    query?: string;
-  } | null;
-  activeMindmapGraph: MindMapGraph | null;
-  onCloseMindmapOverlay: () => void;
-  pdfLoading: boolean;
-  pdfViewerData: {
-    data: string;
-    title: string;
-  } | null;
-  onClosePdfViewer: () => void;
-  docViewerFile: {
-    filePath: string;
-    title: string;
-  } | null;
-  onCloseDocViewer: () => void;
-  onExitPlayground?: () => void;
-  generalGenerating?: boolean;
-  generalElapsedTime?: number;
-  generalGenerationTime?: number | null;
   networkActive?: boolean;
 }
 
-export default function AppMainContent({
-  chatMode,
-  openViewerSessions,
-  activeSessionId,
-  onSelectSession,
-  onNewSession,
-  onCloseSession,
-  onReorderSessions,
-  currentModeConfig,
-  workspaces,
-  activeWorkspace,
-  onSelectWorkspace,
-  onCreateWorkspace,
-  onDeleteWorkspace,
-  onRenameWorkspace,
-  workspaceBusy,
-  modelLoadingStatus,
-  modelSwitching = false,
-  modelSwitchingLabel = "",
-  intelligenceMode,
-  useSpecificModelPicker,
-  onSelectIntelligenceMode,
-  onChooseSpecificModel,
-  onBackToIntelligenceTiers,
-  models,
-  selectedModel,
-  onModelChange,
-  onAddModel,
-  onDownloadModel,
-  onCancelDownload,
-  onUninstallModel,
-  onConfirmAction,
-  downloads,
-  ttsEngines,
-  selectedTtsEngine,
-  onSelectTtsEngine,
-  visionModels,
-  selectedVisionModel,
-  onSelectVisionModel,
-  onAddVisionModel,
-  activeRuntimeParamTarget,
-  paramsDockOpen,
-  onToggleParamsDock,
-  onApplyRuntimeParams,
-  contextUsage,
-  onCompactContext,
-  canCompactContext,
-  isCompactingContext,
-  ragDocs,
-  ragEnabled,
-  modeOptions,
-  onSelectMode,
-  onToggleRagEnabled,
-  webEnabled,
-  onToggleWebEnabled,
-  webDepth,
-  onWebDepthChange,
-  activeSession,
-  onSend,
-  onCancel,
-  placeholder,
-  ragIngesting,
-  enrichmentStatus,
-  onIngestFile,
-  onIngestDir,
-  onAttachDirectDocuments,
-  directDocumentPaths,
-  onRemoveDirectDocument,
-  onClearDirectDocuments,
-  onSelectVisionImage,
-  visionImagePath,
-  visionImagePreview,
-  onClearVisionImage,
-  docPanelOpen,
-  onToggleDocPanel,
-  modeSwitchNotice,
-  onSaveAudioToSidebar,
-  streamingThinking,
-  thinkingEnabled,
-  onToggleThinking,
-  activeMindmapOverlay,
-  activeMindmapGraph,
-  onCloseMindmapOverlay,
-  pdfLoading,
-  pdfViewerData,
-  onClosePdfViewer,
-  docViewerFile,
-  onCloseDocViewer,
-  onExitPlayground,
-  generalGenerating = false,
-  generalElapsedTime = 0,
-  generalGenerationTime = null,
-  networkActive = false,
-}: AppMainContentProps) {
+export default function AppMainContent({ networkActive: networkActiveProp }: AppMainContentProps = {}) {
+  // ── Hooks ──────────────────────────────────────────────────────────────────
+  const networkActivityHook = useNetworkActivity();
+  const networkActive = networkActiveProp ?? networkActivityHook;
+  const { advanced } = useAdvancedMode();
+
+  // ── Store subscriptions ───────────────────────────────────────────────────
+  const sessions = useSessionStore(s => s.sessions);
+  const openSessionIds = useSessionStore(s => s.openSessionIds);
+  const activeSessionId = useSessionStore(s => s.activeSessionId);
+  const contextUsageBySession = useSessionStore(s => s.contextUsageBySession);
+  const streamingThinking = useSessionStore(s => s.streamingThinking);
+  const contextCompacting = useSessionStore(s => s.contextCompacting);
+  const updateSession = useSessionStore(s => s.updateSession);
+  const addNewSession = useSessionStore(s => s.addNewSession);
+  const closeViewerTab = useSessionStore(s => s.closeViewerTab);
+  const reorderViewerTabs = useSessionStore(s => s.reorderViewerTabs);
+  const setActiveSessionId = useSessionStore(s => s.setActiveSessionId);
+
+  const workspaces = useWorkspaceStore(s => s.workspaces);
+  const activeWorkspace = useWorkspaceStore(s => s.activeWorkspace);
+  const workspaceBusy = useWorkspaceStore(s => s.workspaceBusy);
+
+  const chatMode = useChatModeStore(s => s.chatMode);
+  const thinkingEnabled = useChatModeStore(s => s.thinkingEnabled);
+  const setThinkingEnabled = useChatModeStore(s => s.setThinkingEnabled);
+  const ragEnabled = useChatModeStore(s => s.ragEnabled);
+  const setRagEnabled = useChatModeStore(s => s.setRagEnabled);
+  const ragDocs = useChatModeStore(s => s.ragDocs);
+  const ragIngesting = useChatModeStore(s => s.ragIngesting);
+  const enrichmentStatus = useChatModeStore(s => s.enrichmentStatus);
+  const webEnabled = useChatModeStore(s => s.webEnabled);
+  const setWebEnabled = useChatModeStore(s => s.setWebEnabled);
+  const webDepth = useChatModeStore(s => s.webDepth);
+  const setWebDepth = useChatModeStore(s => s.setWebDepth);
+  const imagePath = useChatModeStore(s => s.imagePath);
+  const imagePreview = useChatModeStore(s => s.imagePreview);
+  const directDocumentPaths = useChatModeStore(s => s.directDocumentPaths);
+  const removeDirectDocument = useChatModeStore(s => s.removeDirectDocument);
+  const clearDirectDocuments = useChatModeStore(s => s.clearDirectDocuments);
+  const mindmapsBySession = useChatModeStore(s => s.mindmapsBySession);
+  const activeMindmapOverlay = useChatModeStore(s => s.activeMindmapOverlay);
+  const setActiveMindmapOverlay = useChatModeStore(s => s.setActiveMindmapOverlay);
+  const clearImage = useChatModeStore(s => s.clearImage);
+  const generalElapsedTime = useChatModeStore(s => s.generalElapsedTime);
+  const generalGenerationTime = useChatModeStore(s => s.generalGenerationTime);
+  const generalGenerating = useChatModeStore(s => s.generalGenerating);
+
+  const models = useModelStore(s => s.models);
+  const selectedModel = useModelStore(s => s.selectedModel);
+  const useSpecificModelPicker = useModelStore(s => s.useSpecificModelPicker);
+  const modelLoadingStatus = useModelStore(s => s.modelLoadingStatus);
+  const modelSwitching = useModelStore(s => s.modelSwitching);
+  const ttsEngines = useModelStore(s => s.ttsEngines);
+  const selectedTtsEngine = useModelStore(s => s.selectedTtsEngine);
+  const setSelectedTtsEngine = useModelStore(s => s.setSelectedTtsEngine);
+  const visionModels = useModelStore(s => s.visionModels);
+  const selectedVisionModel = useModelStore(s => s.selectedVisionModel);
+  const setSelectedVisionModel = useModelStore(s => s.setSelectedVisionModel);
+
+  const setHfModalPreset = useUIStore(s => s.setHfModalPreset);
+  const setHfModalOpen = useUIStore(s => s.setHfModalOpen);
+  const docPanelOpen = useUIStore(s => s.docPanelOpen);
+  const setDocPanelOpen = useUIStore(s => s.setDocPanelOpen);
+  const paramsDockOpen = useUIStore(s => s.paramsDockOpen);
+  const setParamsDockOpen = useUIStore(s => s.setParamsDockOpen);
+  const confirmAction = useUIStore(s => s.confirmAction);
+  const modeSwitchNotice = useUIStore(s => s.modeSwitchNotice);
+  const pdfViewerData = useUIStore(s => s.pdfViewerData);
+  const pdfLoading = useUIStore(s => s.pdfLoading);
+  const docViewerFile = useUIStore(s => s.docViewerFile);
+  const closePdfViewer = useUIStore(s => s.closePdfViewer);
+  const closeDocViewer = useUIStore(s => s.closeDocViewer);
+
+  const downloads = useDownloadStore(s => s.downloads);
+
+  // ── Derived state ─────────────────────────────────────────────────────────
+  const activeSession = sessions.find((s) => s.id === activeSessionId) ?? null;
+  const effectiveRagEnabled = advanced ? ragEnabled : true;
+  const effectiveThinkingEnabled = advanced ? thinkingEnabled : false;
+
+  const openViewerSessions = openSessionIds
+    .map((id) => sessions.find((s) => s.id === id))
+    .filter((s): s is ChatSession => !!s);
+
+  const activeContextUsage = activeSession ? contextUsageBySession[activeSession.id] ?? null : null;
+  const canManualCompactContext =
+    !!activeSession &&
+    !activeSession.loading &&
+    (chatMode === "text" || chatMode === "mindmap");
+
+  const activeMindmapGraph = activeMindmapOverlay
+    ? (mindmapsBySession[activeMindmapOverlay.sessionId] ?? []).find(
+        (map) => map.id === activeMindmapOverlay.mindmapId
+      ) ?? null
+    : null;
+
+  const currentModeConfig = MODE_CONFIG.find((m) => m.mode === chatMode)!;
+  const modeOptions = MODE_CONFIG.map(({ mode, label }) => ({ mode, label }));
+
+  // ── Action handlers ───────────────────────────────────────────────────────
+  const handleAddModel = () => {
+    setHfModalPreset({ folder: "LLM", profile: "llm" });
+    setHfModalOpen(true);
+  };
+
+  const handleAddVisionModel = () => {
+    setHfModalPreset({ folder: "LiquidAI-VLM", profile: "vlm" });
+    setHfModalOpen(true);
+  };
+
+  const handleRagToggle = (enabled: boolean) => {
+    setRagEnabled(enabled);
+    if (enabled) {
+      clearDirectDocuments();
+    }
+  };
+
+  const handleWebToggle = (enabled: boolean) => {
+    setWebEnabled(enabled);
+  };
+
+  const handleWebDepthChange = (depth: "snippets" | "full") => {
+    setWebDepth(depth);
+  };
+
+  const handleExitPlayground = () => {
+    handleModeSwitch("text");
+  };
+
+  // Handler to save audio to sidebar (set audioSaved=true)
+  const handleSaveAudioToSidebar = (msgIdx: number) => {
+    if (!activeSession) return;
+    updateSession(activeSession.id, (prev) => ({
+      messages: prev.messages.map((m, i) => i === msgIdx ? { ...m, audioSaved: true } : m)
+    }));
+  };
   return (
     <main className="flex-1 flex flex-col bg-void-900 min-w-0 relative">
       {chatMode !== "podcast" && (
         <ChatTabBar
           sessions={openViewerSessions}
           activeSessionId={activeSessionId}
-          onSelectSession={onSelectSession}
-          onNewSession={onNewSession}
-          onCloseSession={onCloseSession}
-          onReorderSessions={onReorderSessions}
+          onSelectSession={setActiveSessionId}
+          onNewSession={() => addNewSession(!!activeWorkspace)}
+          onCloseSession={closeViewerTab}
+          onReorderSessions={reorderViewerTabs}
         />
       )}
 
@@ -251,13 +202,13 @@ export default function AppMainContent({
         currentModeConfig={currentModeConfig}
         workspaces={workspaces}
         activeWorkspace={activeWorkspace}
-        onSelectWorkspace={onSelectWorkspace}
-        onCreateWorkspace={onCreateWorkspace}
-        onDeleteWorkspace={onDeleteWorkspace}
-        onRenameWorkspace={onRenameWorkspace}
+        onSelectWorkspace={(id) => void switchWorkspaceById(id)}
+        onCreateWorkspace={() => void createNewWorkspace()}
+        onDeleteWorkspace={(id) => void deleteWorkspaceById(id)}
+        onRenameWorkspace={renameWorkspaceById}
         workspaceBusy={workspaceBusy}
         modelLoadingStatus={modelLoadingStatus}
-        contextUsage={contextUsage}
+        contextUsage={activeContextUsage}
         networkActive={networkActive}
         webEnabled={webEnabled}
         modeControls={(
@@ -265,37 +216,37 @@ export default function AppMainContent({
             chatMode={chatMode}
             models={models}
             selectedModel={selectedModel}
-            modelSwitching={modelSwitching}
-            modelSwitchingLabel={modelSwitchingLabel}
-            onModelChange={onModelChange}
-            onAddModel={onAddModel}
-            onDownloadModel={onDownloadModel}
-            onCancelDownload={onCancelDownload}
-            onUninstallModel={onUninstallModel}
-            onConfirmAction={onConfirmAction}
+            modelSwitching={modelSwitching.active}
+            modelSwitchingLabel={modelSwitching.targetLabel}
+            onModelChange={(path) => void handleModelChangeFromPicker(path)}
+            onAddModel={handleAddModel}
+            onDownloadModel={handleDownloadModel}
+            onCancelDownload={handleCancelDownload}
+            onUninstallModel={handleUninstall}
+            onConfirmAction={confirmAction}
             downloads={downloads}
             ttsEngines={ttsEngines}
             selectedTtsEngine={selectedTtsEngine}
-            onSelectTtsEngine={onSelectTtsEngine}
+            onSelectTtsEngine={setSelectedTtsEngine}
             visionModels={visionModels}
             selectedVisionModel={selectedVisionModel}
-            onSelectVisionModel={onSelectVisionModel}
-            onAddVisionModel={onAddVisionModel}
-            activeRuntimeParamTarget={activeRuntimeParamTarget}
+            onSelectVisionModel={setSelectedVisionModel}
+            onAddVisionModel={handleAddVisionModel}
+            activeRuntimeParamTarget={getActiveRuntimeParamTarget()}
             paramsDockOpen={paramsDockOpen}
-            onToggleParamsDock={onToggleParamsDock}
-            onApplyRuntimeParams={onApplyRuntimeParams}
+            onToggleParamsDock={() => setParamsDockOpen((open) => !open)}
+            onApplyRuntimeParams={handleApplyRuntimeParams}
             webEnabled={webEnabled}
-            onToggleWebEnabled={onToggleWebEnabled}
-            contextUsage={contextUsage}
-            onCompactContext={onCompactContext}
-            canCompactContext={canCompactContext}
-            isCompactingContext={isCompactingContext}
-            intelligenceMode={intelligenceMode}
+            onToggleWebEnabled={handleWebToggle}
+            contextUsage={activeContextUsage}
+            onCompactContext={() => void handleManualContextCompaction()}
+            canCompactContext={canManualCompactContext}
+            isCompactingContext={contextCompacting}
+            intelligenceMode={intelligenceDisplayMode()}
             useSpecificModelPicker={useSpecificModelPicker}
-            onSelectIntelligenceMode={onSelectIntelligenceMode}
-            onChooseSpecificModel={onChooseSpecificModel}
-            onBackToIntelligenceTiers={onBackToIntelligenceTiers}
+            onSelectIntelligenceMode={(mode) => void handleIntelligenceModeSelect(mode)}
+            onChooseSpecificModel={handleChooseSpecificModel}
+            onBackToIntelligenceTiers={() => void handleBackToIntelligenceTiers()}
           />
         )}
       />
@@ -303,47 +254,47 @@ export default function AppMainContent({
       <AppMainContentArea
         chatMode={chatMode}
         ragDocs={ragDocs}
-        ragEnabled={ragEnabled}
+        ragEnabled={effectiveRagEnabled}
         modeOptions={modeOptions}
-        onSelectMode={onSelectMode}
-        onToggleRagEnabled={onToggleRagEnabled}
+        onSelectMode={handleModeSwitch}
+        onToggleRagEnabled={handleRagToggle}
         webEnabled={webEnabled}
-        onToggleWebEnabled={onToggleWebEnabled}
+        onToggleWebEnabled={handleWebToggle}
         webDepth={webDepth}
-        onWebDepthChange={onWebDepthChange}
+        onWebDepthChange={handleWebDepthChange}
         activeSession={activeSession}
         activeWorkspace={activeWorkspace}
-        onSend={onSend}
-        onCancel={onCancel}
-        placeholder={placeholder}
+        onSend={(text) => void handleSend(text)}
+        onCancel={handleCancel}
+        placeholder={getPlaceholder()}
         ragIngesting={ragIngesting}
         enrichmentStatus={enrichmentStatus}
-        onIngestFile={onIngestFile}
-        onIngestDir={onIngestDir}
-        onAttachDirectDocuments={onAttachDirectDocuments}
+        onIngestFile={() => void ingestFile()}
+        onIngestDir={() => void ingestDir()}
+        onAttachDirectDocuments={() => void attachDirectDocuments()}
         directDocumentPaths={directDocumentPaths}
-        onRemoveDirectDocument={onRemoveDirectDocument}
-        onClearDirectDocuments={onClearDirectDocuments}
-        onSelectVisionImage={onSelectVisionImage}
-        visionImagePath={visionImagePath}
-        visionImagePreview={visionImagePreview}
-        onClearVisionImage={onClearVisionImage}
+        onRemoveDirectDocument={removeDirectDocument}
+        onClearDirectDocuments={clearDirectDocuments}
+        onSelectVisionImage={() => void selectImage()}
+        visionImagePath={imagePath}
+        visionImagePreview={imagePreview}
+        onClearVisionImage={clearImage}
         docPanelOpen={docPanelOpen}
-        onToggleDocPanel={onToggleDocPanel}
+        onToggleDocPanel={() => setDocPanelOpen(!docPanelOpen)}
         modeSwitchNotice={modeSwitchNotice}
-        onSaveAudioToSidebar={onSaveAudioToSidebar}
+        onSaveAudioToSidebar={handleSaveAudioToSidebar}
         streamingThinking={streamingThinking}
-        thinkingEnabled={thinkingEnabled}
-        onToggleThinking={onToggleThinking}
+        thinkingEnabled={effectiveThinkingEnabled}
+        onToggleThinking={() => setThinkingEnabled(!thinkingEnabled)}
         activeMindmapOverlay={activeMindmapOverlay}
         activeMindmapGraph={activeMindmapGraph}
-        onCloseMindmapOverlay={onCloseMindmapOverlay}
+        onCloseMindmapOverlay={() => setActiveMindmapOverlay(null)}
         pdfLoading={pdfLoading}
         pdfViewerData={pdfViewerData}
-        onClosePdfViewer={onClosePdfViewer}
+        onClosePdfViewer={closePdfViewer}
         docViewerFile={docViewerFile}
-        onCloseDocViewer={onCloseDocViewer}
-        onExitPlayground={onExitPlayground}
+        onCloseDocViewer={closeDocViewer}
+        onExitPlayground={handleExitPlayground}
         generalGenerating={generalGenerating}
         generalElapsedTime={generalElapsedTime}
         generalGenerationTime={generalGenerationTime}

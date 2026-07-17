@@ -1,3 +1,6 @@
+import { useSessionStore } from "../stores/sessionStore";
+import { useChatModeStore } from "../stores/chatModeStore";
+
 interface MindmapListItem {
   id: string;
   sessionId: string;
@@ -7,17 +10,28 @@ interface MindmapListItem {
   createdAt: number;
 }
 
-interface MindmapsSidebarProps {
-  mindmaps: MindmapListItem[];
-  activeMindmapOverlay: { sessionId: string; mindmapId: string | null } | null;
-  onOpenMindmap: (sessionId: string, mindmapId: string) => void;
-}
+export default function MindmapsSidebar() {
+  // ── Store subscriptions ───────────────────────────────────────────────────
+  const activeSessionId = useSessionStore(s => s.activeSessionId);
+  const sessions = useSessionStore(s => s.sessions);
+  const mindmapsBySession = useChatModeStore(s => s.mindmapsBySession);
+  const activeMindmapOverlay = useChatModeStore(s => s.activeMindmapOverlay);
+  const openMindmapOverlay = useChatModeStore(s => s.openMindmapOverlay);
 
-export default function MindmapsSidebar({
-  mindmaps,
-  activeMindmapOverlay,
-  onOpenMindmap,
-}: MindmapsSidebarProps) {
+  // ── Derived state ─────────────────────────────────────────────────────────
+  const activeSession = sessions.find((s) => s.id === activeSessionId) ?? null;
+  const activeSessionMindmaps = activeSession ? (mindmapsBySession[activeSession.id] ?? []) : [];
+
+  const mindmaps: MindmapListItem[] = activeSessionMindmaps
+    .map((map) => ({
+      id: map.id,
+      sessionId: activeSession?.id ?? "",
+      name: map.title,
+      query: map.query,
+      generatedFrom: map.generatedFrom,
+      createdAt: map.createdAt,
+    }))
+    .sort((a, b) => b.createdAt - a.createdAt);
   return (
     <aside className="w-[280px] min-w-[280px] border-r border-glass-border bg-void-800/80 backdrop-blur-xl flex flex-col">
       <div className="h-10 px-4 flex items-center justify-between shrink-0">
@@ -44,7 +58,7 @@ export default function MindmapsSidebar({
                       ? "bg-neon-subtle border-neon/30 text-txt shadow-[0_0_14px_rgba(0,212,255,0.08)]"
                       : "bg-void-700/65 border-glass-border text-txt-secondary hover:border-neon/20 hover:text-txt"
                   }`}
-                  onClick={() => onOpenMindmap(mm.sessionId, mm.id)}
+                  onClick={() => openMindmapOverlay(mm.sessionId, mm.id)}
                   title={mm.name}
                 >
                   <div className="flex flex-col min-w-0">

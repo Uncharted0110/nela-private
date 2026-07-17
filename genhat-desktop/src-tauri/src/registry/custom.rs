@@ -218,7 +218,7 @@ fn entry_to_model_def(entry: CustomModelEntry) -> ModelDef {
             ],
         },
         auto_start: false,
-        max_instances: if entry.max_instances == 0 { 2 } else { entry.max_instances },
+        max_instances: if entry.max_instances == 0 { 1 } else { entry.max_instances },
         // Default idle timeout of 30s for custom models if not specified.
         // 0 means immediate reap, which is too aggressive for inference models.
         idle_timeout_s: if entry.idle_timeout_s == 0 { 30 } else { entry.idle_timeout_s },

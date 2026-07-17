@@ -1,47 +1,33 @@
-import type { ChatSession, IngestionStatus } from "../types";
-import type { RuntimeParamsTarget } from "./ActiveModelParamsDock";
+import { getActiveRuntimeParamTarget, handleApplyRuntimeParams } from "../app/modelActions";
+import { ingestFile, ingestDir, deleteRagDoc, deleteAllRagDocs, openDocViewer } from "../app/ragUiActions";
+import { useAdvancedMode } from "../hooks/useAdvancedMode";
+import { useSessionStore } from "../stores/sessionStore";
+import { useChatModeStore } from "../stores/chatModeStore";
+import { useUIStore } from "../stores/uiStore";
 import ActiveModelParamsDock from "./ActiveModelParamsDock";
 import KnowledgeBaseSidebar from "./KnowledgeBaseSidebar";
-import { useAdvancedMode } from "../hooks/useAdvancedMode";
 
-interface AppRightSidebarProps {
-  showRightSidebar: boolean;
-  showParamsDock: boolean;
-  docPanelOpen: boolean;
-  activeRuntimeParamTarget: RuntimeParamsTarget | null;
-  onApplyRuntimeParams: (nextParams: Record<string, string>) => Promise<void>;
-  onCloseParamsDock: () => void;
-  ragIngesting: boolean;
-  enrichmentStatus: string | null;
-  ragDocs: IngestionStatus[];
-  activeSession: ChatSession | null;
-  onCloseDocPanel: () => void;
-  onIngestFile: () => void;
-  onIngestDir: () => void;
-  onOpenDocViewer: (doc: IngestionStatus) => void;
-  onDeleteRagDoc: (docId: number) => void;
-  onDeleteAllRagDocs: () => void;
-}
-
-export default function AppRightSidebar({
-  showRightSidebar,
-  showParamsDock,
-  docPanelOpen,
-  activeRuntimeParamTarget,
-  onApplyRuntimeParams,
-  onCloseParamsDock,
-  ragIngesting,
-  enrichmentStatus,
-  ragDocs,
-  activeSession,
-  onCloseDocPanel,
-  onIngestFile,
-  onIngestDir,
-  onOpenDocViewer,
-  onDeleteRagDoc,
-  onDeleteAllRagDocs,
-}: AppRightSidebarProps) {
+export default function AppRightSidebar() {
   const { advanced } = useAdvancedMode();
+  
+  // Subscribe to stores
+  const sessions = useSessionStore(s => s.sessions);
+  const activeSessionId = useSessionStore(s => s.activeSessionId);
+  const activeSession = sessions.find(s => s.id === activeSessionId) ?? null;
+  
+  const ragDocs = useChatModeStore(s => s.ragDocs);
+  const ragIngesting = useChatModeStore(s => s.ragIngesting);
+  const enrichmentStatus = useChatModeStore(s => s.enrichmentStatus);
+  
+  const docPanelOpen = useUIStore(s => s.docPanelOpen);
+  const setDocPanelOpen = useUIStore(s => s.setDocPanelOpen);
+  const paramsDockOpen = useUIStore(s => s.paramsDockOpen);
+  const setParamsDockOpen = useUIStore(s => s.setParamsDockOpen);
+  
+  // Derived state
+  const activeRuntimeParamTarget = getActiveRuntimeParamTarget();
+  const showParamsDock = advanced && !!activeRuntimeParamTarget && paramsDockOpen;
+  const showRightSidebar = showParamsDock || docPanelOpen;
 
   if (!showRightSidebar) return null;
 
@@ -55,8 +41,8 @@ export default function AppRightSidebar({
         <div className="w-[320px] min-w-[320px] h-full">
           <ActiveModelParamsDock
             target={activeRuntimeParamTarget}
-            onApply={onApplyRuntimeParams}
-            onClose={onCloseParamsDock}
+            onApply={handleApplyRuntimeParams}
+            onClose={() => setParamsDockOpen(false)}
           />
         </div>
       )}
@@ -67,12 +53,12 @@ export default function AppRightSidebar({
         enrichmentStatus={enrichmentStatus}
         ragDocs={ragDocs}
         activeSession={activeSession}
-        onClosePanel={onCloseDocPanel}
-        onIngestFile={onIngestFile}
-        onIngestDir={onIngestDir}
-        onOpenDocViewer={onOpenDocViewer}
-        onDeleteRagDoc={onDeleteRagDoc}
-        onDeleteAllRagDocs={onDeleteAllRagDocs}
+        onClosePanel={() => setDocPanelOpen(false)}
+        onIngestFile={() => void ingestFile()}
+        onIngestDir={() => void ingestDir()}
+        onOpenDocViewer={openDocViewer}
+        onDeleteRagDoc={(docId) => void deleteRagDoc(docId)}
+        onDeleteAllRagDocs={() => void deleteAllRagDocs()}
       />
     </aside>
   );

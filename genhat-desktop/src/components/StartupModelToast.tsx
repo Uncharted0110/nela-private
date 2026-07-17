@@ -4,53 +4,36 @@ import {
   Loader2,
   Trash2,
 } from "lucide-react";
-import type {
-  DownloadStateMap,
-  StartupModelToastState,
-} from "../app/types";
 import {
   formatDownloadSpeedLabel,
   formatModelSizeLabel,
   formatTotalSizeLabel,
 } from "../app/modelUtils";
-
-interface StartupModelToastProps {
-  toast: StartupModelToastState;
-  minimized: boolean;
-  downloads: DownloadStateMap;
-  startupCancelledIds: string[];
-  startupCancellingIds: string[];
-  startupOverallSpeedBps: number;
-  startupSelectedTotalMb: number;
-  onToggleMinimized: (next: boolean) => void;
-  onDecline: () => void;
-  onAccept: () => void;
-  onToggleModelSelection: (modelId: string) => void;
-  onCancelAllDownloads: () => void;
-  onCancelSingleDownload: (modelId: string) => void;
-}
-
-export default function StartupModelToast({
-  toast,
-  minimized,
-  downloads,
-  startupCancelledIds,
-  startupCancellingIds,
+import {
+  handleStartupToastDecline,
+  handleStartupToastAccept,
+  handleStartupToastCancelSingleDownload,
+  handleStartupToastCancelDownloads,
+  toggleStartupModelSelection,
   startupOverallSpeedBps,
   startupSelectedTotalMb,
-  onToggleMinimized,
-  onDecline,
-  onAccept,
-  onToggleModelSelection,
-  onCancelAllDownloads,
-  onCancelSingleDownload,
-}: StartupModelToastProps) {
+} from "../app/downloadActions";
+import { useDownloadStore } from "../stores/downloadStore";
+
+export default function StartupModelToast() {
+  // Subscribe to stores
+  const toast = useDownloadStore(s => s.startupModelToast);
+  const minimized = useDownloadStore(s => s.startupToastMinimized);
+  const setStartupToastMinimized = useDownloadStore(s => s.setStartupToastMinimized);
+  const downloads = useDownloadStore(s => s.downloads);
+  const startupCancelledIds = useDownloadStore(s => s.startupCancelledIds);
+  const startupCancellingIds = useDownloadStore(s => s.startupCancellingIds);
   if (!toast.open) return null;
 
   if (minimized) {
     return (
       <button
-        onClick={() => onToggleMinimized(false)}
+        onClick={() => setStartupToastMinimized(false)}
         className="fixed bottom-10 right-0 z-[90] w-12 h-12 rounded-l-full bg-void-800 border-y border-l border-neon/60 shadow-[0_4px_16px_rgba(0,212,255,0.25)] flex items-center justify-center text-neon hover:bg-void-700 transition-all group"
         title="Expand Download Status"
       >
@@ -73,7 +56,7 @@ export default function StartupModelToast({
           <button
             type="button"
             className="p-1 rounded text-txt-muted hover:text-txt hover:bg-void-700/50"
-            onClick={() => onToggleMinimized(true)}
+            onClick={() => setStartupToastMinimized(true)}
             title="Minimize"
           >
             <Minus size={14} />
@@ -82,7 +65,7 @@ export default function StartupModelToast({
 
         {toast.phase === "downloading" && (
           <div className="mb-1 text-[11px] text-neon">
-            Overall speed: {formatDownloadSpeedLabel(startupOverallSpeedBps)}
+            Overall speed: {formatDownloadSpeedLabel(startupOverallSpeedBps())}
           </div>
         )}
 
@@ -93,7 +76,7 @@ export default function StartupModelToast({
               <button
                 type="button"
                 className="px-2 py-1 rounded border border-glass-border text-[11px] text-txt-muted hover:text-txt hover:border-neon"
-                onClick={onCancelAllDownloads}
+                onClick={() => void handleStartupToastCancelDownloads()}
                 title="Cancel startup downloads"
               >
                 Cancel
@@ -117,7 +100,7 @@ export default function StartupModelToast({
                         type="checkbox"
                         className="accent-neon"
                         checked={checked}
-                        onChange={() => onToggleModelSelection(modelId)}
+                        onChange={() => toggleStartupModelSelection(modelId)}
                       />
                       <span className="text-neon font-medium truncate" title={name}>{name}</span>
                       <span className="ml-auto text-[11px] text-txt-muted">{sizeLabel}</span>
@@ -128,7 +111,7 @@ export default function StartupModelToast({
             </ul>
             <div className="mt-2 text-[11px] text-txt-muted">
               Total selected size:{" "}
-              <span className="text-neon font-medium">{formatTotalSizeLabel(startupSelectedTotalMb)}</span>
+              <span className="text-neon font-medium">{formatTotalSizeLabel(startupSelectedTotalMb())}</span>
             </div>
           </div>
         )}
@@ -180,7 +163,7 @@ export default function StartupModelToast({
                           className="px-1.5 py-0.5 rounded border border-glass-border hover:border-neon hover:text-txt disabled:opacity-60"
                           title="Cancel and delete partial download"
                           aria-label={`Cancel download for ${name}`}
-                          onClick={() => onCancelSingleDownload(modelId)}
+                          onClick={() => void handleStartupToastCancelSingleDownload(modelId)}
                           disabled={isCancelling}
                         >
                           <span className="inline-flex items-center gap-1">
@@ -211,13 +194,13 @@ export default function StartupModelToast({
           <div className="mt-3 flex items-center justify-end gap-2">
             <button
               className="px-3 py-1.5 rounded-md border border-glass-border text-txt-muted text-xs hover:text-txt"
-              onClick={onDecline}
+              onClick={handleStartupToastDecline}
             >
               No
             </button>
             <button
               className="px-3 py-1.5 rounded-md bg-neon text-void-900 text-xs font-semibold hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
-              onClick={onAccept}
+              onClick={() => void handleStartupToastAccept()}
               disabled={toast.selectedIds.length === 0}
             >
               Yes, download ({toast.selectedIds.length})

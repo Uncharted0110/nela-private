@@ -32,6 +32,11 @@ fn runtime_llama_root() -> Option<&'static PathBuf> {
     RUNTIME_LLAMA_ROOT.get()
 }
 
+/// Public accessor for the writable llama runtime root (if initialized).
+pub fn runtime_llama_root_opt() -> Option<&'static PathBuf> {
+    runtime_llama_root()
+}
+
 /// OS-specific folder name for llama.cpp binaries under a bin root.
 pub const fn llama_os_folder() -> &'static str {
     if cfg!(windows) {

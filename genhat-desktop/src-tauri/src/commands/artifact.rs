@@ -89,6 +89,7 @@ pub async fn generate_presentation(
     let mut plan_value = plan;
     if let Some(obj) = plan_value.as_object_mut() {
         obj.remove("_prompt");
+        obj.remove("_target_slides");
     }
     let plan = crate::grammar::plan_normalize::parse_presentation_plan(plan_value, &prompt)?;
     let path = crate::presentation::write_presentation_plan(plan)?;

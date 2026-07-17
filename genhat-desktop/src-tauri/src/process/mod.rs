@@ -41,6 +41,27 @@ impl PipelineReservation {
     }
 }
 
+/// Derive a model memory budget from measured host RAM (device-agnostic).
+/// Returns 0 (= unlimited) on large hosts — see [`HostProfile::memory_budget_mb`].
+fn default_memory_budget_mb() -> u32 {
+    let host = crate::governor::HostProfile::detect();
+    let budget = host.memory_budget_mb();
+    if budget == 0 {
+        log::info!(
+            "Host RAM {} MB: model memory budget unlimited (warm co-residency allowed)",
+            host.total_ram_mb
+        );
+    } else {
+        log::info!(
+            "Host RAM {} MB (available {} MB): model memory budget={} MB",
+            host.total_ram_mb,
+            host.available_ram_mb,
+            budget
+        );
+    }
+    budget
+}
+
 /// Central process manager — holds all model instances and backends.
 pub struct ProcessManager {
     /// model_id → managed model (instances + backend)
@@ -116,16 +137,27 @@ impl ProcessManager {
             .map(|m| m.def.id.clone())
             .unwrap_or_default();
 
+        let defs_for_router: Vec<_> = managed.values().map(|m| m.def.clone()).collect();
+        crate::backends::llama_server::update_known_defs(defs_for_router);
+
         Self {
             models: Arc::new(RwLock::new(managed)),
             backends: Arc::new(RwLock::new(backend_map)),
             models_dir,
-            memory_budget_mb: 0, // 0 = unlimited, set via config later
+            memory_budget_mb: default_memory_budget_mb(),
             active_llm_id: Arc::new(RwLock::new(default_llm_id)),
             previous_llm_id: Arc::new(RwLock::new(None)),
             user_last_active_ms: Arc::new(AtomicU64::new(0)),
             reserved_model_ids: Arc::new(RwLock::new(HashSet::new())),
         }
+    }
+
+    /// Push current registry defs into the llama-server router preset source.
+    async fn sync_router_defs(&self) {
+        let models = self.models.read().await;
+        let defs: Vec<_> = models.values().map(|m| m.def.clone()).collect();
+        drop(models);
+        crate::backends::llama_server::update_known_defs(defs);
     }
 
     /// Set the global memory budget (MB). 0 = unlimited.
@@ -279,6 +311,7 @@ impl ProcessManager {
         );
 
         log::info!("Dynamically registered model '{model_id}'");
+        self.sync_router_defs().await;
         Ok(())
     }
 
@@ -287,6 +320,7 @@ impl ProcessManager {
         self.stop_model(model_id).await?;
         self.backends.write().await.remove(model_id);
         self.models.write().await.remove(model_id);
+        self.sync_router_defs().await;
         log::info!("Unregistered model '{model_id}'");
         Ok(())
     }
@@ -446,6 +480,8 @@ impl ProcessManager {
         // Drop the write lock before the potentially slow start() call
         drop(models);
 
+        self.sync_router_defs().await;
+
         // Actually start the model
         match backend.start(&def, &models_dir).await {
             Ok(handle) => {
@@ -532,6 +568,10 @@ impl ProcessManager {
             let models = self.models.read().await;
             if let Some(managed) = models.get(model_id) {
                 enriched_request.extra.insert("model_file".to_string(), managed.def.model_file.clone());
+                // Tell llama-server router which preset section to use.
+                enriched_request
+                    .extra
+                    .insert("router_model".to_string(), model_id.to_string());
                 // Also inject any model params into extra
                 for (k, v) in &managed.def.params {
                     if !enriched_request.extra.contains_key(k) {
@@ -625,11 +665,12 @@ impl ProcessManager {
                 managed.def.params.insert("ctx_size".to_string(), requested_ctx.to_string());
             }
         }
+        self.sync_router_defs().await;
 
-        // Stop all running instances so they respawn with the new ctx_size
+        // Unload so the next ensure_running reloads with the regenerated preset.
         self.stop_model(model_id).await?;
         log::info!(
-            "ensure_ctx_size: restarted '{model_id}' with ctx_size={requested_ctx} (was {current_ctx})"
+            "ensure_ctx_size: unloaded '{model_id}' for ctx_size={requested_ctx} (was {current_ctx})"
         );
         Ok(true)
     }
@@ -676,6 +717,7 @@ impl ProcessManager {
                 inst_stop(&backend, inst).await;
             }
         }
+        crate::backends::llama_server::shutdown_router().await;
         log::info!("ProcessManager: all models stopped");
     }
 
@@ -844,8 +886,11 @@ impl ProcessManager {
         models.get(model_id).map(|m| m.def.clone())
     }
 
-    /// Get the port of a running llama-server instance (for frontend streaming).
+    /// Get the port of the shared llama-server router (for frontend streaming).
     pub async fn get_llama_port(&self, model_id: &str) -> Option<u16> {
+        if let Some(port) = crate::backends::llama_server::router_port() {
+            return Some(port);
+        }
         let models = self.models.read().await;
         models.get(model_id).and_then(|m| {
             m.instances.iter().find_map(|inst| {

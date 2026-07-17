@@ -5,6 +5,7 @@
 //! and in-process models.
 
 pub mod llama_server;
+pub mod llama_router_preset;
 pub mod llama_cli;
 pub mod parakeet;
 pub mod onnx_classifier;

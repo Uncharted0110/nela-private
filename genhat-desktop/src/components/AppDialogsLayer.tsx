@@ -1,23 +1,19 @@
-import type { DownloadStateMap } from "../app/types";
-import type {
-  ImportModelProfile,
-  RegisteredModel,
-} from "../types";
-import AppModal, { type AppModalKind } from "./AppModal";
+import { 
+  refreshModels,
+  handleDownloadModel,
+  handleCancelDownload,
+  handleUninstall,
+  downloadMissingOptionalModels,
+} from "../app/modelActions";
+import { useUIStore } from "../stores/uiStore";
+import { useModelStore } from "../stores/modelStore";
+import { useDownloadStore } from "../stores/downloadStore";
+import { useWorkspaceStore } from "../stores/workspaceStore";
+import AppModal from "./AppModal";
 import HuggingFaceModal from "./HuggingFaceModal";
 import ModelsSettingsModal from "./ModelsSettingsModal";
 import StartupModal from "./StartupModal";
 import ToursModal from "./ToursModal";
-
-interface AppModalState {
-  open: boolean;
-  kind: AppModalKind;
-  title: string;
-  message: string;
-  confirmLabel: string;
-  cancelLabel: string;
-  showCancel: boolean;
-}
 
 interface AppDialogsLayerProps {
   showStartupModal: boolean;
@@ -27,36 +23,6 @@ interface AppDialogsLayerProps {
   onNewProject: () => void;
   onImportProject: () => void;
   onStartTour: () => void;
-  workspaceBusy: boolean;
-  appModal: AppModalState;
-  onModalConfirm: () => void;
-  onModalCancel: () => void;
-  settingsOpen: boolean;
-  onCloseSettings: () => void;
-  registeredModels: RegisteredModel[];
-  modelCatalog: RegisteredModel[];
-  onModelsUpdated: () => Promise<RegisteredModel[]>;
-  downloads: DownloadStateMap;
-  onDownloadModel: (modelId: string) => Promise<void>;
-  onCancelDownload: (modelId: string) => Promise<void>;
-  onUninstallModel: (modelId: string) => Promise<void>;
-  onDownloadMissingOptional: () => Promise<void>;
-  onConfirmAction: (
-    title: string,
-    message: string,
-    confirmLabel?: string,
-    cancelLabel?: string
-  ) => Promise<boolean>;
-  activeWorkspaceId?: string;
-  hfModalOpen: boolean;
-  onCloseHfModal: () => void;
-  hfModalPreset: {
-    folder: string;
-    profile: "none" | ImportModelProfile;
-  };
-  onModelImported: () => Promise<RegisteredModel[]>;
-  toursOpen: boolean;
-  onCloseTours: () => void;
 }
 
 export default function AppDialogsLayer({
@@ -67,29 +33,27 @@ export default function AppDialogsLayer({
   onNewProject,
   onImportProject,
   onStartTour,
-  workspaceBusy,
-  appModal,
-  onModalConfirm,
-  onModalCancel,
-  settingsOpen,
-  onCloseSettings,
-  registeredModels,
-  modelCatalog,
-  onModelsUpdated,
-  downloads,
-  onDownloadModel,
-  onCancelDownload,
-  onUninstallModel,
-  onDownloadMissingOptional,
-  onConfirmAction,
-  activeWorkspaceId,
-  hfModalOpen,
-  onCloseHfModal,
-  hfModalPreset,
-  onModelImported,
-  toursOpen,
-  onCloseTours,
 }: AppDialogsLayerProps) {
+  // Subscribe to stores
+  const workspaceBusy = useWorkspaceStore(s => s.workspaceBusy);
+  const activeWorkspace = useWorkspaceStore(s => s.activeWorkspace);
+  
+  const appModal = useUIStore(s => s.appModal);
+  const handleModalConfirm = useUIStore(s => s.handleModalConfirm);
+  const handleModalCancel = useUIStore(s => s.handleModalCancel);
+  const settingsOpen = useUIStore(s => s.settingsOpen);
+  const setSettingsOpen = useUIStore(s => s.setSettingsOpen);
+  const hfModalOpen = useUIStore(s => s.hfModalOpen);
+  const setHfModalOpen = useUIStore(s => s.setHfModalOpen);
+  const hfModalPreset = useUIStore(s => s.hfModalPreset);
+  const toursOpen = useUIStore(s => s.toursOpen);
+  const setToursOpen = useUIStore(s => s.setToursOpen);
+  const confirmAction = useUIStore(s => s.confirmAction);
+  
+  const registeredModels = useModelStore(s => s.registeredModels);
+  const modelCatalog = useModelStore(s => s.modelCatalog);
+  
+  const downloads = useDownloadStore(s => s.downloads);
   return (
     <>
       {showStartupModal && (
@@ -112,34 +76,34 @@ export default function AppDialogsLayer({
         confirmLabel={appModal.confirmLabel}
         cancelLabel={appModal.cancelLabel}
         showCancel={appModal.showCancel}
-        onConfirm={onModalConfirm}
-        onCancel={onModalCancel}
+        onConfirm={handleModalConfirm}
+        onCancel={handleModalCancel}
       />
 
       <ModelsSettingsModal
         isOpen={settingsOpen}
-        onClose={onCloseSettings}
+        onClose={() => setSettingsOpen(false)}
         models={registeredModels}
         modelCatalog={modelCatalog}
-        onModelsUpdated={onModelsUpdated}
+        onModelsUpdated={refreshModels}
         downloads={downloads}
-        onDownload={onDownloadModel}
-        onCancelDownload={onCancelDownload}
-        onUninstall={onUninstallModel}
-        onDownloadMissingOptional={onDownloadMissingOptional}
-        onConfirm={onConfirmAction}
-        workspaceId={activeWorkspaceId}
+        onDownload={handleDownloadModel}
+        onCancelDownload={handleCancelDownload}
+        onUninstall={handleUninstall}
+        onDownloadMissingOptional={downloadMissingOptionalModels}
+        onConfirm={confirmAction}
+        workspaceId={activeWorkspace?.id}
       />
 
       <HuggingFaceModal
         isOpen={hfModalOpen}
-        onClose={onCloseHfModal}
-        onModelImported={onModelImported}
+        onClose={() => setHfModalOpen(false)}
+        onModelImported={refreshModels}
         defaultFolder={hfModalPreset.folder}
         defaultImportProfile={hfModalPreset.profile}
       />
 
-      <ToursModal isOpen={toursOpen} onClose={onCloseTours} />
+      <ToursModal isOpen={toursOpen} onClose={() => setToursOpen(false)} />
     </>
   );
 }

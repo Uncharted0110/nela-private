@@ -1,20 +1,23 @@
-//! llama-server backend: spawns llama-server as a child process, communicates
-//! via its OpenAI-compatible HTTP API on a dynamically assigned port.
+//! llama-server backend in **router mode**.
 //!
-//! Supports multiple concurrent instances on different ports.
+//! One long-lived `llama-server` parent process hosts all `llama_server` models via
+//! `--models-preset` + `--models-max`. Clients select a model with the OpenAI
+//! `"model"` field (GenHat model id). `start()` loads a model; `stop()` unloads it
+//! without killing the parent (parent dies only on `shutdown_router()` / app exit).
 
 use crate::backends::ModelBackend;
+use crate::governor::HostProfile;
 use crate::registry::types::{
     ModelDef, ModelHandle, ModelHandle::Process, ProcessHandle, TaskRequest, TaskResponse,
 };
 use async_trait::async_trait;
+use std::collections::HashSet;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::OnceLock;
+use std::sync::Mutex;
 use std::time::Duration;
 use std::time::Instant;
-use sysinfo::System;
 
 /// Kill any stale llama-server processes from previous app runs.
 /// Called at startup to reclaim GPU/memory resources leaked by zombie processes.
@@ -88,6 +91,46 @@ impl LlamaServerBackend {
 /// Resolve the llama-server executable path.
 /// Uses the shared `paths::resolve_bundled_binary` helper which checks both
 /// dev locations (ancestor walk) and production Tauri resource directories.
+fn http_client_with_timeout(timeout_secs: u64) -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(3))
+        .timeout(Duration::from_secs(timeout_secs))
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {e}"))
+}
+
+// ── Shared router singleton ──────────────────────────────────────────────────
+
+struct SharedRouter {
+    child: Child,
+    pid: u32,
+    port: u16,
+    http_client: reqwest::Client,
+    preset_path: PathBuf,
+    preset_hash: u64,
+    /// Model ids currently tracked as loaded by GenHat (best-effort).
+    loaded: HashSet<String>,
+}
+
+static ROUTER: Mutex<Option<SharedRouter>> = Mutex::new(None);
+static KNOWN_DEFS: Mutex<Vec<ModelDef>> = Mutex::new(Vec::new());
+
+/// Publish the full set of known model defs so the router preset stays complete.
+pub fn update_known_defs(defs: Vec<ModelDef>) {
+    if let Ok(mut g) = KNOWN_DEFS.lock() {
+        *g = defs;
+    }
+}
+
+fn known_defs_snapshot() -> Vec<ModelDef> {
+    KNOWN_DEFS.lock().map(|g| g.clone()).unwrap_or_default()
+}
+
+/// Port of the shared router, if running.
+pub fn router_port() -> Option<u16> {
+    ROUTER.lock().ok().and_then(|g| g.as_ref().map(|r| r.port))
+}
+
 fn resolve_llama_exe() -> Result<PathBuf, String> {
     let os_folder = crate::paths::llama_os_folder();
 
@@ -107,117 +150,23 @@ fn resolve_llama_exe() -> Result<PathBuf, String> {
         .map_err(|e| format!("llama-server not found. {e}"))
 }
 
-#[derive(Debug, Clone, Copy)]
-enum CacheTypeArgStyle {
-    Combined,
-    Split,
-    Unsupported,
-}
-
-fn detect_cache_type_arg_style(exe: &Path) -> CacheTypeArgStyle {
-    static CACHE_STYLE: OnceLock<CacheTypeArgStyle> = OnceLock::new();
-
-    *CACHE_STYLE.get_or_init(|| {
-        // Instead of running `llama-server --help` (which can hang for 20+ seconds
-        // on macOS due to Metal GPU initialisation), we scan the binary file for
-        // known flag strings.  This is effectively the same as running `strings(1)`
-        // but in-process and instantaneous.
-        match std::fs::read(exe) {
-            Ok(bytes) => {
-                // Search for ASCII flag strings embedded in the binary.
-                let has_split = bytes.windows(14).any(|w| w == b"--cache-type-k")
-                    || bytes.windows(4).any(|w| w == b"-ctk");
-                let has_combined = bytes.windows(14).any(|w| w == b"--cache-type\x00");
-
-                if has_split {
-                    log::info!("Detected split cache-type style (--cache-type-k/v) from binary");
-                    CacheTypeArgStyle::Split
-                } else if has_combined {
-                    log::info!("Detected combined cache-type style (--cache-type) from binary");
-                    CacheTypeArgStyle::Combined
-                } else {
-                    log::warn!("Could not detect cache-type style from binary; assuming split");
-                    CacheTypeArgStyle::Split
-                }
-            }
-            Err(e) => {
-                log::warn!("Could not read llama-server binary for cache flag detection: {e}");
-                CacheTypeArgStyle::Split // safe default for modern builds
-            }
-        }
-    })
-}
-
-fn http_client_with_timeout(timeout_secs: u64) -> Result<reqwest::Client, String> {
-    reqwest::Client::builder()
-        .connect_timeout(Duration::from_secs(3))
-        .timeout(Duration::from_secs(timeout_secs))
-        .build()
-        .map_err(|e| format!("Failed to create HTTP client: {e}"))
-}
-
-fn is_truthy(value: &str) -> bool {
-    matches!(
-        value.trim().to_ascii_lowercase().as_str(),
-        "1" | "true" | "yes" | "on" | "enabled"
-    )
-}
-
-fn recommended_thread_counts(def: &ModelDef) -> (usize, usize) {
-    // Use the Governor's thermally-aware thread count as the ceiling.
-    // This enforces the revamp.md §3.1 "no space heater" mandate at every
-    // llama-server spawn, regardless of what the model config requests.
-    let governor_threads = crate::governor::Governor::new().inference_threads();
-
-    let physical_cores = std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(4)
-        .max(1);
-
-    // Default: use governor ceiling, but allow the model config to request fewer.
-    let default_threads = governor_threads;
-    let default_threads_batch = physical_cores.max(default_threads);
-
-    let parse_positive = |key: &str| -> Option<usize> {
-        def.params
-            .get(key)
-            .and_then(|v| v.parse::<usize>().ok())
-            .filter(|&v| v > 0)
-    };
-
-    // Model config may override downward (never upward past governor ceiling).
-    let threads = parse_positive("threads")
-        .map(|t| t.min(governor_threads))
-        .unwrap_or(default_threads);
-    let threads_batch = parse_positive("threads_batch")
-        .map(|t| t.min(governor_threads))
-        .unwrap_or(default_threads_batch)
-        .max(threads);
-
-    (threads, threads_batch)
-}
-
-fn should_use_no_mmap(def: &ModelDef) -> bool {
-    if is_truthy(def.param_or("no_mmap", "false").as_str())
-        || is_truthy(def.param_or("low_ram", "false").as_str())
-    {
-        return true;
+fn lower_process_priority(child: &Child) {
+    let gov = crate::governor::Governor::new();
+    if !(gov.on_battery() || gov.thermal_pressure()) {
+        log::info!(
+            "Keeping llama-server pid={} at normal priority (AC/cool)",
+            child.id()
+        );
+        return;
     }
 
-    let mut sys = System::new();
-    sys.refresh_memory();
-    let total_ram_bytes = sys.total_memory();
-    total_ram_bytes > 0 && total_ram_bytes <= 16 * 1024 * 1024 * 1024
-}
-
-fn lower_process_priority(child: &Child) {
     let pid = child.id();
 
     #[cfg(unix)]
     {
         let ret = unsafe { libc::setpriority(libc::PRIO_PROCESS as _, pid as _, 10) };
         if ret == 0 {
-            log::info!("Set llama-server pid={pid} priority to nice=10");
+            log::info!("Set llama-server pid={pid} priority to nice=10 (battery/thermal)");
         } else {
             log::warn!(
                 "Failed to lower llama-server priority for pid={pid}: {}",
@@ -240,142 +189,10 @@ fn lower_process_priority(child: &Child) {
     }
 }
 
-/// Spawn a llama-server child process with the given model and port.
-fn spawn_llama(model_path: &Path, port: u16, def: &ModelDef) -> Result<Child, String> {
-    let exe = resolve_llama_exe()?;
-    let work_dir = exe
-        .parent()
-        .ok_or_else(|| "llama-server exe has no parent dir".to_string())?;
-
-    // Read params from model config with defaults
-    let ctx_size = def.param_or("ctx_size", "4096");
-    let max_tokens = def.param_or("max_tokens", "256");
-    let temp = def.param_or("temp", "0.7");
-    let top_p = def.param_or("top_p", "0.9");
-    let top_k = def.param_or("top_k", "40");
-    let repeat_penalty = def.param_or("repeat_penalty", "1.1");
-    let (threads, threads_batch) = recommended_thread_counts(def);
-    let use_no_mmap = should_use_no_mmap(def);
-
-    let port_str = port.to_string();
-    let model_str = model_path.to_string_lossy();
-
-    // Set up logging
-    let log_path = std::env::temp_dir().join(format!("genhat-llama-server-{port}.log"));
-    if let Ok(mut log_file) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&log_path)
-    {
-        let _ = writeln!(log_file, "--- llama-server start (port {port}) ---");
-        let _ = writeln!(log_file, "exe: {}", exe.display());
-        let _ = writeln!(log_file, "model: {model_str}");
-    }
-
-    let mut args = vec![
-        "-m".to_string(),
-        model_str.to_string(),
-        "--ctx-size".to_string(),
-        ctx_size.clone(),
-        "--port".to_string(),
-        port_str.clone(),
-        "--host".to_string(),
-        "127.0.0.1".to_string(),
-        "-n".to_string(),
-        max_tokens.clone(),
-        "--temp".to_string(),
-        temp,
-        "--top-p".to_string(),
-        top_p,
-        "--top-k".to_string(),
-        top_k,
-        "--repeat-penalty".to_string(),
-        repeat_penalty,
-        "--threads".to_string(),
-        threads.to_string(),
-        "--threads-batch".to_string(),
-        threads_batch.to_string(),
-    ];
-
-    if use_no_mmap {
-        args.push("--no-mmap".to_string());
-    }
-
-    // Enable embedding mode if configured (for embedding models)
-    if def.param_or("embedding", "false") == "true" {
-        args.push("--embedding".to_string());
-        // Add batch size for embedding throughput
-        let batch_size = def.param_or("batch_size", "512");
-        args.push("--batch-size".to_string());
-        args.push(batch_size);
-    }
-
-    // Enable Flash Attention if configured (valid values: enabled/disabled/auto/true/false)
-    if def.param_or("flash_attn", "false") == "true" {
-        args.push("--flash-attn".to_string());
-        args.push("enabled".to_string());
-    }
-
-    // Enable mlock (lock model in RAM, prevent swap) if configured
-    if def.param_or("mlock", "false") == "true" {
-        args.push("--mlock".to_string());
-    }
-
-    // Set KV cache quantization type if configured (e.g. "q8_0").
-    // llama.cpp CLI variants differ by version:
-    //   older/newer: --cache-type-k / --cache-type-v
-    //   some builds: --cache-type
-    let cache_type = def.param_or("cache_type", "");
-    if !cache_type.is_empty() {
-        match detect_cache_type_arg_style(&exe) {
-            CacheTypeArgStyle::Combined => {
-                args.push("--cache-type".to_string());
-                args.push(cache_type);
-            }
-            CacheTypeArgStyle::Split => {
-                args.push("--cache-type-k".to_string());
-                args.push(cache_type.clone());
-                args.push("--cache-type-v".to_string());
-                args.push(cache_type);
-            }
-            CacheTypeArgStyle::Unsupported => {
-                log::warn!(
-                    "cache_type='{}' configured for model '{}' but this llama-server build does not support cache quantization flags; skipping",
-                    cache_type,
-                    def.id
-                );
-            }
-        }
-    }
-
-    // Chat template kwargs (e.g. '{"enable_thinking": false}' for Qwen)
-    let chat_template_kwargs = def.param_or("chat_template_kwargs", "");
-    if !chat_template_kwargs.is_empty() {
-        args.push("--chat-template-kwargs".to_string());
-        args.push(chat_template_kwargs);
-    }
-
-    let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-
-    let mut spawn_cmd = Command::new(&exe);
-    spawn_cmd
-        .args(&args_refs)
-        .current_dir(work_dir)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    #[cfg(windows)]
-    crate::windows_spawn::hide_console_std(&mut spawn_cmd);
-
-    let mut child = spawn_cmd
-        .spawn()
-        .map_err(|e| format!("Failed to spawn llama-server: {e}"))?;
-
-    lower_process_priority(&child);
-
-    // Redirect stdout/stderr to log file in background threads
+fn attach_log_pipes(child: &mut Child, log_path: &Path) {
     let pid = child.id();
     if let Some(stdout) = child.stdout.take() {
-        let lp = log_path.clone();
+        let lp = log_path.to_path_buf();
         std::thread::spawn(move || {
             if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&lp) {
                 for line in BufReader::new(stdout).lines().flatten() {
@@ -385,33 +202,281 @@ fn spawn_llama(model_path: &Path, port: u16, def: &ModelDef) -> Result<Child, St
         });
     }
     if let Some(stderr) = child.stderr.take() {
-        let lp = log_path.clone();
+        let lp = log_path.to_path_buf();
         std::thread::spawn(move || {
             if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&lp) {
                 for line in BufReader::new(stderr).lines().flatten() {
+                    if line.contains("system_info") || line.contains("load_backend") {
+                        log::info!("llama-server cpu/backend: {line}");
+                    }
                     let _ = writeln!(f, "[stderr][pid={pid}] {line}");
                 }
             }
         });
     }
+}
 
-    let full_cmd = format!("{} {}",
-        exe.display(),
-        args.iter().map(|a| if a.contains(' ') || a.contains('{') {
-            format!("'{}'", a)
-        } else {
-            a.clone()
-        }).collect::<Vec<_>>().join(" ")
-    );
-    log::info!("llama-server spawned: pid={pid}, port={port}");
+fn spawn_router_process(preset_path: &Path, port: u16) -> Result<Child, String> {
+    let exe = resolve_llama_exe()?;
+    let work_dir = exe
+        .parent()
+        .ok_or_else(|| "llama-server exe has no parent dir".to_string())?;
+
+    let host = HostProfile::detect();
+    let gov = crate::governor::Governor::new();
+    let threads = host.inference_threads(gov.on_battery(), gov.thermal_pressure());
+    let models_max = host.models_max();
+    let use_no_mmap = host.prefer_no_mmap();
+
+    let log_path = std::env::temp_dir().join(format!("genhat-llama-router-{port}.log"));
+    if let Ok(mut log_file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+    {
+        let _ = writeln!(log_file, "--- llama-server router start (port {port}) ---");
+        let _ = writeln!(log_file, "exe: {}", exe.display());
+        let _ = writeln!(log_file, "preset: {}", preset_path.display());
+        let _ = writeln!(log_file, "models-max: {models_max}");
+    }
+
+    let mut args = vec![
+        "--models-preset".to_string(),
+        preset_path.to_string_lossy().to_string(),
+        "--models-max".to_string(),
+        models_max.to_string(),
+        "--port".to_string(),
+        port.to_string(),
+        "--host".to_string(),
+        "127.0.0.1".to_string(),
+        "--threads".to_string(),
+        threads.to_string(),
+        "--threads-batch".to_string(),
+        threads.to_string(),
+        "--parallel".to_string(),
+        "1".to_string(),
+        "-fit".to_string(),
+        "off".to_string(),
+    ];
+    if use_no_mmap {
+        args.push("--no-mmap".to_string());
+    }
+
+    let mut spawn_cmd = Command::new(&exe);
+    // Isolate from ~/.cache/llama.cpp so only GenHat presets are exposed.
+    let isolated_cache = std::env::temp_dir().join("genhat-llama-cache");
+    let _ = std::fs::create_dir_all(&isolated_cache);
+    spawn_cmd
+        .args(&args)
+        .current_dir(work_dir)
+        .env("LLAMA_CACHE", &isolated_cache)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(windows)]
+    crate::windows_spawn::hide_console_std(&mut spawn_cmd);
+
+    let mut child = spawn_cmd
+        .spawn()
+        .map_err(|e| format!("Failed to spawn llama-server router: {e}"))?;
+
+    lower_process_priority(&child);
+    attach_log_pipes(&mut child, &log_path);
+
     log::info!(
-        "llama-server tuning: threads={}, threads_batch={}, no_mmap={}",
+        "llama-server router spawned: pid={}, port={}, models_max={}, threads={}, preset={}",
+        child.id(),
+        port,
+        models_max,
         threads,
-        threads_batch,
-        use_no_mmap
+        preset_path.display()
     );
-    log::info!("llama-server cmd: {full_cmd}");
+    log::info!(
+        "llama-server router cmd: {} {}",
+        exe.display(),
+        args.join(" ")
+    );
     Ok(child)
+}
+
+fn kill_pid(pid: u32) {
+    #[cfg(windows)]
+    {
+        let mut taskkill_cmd = Command::new("taskkill");
+        taskkill_cmd.args(["/F", "/PID", &pid.to_string()]);
+        crate::windows_spawn::hide_console_std(&mut taskkill_cmd);
+        let _ = taskkill_cmd.output();
+    }
+    #[cfg(unix)]
+    {
+        unsafe {
+            libc::kill(pid as i32, libc::SIGTERM);
+        }
+        std::thread::sleep(Duration::from_millis(300));
+        unsafe {
+            libc::kill(pid as i32, libc::SIGKILL);
+        }
+    }
+}
+
+/// Tear down the shared router parent (app shutdown / forced restart).
+pub async fn shutdown_router() {
+    let mut guard = match ROUTER.lock() {
+        Ok(g) => g,
+        Err(e) => {
+            log::warn!("Router lock poisoned on shutdown: {e}");
+            return;
+        }
+    };
+    if let Some(mut router) = guard.take() {
+        log::info!("Shutting down llama-server router pid={}", router.pid);
+        let _ = router.child.kill();
+        let _ = router.child.wait();
+        kill_pid(router.pid);
+    }
+}
+
+async fn ensure_router(models_dir: &Path, force_restart: bool) -> Result<(u16, reqwest::Client, u32, PathBuf), String> {
+    let mut defs = known_defs_snapshot();
+    if defs.is_empty() {
+        defs = crate::config::load_model_definitions().unwrap_or_default();
+    }
+    let (preset_path, preset_hash) =
+        crate::backends::llama_router_preset::write_preset(&defs, models_dir)?;
+
+    {
+        let guard = ROUTER.lock().map_err(|e| format!("Router lock poisoned: {e}"))?;
+        if let Some(router) = guard.as_ref() {
+            let alive = {
+                #[cfg(unix)]
+                {
+                    unsafe { libc::kill(router.pid as i32, 0) == 0 }
+                }
+                #[cfg(windows)]
+                {
+                    true // best-effort; health check below
+                }
+            };
+            if alive && !force_restart && router.preset_hash == preset_hash {
+                return Ok((
+                    router.port,
+                    router.http_client.clone(),
+                    router.pid,
+                    router.preset_path.clone(),
+                ));
+            }
+        }
+    }
+
+    // Restart if needed
+    {
+        let mut guard = ROUTER.lock().map_err(|e| format!("Router lock poisoned: {e}"))?;
+        if let Some(mut old) = guard.take() {
+            log::info!(
+                "Restarting llama-server router (force={force_restart}, preset_changed={})",
+                old.preset_hash != preset_hash
+            );
+            let _ = old.child.kill();
+            let _ = old.child.wait();
+            kill_pid(old.pid);
+        }
+    }
+
+    let port = portpicker::pick_unused_port().ok_or("No free port available for router")?;
+    let mut child = spawn_router_process(&preset_path, port)?;
+    let pid = child.id();
+    let http_client = reqwest::Client::builder()
+        .pool_max_idle_per_host(4)
+        .tcp_keepalive(Duration::from_secs(30))
+        .connect_timeout(Duration::from_secs(3))
+        .build()
+        .map_err(|e| format!("Failed to create router HTTP client: {e}"))?;
+
+    if let Err(e) = wait_for_ready(port, pid, 120).await {
+        let _ = child.kill();
+        kill_pid(pid);
+        return Err(e);
+    }
+
+    let client_clone = http_client.clone();
+    let mut guard = ROUTER.lock().map_err(|e| format!("Router lock poisoned: {e}"))?;
+    *guard = Some(SharedRouter {
+        child,
+        pid,
+        port,
+        http_client,
+        preset_path: preset_path.clone(),
+        preset_hash,
+        loaded: HashSet::new(),
+    });
+
+    Ok((port, client_clone, pid, preset_path))
+}
+
+async fn router_load_model(port: u16, client: &reqwest::Client, model_id: &str) -> Result<(), String> {
+    // Prefer explicit load; fall back to autoload on first inference if endpoint fails.
+    let url = format!("http://127.0.0.1:{port}/models/load");
+    let body = serde_json::json!({ "model": model_id });
+    match client.post(&url).json(&body).send().await {
+        Ok(resp) if resp.status().is_success() => {
+            log::info!("Router loaded model '{model_id}' via /models/load");
+            Ok(())
+        }
+        Ok(resp) => {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            // Autoload may still work on first chat request.
+            log::warn!(
+                "/models/load for '{model_id}' returned {status}: {text}; relying on autoload"
+            );
+            Ok(())
+        }
+        Err(e) => {
+            log::warn!("/models/load for '{model_id}' failed: {e}; relying on autoload");
+            Ok(())
+        }
+    }
+}
+
+async fn router_unload_model(port: u16, client: &reqwest::Client, model_id: &str) -> Result<(), String> {
+    let url = format!("http://127.0.0.1:{port}/models/unload");
+    let body = serde_json::json!({ "model": model_id });
+    match client.post(&url).json(&body).send().await {
+        Ok(resp) if resp.status().is_success() => {
+            log::info!("Router unloaded model '{model_id}'");
+            Ok(())
+        }
+        Ok(resp) => {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            log::warn!("/models/unload for '{model_id}' returned {status}: {text}");
+            Ok(())
+        }
+        Err(e) => {
+            log::warn!("/models/unload for '{model_id}' failed: {e}");
+            Ok(())
+        }
+    }
+}
+
+fn mark_loaded(model_id: &str, loaded: bool) {
+    if let Ok(mut guard) = ROUTER.lock() {
+        if let Some(router) = guard.as_mut() {
+            if loaded {
+                router.loaded.insert(model_id.to_string());
+            } else {
+                router.loaded.remove(model_id);
+            }
+        }
+    }
+}
+
+fn request_model_id(request: &TaskRequest) -> String {
+    request
+        .extra
+        .get("router_model")
+        .cloned()
+        .or_else(|| request.model_override.clone())
+        .unwrap_or_else(|| "local".to_string())
 }
 
 /// Wait for llama-server to become ready by polling its /health endpoint.
@@ -545,48 +610,35 @@ impl ModelBackend for LlamaServerBackend {
             return Err(format!("Model file not found: {}", model_path.display()));
         }
 
-        // Pick a port — use configured port if nonzero, otherwise find a free one
-        let configured_port: u16 = def.param_or("port", "0").parse().unwrap_or(0);
-        let port = if configured_port == 0 {
-            portpicker::pick_unused_port().ok_or("No free port available")?
-        } else {
-            configured_port
-        };
+        // Keep this model in the known-defs set used for preset generation.
+        {
+            let mut defs = known_defs_snapshot();
+            if let Some(slot) = defs.iter_mut().find(|d| d.id == def.id) {
+                *slot = def.clone();
+            } else {
+                defs.push(def.clone());
+            }
+            update_known_defs(defs);
+        }
 
-        let child = spawn_llama(&model_path, port, def)?;
-        let pid = child.id();
-        let exe = resolve_llama_exe()?;
-        let work_dir = exe.parent().unwrap().to_path_buf();
+        let (port, http_client, pid, _preset) = ensure_router(models_dir, false).await?;
+        router_load_model(port, &http_client, &def.id).await?;
+        mark_loaded(&def.id, true);
 
-        let handle = ModelHandle::Process(ProcessHandle {
-            child,
+        let work_dir = resolve_llama_exe()?
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| models_dir.to_path_buf());
+
+        Ok(ModelHandle::Process(ProcessHandle {
+            child: None, // parent owned by ROUTER singleton
             pid,
             port: Some(port),
             started_at: Instant::now(),
             work_dir,
-            // Persistent client: connection pooling + TCP keep-alive avoids
-            // re-establishing a new TCP connection for every inference request.
-            http_client: reqwest::Client::builder()
-                .pool_max_idle_per_host(2)
-                .tcp_keepalive(std::time::Duration::from_secs(30))
-                .connect_timeout(std::time::Duration::from_secs(3))
-                .build()
-                .ok(),
-        });
-
-        // Wait for the server to be ready (up to 120s for large models with big ctx).
-        // If this fails, the process may already be killed by wait_for_ready, but we
-        // also do an explicit cleanup to prevent zombie accumulation.
-        if let Err(e) = wait_for_ready(port, pid, 120).await {
-            // Ensure the process is dead
-            #[cfg(unix)]
-            unsafe {
-                libc::kill(pid as i32, libc::SIGKILL);
-            }
-            return Err(e);
-        }
-
-        Ok(handle)
+            http_client: Some(http_client),
+            router_model_id: Some(def.id.clone()),
+        }))
     }
 
     async fn is_healthy(&self, handle: &ModelHandle) -> bool {
@@ -631,6 +683,7 @@ impl ModelBackend for LlamaServerBackend {
         }
 
         let url = format!("http://127.0.0.1:{port}/v1/chat/completions");
+        let model_name = request_model_id(request);
 
         // Build the chat messages. The task type determines the system prompt.
         let system_prompt = match &request.task_type {
@@ -660,19 +713,14 @@ impl ModelBackend for LlamaServerBackend {
 
         // Build the user message - handle vision requests with images
         let user_message = if request.task_type == crate::registry::types::TaskType::VisionChat {
-            // Check for base64 image in extra params
             if let (Some(image_base64), Some(image_mime)) = (
                 request.extra.get("image_base64"),
                 request.extra.get("image_mime"),
             ) {
-                // Multimodal message format (OpenAI-compatible)
                 serde_json::json!({
                     "role": "user",
                     "content": [
-                        {
-                            "type": "text",
-                            "text": &request.input
-                        },
+                        { "type": "text", "text": &request.input },
                         {
                             "type": "image_url",
                             "image_url": {
@@ -682,22 +730,14 @@ impl ModelBackend for LlamaServerBackend {
                     ]
                 })
             } else {
-                // No image, just text
-                serde_json::json!({
-                    "role": "user",
-                    "content": &request.input
-                })
+                serde_json::json!({ "role": "user", "content": &request.input })
             }
         } else {
-            // Standard text message
-            serde_json::json!({
-                "role": "user",
-                "content": &request.input
-            })
+            serde_json::json!({ "role": "user", "content": &request.input })
         };
 
         let mut body = serde_json::json!({
-            "model": "local",
+            "model": model_name,
             "messages": [
                 { "role": "system", "content": system_prompt },
                 user_message
@@ -706,46 +746,26 @@ impl ModelBackend for LlamaServerBackend {
             "stream": false
         });
 
-        // ── GBNF grammar constraint (revamp P1) ───────────────────────────────
-        // If the caller passes a `grammar` key in `request.extra`, inject it
-        // into the completion request so llama-server constrains its logit
-        // sampling to only structurally valid output.  This is the accuracy
-        // layer from revamp.md §5 — GBNF mandatory for all artifact output.
         if let Some(grammar) = request.extra.get("grammar") {
             if !grammar.is_empty() {
                 body["grammar"] = serde_json::json!(grammar);
             }
         }
 
-        // Allow callers to override max_tokens via the extra map
         if let Some(mt) = request.extra.get("max_tokens") {
             if let Ok(n) = mt.parse::<u32>() {
                 body["max_tokens"] = serde_json::json!(n);
             }
         }
 
-        // Allow callers to override temperature via the extra map
         if let Some(t) = request.extra.get("temperature") {
             if let Ok(v) = t.parse::<f64>() {
                 body["temperature"] = serde_json::json!(v);
             }
         }
 
-        // Control reasoning/thinking behavior based on task type.
-        // For non-chat tasks (enrich, summarize, etc.), disable thinking to improve speed.
-        // For chat tasks, keep thinking OFF by default; callers may explicitly opt in.
-        // 
-        // IMPORTANT: When disabling reasoning, we must set ALL THREE:
-        //   - reasoning_budget = 0 (disables generation of thinking tokens)
-        //   - reasoning_format = "none" (prevents parsing of <think> tags)
-        //   - chat_template_kwargs = {"enable_thinking": false} (for Qwen3 models)
-        // Setting only budget=0 may not fully disable reasoning on some models.
         match request.task_type {
             crate::registry::types::TaskType::Chat => {
-                // Backward compatibility:
-                // - `enable_thinking=true` explicitly enables reasoning.
-                // - `disable_thinking=false` also enables reasoning.
-                // - If neither is provided, reasoning remains disabled by default.
                 let enable_thinking = request
                     .extra
                     .get("enable_thinking")
@@ -760,26 +780,21 @@ impl ModelBackend for LlamaServerBackend {
 
                 if enable_thinking {
                     body["reasoning_format"] = serde_json::json!("deepseek");
-                    body["reasoning_budget"] = serde_json::json!(-1); // Unrestricted
+                    body["reasoning_budget"] = serde_json::json!(-1);
                     body["chat_template_kwargs"] = serde_json::json!({"enable_thinking": true});
                 } else {
-                    // Fully disable reasoning - budget, format, AND template kwargs
                     body["reasoning_format"] = serde_json::json!("none");
                     body["reasoning_budget"] = serde_json::json!(0);
                     body["chat_template_kwargs"] = serde_json::json!({"enable_thinking": false});
                 }
             }
             _ => {
-                // Disable thinking for all non-chat tasks to improve speed
                 body["reasoning_format"] = serde_json::json!("none");
                 body["reasoning_budget"] = serde_json::json!(0);
                 body["chat_template_kwargs"] = serde_json::json!({"enable_thinking": false});
             }
         }
 
-        // Increase timeouts significantly - thinking/reasoning models need much more time.
-        // Previous 45s timeout for Enrich tasks was causing requests to be cancelled
-        // mid-generation, leaving the server in a bad state.
         let timeout_secs = match request.task_type {
             crate::registry::types::TaskType::Classify => 30,
             crate::registry::types::TaskType::Grade => 45,
@@ -790,8 +805,6 @@ impl ModelBackend for LlamaServerBackend {
             | crate::registry::types::TaskType::PodcastScript => 180,
             _ => 90,
         };
-        // Use the instance's persistent client when available (avoids TCP reconnect
-        // per request). Fall back to a short-lived client if none was stored.
         let owned_client;
         let client: &reqwest::Client = if let Some(c) = persistent_client {
             c
@@ -805,7 +818,6 @@ impl ModelBackend for LlamaServerBackend {
             .send()
             .await
             .map_err(|e| {
-                // Provide more helpful error message for timeouts
                 if e.is_timeout() {
                     format!(
                         "Request timed out after {}s. The model may be too slow for this task type ({:?}). \
@@ -815,7 +827,7 @@ impl ModelBackend for LlamaServerBackend {
                 } else if e.is_connect() {
                     format!(
                         "Failed to connect to llama-server at port {}. The server may have crashed.",
-                        url.split(':').last().unwrap_or("unknown")
+                        port
                     )
                 } else {
                     format!("HTTP request to llama-server failed: {e}")
@@ -838,12 +850,11 @@ impl ModelBackend for LlamaServerBackend {
             .unwrap_or("")
             .to_string();
 
-        // Check if reasoning content is present (for chat tasks with thinking enabled)
         if request.task_type == crate::registry::types::TaskType::Chat {
             let reasoning = json["choices"][0]["message"]["reasoning_content"]
                 .as_str()
                 .map(|s| s.to_string());
-            
+
             if reasoning.is_some() && !reasoning.as_ref().unwrap().is_empty() {
                 return Ok(TaskResponse::ChatWithThinking { content, reasoning });
             }
@@ -855,60 +866,28 @@ impl ModelBackend for LlamaServerBackend {
     async fn stop(&self, handle: &ModelHandle) -> Result<(), String> {
         match handle {
             Process(ph) => {
-                log::info!("Stopping llama-server pid={}", ph.pid);
-                // We need mutable access to call kill; use platform-specific kill by PID
-                #[cfg(windows)]
-                {
-                    let mut taskkill_cmd = Command::new("taskkill");
-                    taskkill_cmd.args(["/F", "/PID", &ph.pid.to_string()]);
-                    crate::windows_spawn::hide_console_std(&mut taskkill_cmd);
-                    let _ = taskkill_cmd.output();
-                    return Ok(());
-                }
-                #[cfg(unix)]
-                {
-                    let pid = ph.pid as i32;
-                    let is_alive = || unsafe { libc::kill(pid, 0) } == 0;
-
-                    // Best-effort graceful stop first.
-                    unsafe {
-                        libc::kill(pid, libc::SIGTERM);
+                if let Some(model_id) = &ph.router_model_id {
+                    if let (Some(port), Some(client)) = (ph.port, ph.http_client.as_ref()) {
+                        router_unload_model(port, client, model_id).await?;
                     }
-
-                    let deadline = Instant::now() + std::time::Duration::from_secs(5);
-                    while Instant::now() < deadline {
-                        if !is_alive() {
-                            return Ok(());
-                        }
-                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                    }
-
-                    log::warn!(
-                        "llama-server pid={} did not exit after SIGTERM; sending SIGKILL",
+                    mark_loaded(model_id, false);
+                    log::info!(
+                        "Unloaded router model '{model_id}' (parent pid={} stays up)",
                         ph.pid
                     );
-                    unsafe {
-                        libc::kill(pid, libc::SIGKILL);
-                    }
-
-                    let kill_deadline = Instant::now() + std::time::Duration::from_secs(2);
-                    while Instant::now() < kill_deadline {
-                        if !is_alive() {
-                            return Ok(());
-                        }
-                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                    }
-
-                    return Err(format!(
-                        "llama-server pid={} did not exit after SIGKILL",
-                        ph.pid
-                    ));
+                    return Ok(());
                 }
+
+                // Legacy / non-router owned process
+                log::info!("Stopping llama-server pid={}", ph.pid);
+                kill_pid(ph.pid);
+                Ok(())
             }
             _ => Err("LlamaServerBackend requires a ProcessHandle".into()),
         }
     }
 }
+
 
 // ── Embedding helper (outside the trait impl to keep it clean) ──
 impl LlamaServerBackend {
@@ -923,7 +902,7 @@ impl LlamaServerBackend {
         let url = format!("http://127.0.0.1:{port}/v1/chat/completions");
 
         let body = serde_json::json!({
-            "model": "local",
+            "model": request_model_id(request),
             "messages": [
                 {
                     "role": "system",
@@ -1000,6 +979,7 @@ impl LlamaServerBackend {
             .unwrap_or_else(|_| vec![request.input.clone()]);
 
         let body = serde_json::json!({
+            "model": request_model_id(request),
             "input": texts
         });
 

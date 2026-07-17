@@ -50,7 +50,7 @@ export async function refreshWorkspaceRegistryAction({
   }
 }
 
-interface WorkspaceMutationContext {
+export interface WorkspaceMutationContext {
   workspaceBusy: boolean;
   setWorkspaceBusy: SetState<boolean>;
   setSessionStoreReady: SetState<boolean>;
