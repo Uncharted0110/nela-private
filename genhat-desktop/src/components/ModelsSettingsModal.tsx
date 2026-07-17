@@ -595,7 +595,8 @@ const ModelsSettingsModal: React.FC<ModelsSettingsModalProps> = ({
   const missingOptional = optionalModels.filter((model) => !model.is_downloaded && model.gdrive_id);
   const missingOptionalTotalMb = sumModelSizesMb(missingOptional);
   const startupMissingTotalMb = sumModelSizesMb(startupMissing);
-  const showRuntimeParamsInAdvanced = false;
+  // Parameters editor lives in the settings sidebar for advanced users.
+  const showRuntimeParams = advanced;
 
   // Filter models for RAG settings dropdowns
   const embedModels = models.filter(
@@ -609,7 +610,10 @@ const ModelsSettingsModal: React.FC<ModelsSettingsModalProps> = ({
 
   return (
     <div className="settings-modal-overlay" onClick={onClose}>
-      <div className="settings-modal" onClick={(e) => e.stopPropagation()}>
+      <div
+        className={`settings-modal ${advanced ? "settings-modal--advanced" : "settings-modal--basic"}`}
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="settings-modal-header">
           <div className="settings-title">
             <Sparkles size={18} />
@@ -626,8 +630,9 @@ const ModelsSettingsModal: React.FC<ModelsSettingsModalProps> = ({
               <div>
                 <div className="text-[0.85rem] font-semibold text-txt">Advanced mode</div>
                 <div className="text-[0.78rem] text-txt-muted">
-                  Show technical controls like model parameters and document search options.
-                  Most people can leave this off.
+                  {advanced
+                    ? "Showing model downloads, pipeline options, and runtime parameters."
+                    : "Turn on to manage models, document search models, and generation parameters."}
                 </div>
               </div>
               <button
@@ -675,286 +680,410 @@ const ModelsSettingsModal: React.FC<ModelsSettingsModalProps> = ({
               </div>
             </div>
           </div>
-          <div className="settings-layout">
+
+          <div className={`settings-layout ${showRuntimeParams ? "settings-layout--with-params" : ""}`}>
             <div className="settings-main">
-              <div className="settings-summary">
-                <div>{advanced ? "Optional models improve quality for advanced features." : "Manage downloads and appearance."}</div>
-                <button
-                  className="settings-primary"
-                  onClick={onDownloadMissingOptional}
-                  disabled={missingOptional.length === 0}
-                >
-                  Download Missing ({missingOptional.length})
-                  {missingOptionalTotalMb > 0 ? ` · ${formatModelSizeLabel(missingOptionalTotalMb)}` : ""}
-                </button>
-              </div>
-
-              <div className="settings-intelligence-mapping">
-                <div className="settings-group-title">Intelligence modes</div>
-                <div className="settings-field-hint">
-                  Choose which model is used for Fast, Smart, and Deep in the main toolbar.
-                </div>
-                <div className="settings-intelligence-grid">
-                  {INTELLIGENCE_MODE_OPTIONS.map((option) => (
-                    <label key={option.key} className="settings-intelligence-row">
-                      <span className="settings-intelligence-label">{option.label}</span>
-                      <DropdownSelect
-                        value={intelligenceMapping[option.key]}
-                        options={chatModelOptions}
-                        onChange={(value) => updateIntelligenceMapping(option.key, value)}
-                        disabled={chatModelOptions.length === 0}
-                      />
-                    </label>
-                  ))}
-                </div>
-                <button
-                  type="button"
-                  className="settings-secondary-btn"
-                  onClick={resetIntelligenceMapping}
-                >
-                  Reset to defaults
-                </button>
-              </div>
-
-              <div className="settings-startup-missing">
-                <div className="settings-startup-missing-header">
-                  <div>
-                    <div className="settings-group-title">Startup Missing Models</div>
-                    <div className="settings-field-hint">
-                      Download startup-related models directly from here.
+              {!advanced && (
+                <>
+                  <div className="settings-summary">
+                    <div>
+                      Everyday settings for how NELA looks and feels. Use{" "}
+                      <strong className="text-txt font-semibold">Fast / Smart / Deep</strong> in the
+                      toolbar to pick answer quality — no model tuning needed.
                     </div>
                   </div>
-                  <button
-                    className="settings-primary"
-                    onClick={handleDownloadMissingStartup}
-                    disabled={startupMissing.length === 0}
-                  >
-                    Download Missing Startup ({startupMissing.length})
-                    {startupMissingTotalMb > 0 ? ` · ${formatModelSizeLabel(startupMissingTotalMb)}` : ""}
-                  </button>
-                </div>
 
-                {startupMissing.length === 0 ? (
-                  <div className="settings-empty">All startup models are already installed.</div>
-                ) : (
-                  <div className="settings-startup-list">
-                    {startupMissing.map((model) => {
-                      const dlState = downloads[model.id];
-                      const isDownloading = dlState !== undefined;
+                  <div className="settings-group">
+                    <div className="settings-group-title">Answer quality</div>
+                    <div className="settings-field-hint mb-3">
+                      These modes are available in the main toolbar. Advanced mode lets you map each
+                      mode to a specific model.
+                    </div>
+                    <div className="settings-basic-mode-grid">
+                      {INTELLIGENCE_MODE_OPTIONS.map((option) => (
+                        <div key={option.key} className="settings-basic-mode-card">
+                          <div className="settings-basic-mode-name">{option.label}</div>
+                          <div className="settings-basic-mode-hint">{option.hint}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
 
-                      return (
-                        <div key={`startup-${model.id}`} className="settings-item settings-startup-item">
-                          <div className="settings-item-info">
-                            <div className="settings-item-name">{model.name}</div>
-                            <div className="settings-item-meta">{model.id} · {formatModelSizeLabel(model.memory_mb)}</div>
-                          </div>
+                  <div className="settings-startup-missing">
+                    <div className="settings-startup-missing-header">
+                      <div>
+                        <div className="settings-group-title">Setup</div>
+                        <div className="settings-field-hint">
+                          {startupMissing.length === 0
+                            ? "Required features are installed. You are ready to chat."
+                            : "Download the packages NELA needs for chat, voice, and documents."}
+                        </div>
+                      </div>
+                      {startupMissing.length > 0 && (
+                        <button
+                          className="settings-primary"
+                          onClick={handleDownloadMissingStartup}
+                        >
+                          Download what's needed ({startupMissing.length})
+                          {startupMissingTotalMb > 0
+                            ? ` · ${formatModelSizeLabel(startupMissingTotalMb)}`
+                            : ""}
+                        </button>
+                      )}
+                    </div>
 
-                          {isDownloading ? (
-                            <div className="settings-actions">
-                              <div className="settings-progress">
-                                <Loader2 size={14} className="animate-spin" />
-                                <span>{dlState.progress.toFixed(0)}%</span>
+                    {startupMissing.length === 0 ? (
+                      <div className="settings-empty">You're all set - nothing else to download.</div>
+                    ) : (
+                      <div className="settings-startup-list">
+                        {startupMissing.map((model) => {
+                          const dlState = downloads[model.id];
+                          const isDownloading = dlState !== undefined;
+                          return (
+                            <div key={`startup-basic-${model.id}`} className="settings-item settings-startup-item">
+                              <div className="settings-item-info">
+                                <div className="settings-item-name">{model.name}</div>
+                                <div className="settings-item-meta">
+                                  {formatModelSizeLabel(model.memory_mb)}
+                                  {isDownloading ? ` · ${dlState.progress.toFixed(0)}%` : ""}
+                                </div>
                               </div>
-                              {onCancelDownload && (
-                                <button
-                                  className="settings-icon-btn"
-                                  onClick={() => onCancelDownload(model.id)}
-                                  title="Cancel Download"
-                                >
-                                  <X size={14} />
-                                </button>
+                              {isDownloading ? (
+                                <div className="settings-actions">
+                                  <div className="settings-progress">
+                                    <Loader2 size={14} className="animate-spin" />
+                                    <span>{dlState.progress.toFixed(0)}%</span>
+                                  </div>
+                                  {onCancelDownload && (
+                                    <button
+                                      className="settings-icon-btn"
+                                      onClick={() => onCancelDownload(model.id)}
+                                      title="Cancel Download"
+                                    >
+                                      <X size={14} />
+                                    </button>
+                                  )}
+                                </div>
+                              ) : (
+                                <div className="settings-actions">
+                                  <button
+                                    className="settings-icon-btn"
+                                    onClick={() => onDownload(model.id)}
+                                    title="Download"
+                                  >
+                                    <Download size={14} />
+                                  </button>
+                                </div>
                               )}
                             </div>
-                          ) : (
-                            <div className="settings-actions">
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+
+              {advanced && (
+                <>
+                  <div className="settings-summary">
+                    <div>
+                      Manage models, map intelligence modes, tune RAG, and edit runtime parameters.
+                    </div>
+                    <button
+                      className="settings-primary"
+                      onClick={onDownloadMissingOptional}
+                      disabled={missingOptional.length === 0}
+                    >
+                      Download Missing ({missingOptional.length})
+                      {missingOptionalTotalMb > 0
+                        ? ` · ${formatModelSizeLabel(missingOptionalTotalMb)}`
+                        : ""}
+                    </button>
+                  </div>
+
+                  <div className="settings-intelligence-mapping">
+                    <div className="settings-group-title">Intelligence modes</div>
+                    <div className="settings-field-hint">
+                      Choose which model is used for Fast, Smart, and Deep in the main toolbar.
+                    </div>
+                    <div className="settings-intelligence-grid">
+                      {INTELLIGENCE_MODE_OPTIONS.map((option) => (
+                        <label key={option.key} className="settings-intelligence-row">
+                          <span className="settings-intelligence-label">{option.label}</span>
+                          <DropdownSelect
+                            value={intelligenceMapping[option.key]}
+                            options={chatModelOptions}
+                            onChange={(value) => updateIntelligenceMapping(option.key, value)}
+                            disabled={chatModelOptions.length === 0}
+                          />
+                        </label>
+                      ))}
+                    </div>
+                    <button
+                      type="button"
+                      className="settings-secondary-btn"
+                      onClick={resetIntelligenceMapping}
+                    >
+                      Reset to defaults
+                    </button>
+                  </div>
+
+                  <div className="settings-startup-missing">
+                    <div className="settings-startup-missing-header">
+                      <div>
+                        <div className="settings-group-title">Startup Missing Models</div>
+                        <div className="settings-field-hint">
+                          Download startup-related models directly from here.
+                        </div>
+                      </div>
+                      <button
+                        className="settings-primary"
+                        onClick={handleDownloadMissingStartup}
+                        disabled={startupMissing.length === 0}
+                      >
+                        Download Missing Startup ({startupMissing.length})
+                        {startupMissingTotalMb > 0
+                          ? ` · ${formatModelSizeLabel(startupMissingTotalMb)}`
+                          : ""}
+                      </button>
+                    </div>
+
+                    {startupMissing.length === 0 ? (
+                      <div className="settings-empty">All startup models are already installed.</div>
+                    ) : (
+                      <div className="settings-startup-list">
+                        {startupMissing.map((model) => {
+                          const dlState = downloads[model.id];
+                          const isDownloading = dlState !== undefined;
+
+                          return (
+                            <div key={`startup-${model.id}`} className="settings-item settings-startup-item">
+                              <div className="settings-item-info">
+                                <div className="settings-item-name">{model.name}</div>
+                                <div className="settings-item-meta">
+                                  {model.id} · {formatModelSizeLabel(model.memory_mb)}
+                                </div>
+                              </div>
+
+                              {isDownloading ? (
+                                <div className="settings-actions">
+                                  <div className="settings-progress">
+                                    <Loader2 size={14} className="animate-spin" />
+                                    <span>{dlState.progress.toFixed(0)}%</span>
+                                  </div>
+                                  {onCancelDownload && (
+                                    <button
+                                      className="settings-icon-btn"
+                                      onClick={() => onCancelDownload(model.id)}
+                                      title="Cancel Download"
+                                    >
+                                      <X size={14} />
+                                    </button>
+                                  )}
+                                </div>
+                              ) : (
+                                <div className="settings-actions">
+                                  <button
+                                    className="settings-icon-btn"
+                                    onClick={() => onDownload(model.id)}
+                                    title="Download Model"
+                                  >
+                                    <Download size={14} />
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  {workspaceId && (
+                    <div className="settings-group">
+                      <div className="settings-group-title">RAG Pipeline Settings</div>
+                      <div className="settings-rag-prefs">
+                        <div className="settings-rag-field">
+                          <label htmlFor="embed-model-select">Embedding Model</label>
+                          <div className="relative w-full z-[110]">
+                            <DropdownSelect
+                              value={ragPrefs.embed_model_id ?? ""}
+                              onChange={(val) =>
+                                setRagPrefs((prev) => ({
+                                  ...prev,
+                                  embed_model_id: val || null,
+                                }))
+                              }
+                              options={[
+                                { label: "Auto (default)", value: "" },
+                                ...embedModels.map((m) => ({ label: m.name, value: m.id })),
+                              ]}
+                              className="settings-select w-full"
+                            />
+                          </div>
+                          <span className="settings-field-hint">
+                            Model used for generating vector embeddings
+                          </span>
+                        </div>
+
+                        <div className="settings-rag-field">
+                          <label htmlFor="llm-model-select">LLM Model</label>
+                          <div className="relative w-full z-[100]">
+                            <DropdownSelect
+                              value={ragPrefs.llm_model_id ?? ""}
+                              onChange={(val) =>
+                                setRagPrefs((prev) => ({
+                                  ...prev,
+                                  llm_model_id: val || null,
+                                }))
+                              }
+                              options={[
+                                { label: "Auto (default)", value: "" },
+                                ...llmModels.map((m) => ({ label: m.name, value: m.id })),
+                              ]}
+                              className="settings-select w-full"
+                            />
+                          </div>
+                          <span className="settings-field-hint">
+                            Model used for enrichment and chat tasks
+                          </span>
+                        </div>
+
+                        <div className="settings-rag-actions">
+                          <button
+                            className="settings-primary"
+                            onClick={handleSaveRagPrefs}
+                            disabled={ragPrefsSaving}
+                          >
+                            {ragPrefsSaving ? (
+                              <Loader2 size={14} className="animate-spin" />
+                            ) : ragPrefsSaved ? (
+                              <CheckCircle size={14} />
+                            ) : (
+                              <Save size={14} />
+                            )}
+                            <span>{ragPrefsSaved ? "Saved" : "Save Preferences"}</span>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {GROUPS.map((group) => {
+                    const groupModels = models.filter(group.match);
+                    const shownModels = groupModels.filter(
+                      (m) => m.is_downloaded || downloads[m.id] !== undefined
+                    );
+                    const isCategoryGroup = !!group.category;
+                    if (!isCategoryGroup && groupModels.length === 0) return null;
+
+                    return (
+                      <div key={group.id} className="settings-group">
+                        <div className="settings-group-title-row">
+                          <div className="settings-group-title">{group.label}</div>
+                          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                            <div className="settings-group-help-anchor">
+                              <button
+                                type="button"
+                                className="settings-group-help-btn"
+                                aria-label={`Explain ${group.label}`}
+                                aria-expanded={openGroupHelpId === group.id}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  setOpenGroupHelpId((prev) =>
+                                    prev === group.id ? null : group.id
+                                  );
+                                }}
+                              >
+                                ?
+                              </button>
+                              {openGroupHelpId === group.id && (
+                                <div className="settings-group-help-popover" role="tooltip">
+                                  <p>{group.description}</p>
+                                </div>
+                              )}
+                            </div>
+                            {group.category && (
                               <button
                                 className="settings-icon-btn"
-                                onClick={() => onDownload(model.id)}
-                                title="Download Model"
+                                onClick={() => setActivePickerGroupId(group.id)}
+                                title={`Choose ${group.label}`}
                               >
                                 <Download size={14} />
                               </button>
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-
-              {/* RAG Pipeline Settings Section (advanced only) */}
-              {advanced && workspaceId && (
-                <div className="settings-group">
-                  <div className="settings-group-title">RAG Pipeline Settings</div>
-                  <div className="settings-rag-prefs">
-                    <div className="settings-rag-field">
-                      <label htmlFor="embed-model-select">Embedding Model</label>
-                      <div className="relative w-full z-[110]">
-                        <DropdownSelect
-                          value={ragPrefs.embed_model_id ?? ""}
-                          onChange={(val) =>
-                            setRagPrefs((prev) => ({
-                              ...prev,
-                              embed_model_id: val || null,
-                            }))
-                          }
-                          options={[
-                            { label: "Auto (default)", value: "" },
-                            ...embedModels.map((m) => ({ label: m.name, value: m.id }))
-                          ]}
-                          className="settings-select w-full"
-                        />
-                      </div>
-                      <span className="settings-field-hint">
-                        Model used for generating vector embeddings
-                      </span>
-                    </div>
-
-                    <div className="settings-rag-field">
-                      <label htmlFor="llm-model-select">LLM Model</label>
-                      <div className="relative w-full z-[100]">
-                        <DropdownSelect
-                          value={ragPrefs.llm_model_id ?? ""}
-                          onChange={(val) =>
-                            setRagPrefs((prev) => ({
-                              ...prev,
-                              llm_model_id: val || null,
-                            }))
-                          }
-                          options={[
-                            { label: "Auto (default)", value: "" },
-                            ...llmModels.map((m) => ({ label: m.name, value: m.id }))
-                          ]}
-                          className="settings-select w-full"
-                        />
-                      </div>
-                      <span className="settings-field-hint">
-                        Model used for enrichment and chat tasks
-                      </span>
-                    </div>
-
-                    <div className="settings-rag-actions">
-                      <button
-                        className="settings-primary"
-                        onClick={handleSaveRagPrefs}
-                        disabled={ragPrefsSaving}
-                      >
-                        {ragPrefsSaving ? (
-                          <Loader2 size={14} className="animate-spin" />
-                        ) : ragPrefsSaved ? (
-                          <CheckCircle size={14} />
-                        ) : (
-                          <Save size={14} />
-                        )}
-                        <span>{ragPrefsSaved ? "Saved" : "Save Preferences"}</span>
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {GROUPS.map((group) => {
-                const groupModels = models.filter(group.match);
-                const shownModels = groupModels.filter((m) => m.is_downloaded || downloads[m.id] !== undefined);
-                const isCategoryGroup = !!group.category;
-                if (!isCategoryGroup && groupModels.length === 0) return null;
-
-                return (
-                  <div key={group.id} className="settings-group">
-                    <div className="settings-group-title-row">
-                      <div className="settings-group-title">{group.label}</div>
-                      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                        <div className="settings-group-help-anchor">
-                        <button
-                          type="button"
-                          className="settings-group-help-btn"
-                          aria-label={`Explain ${group.label}`}
-                          aria-expanded={openGroupHelpId === group.id}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            setOpenGroupHelpId((prev) => (prev === group.id ? null : group.id));
-                          }}
-                        >
-                          ?
-                        </button>
-                        {openGroupHelpId === group.id && (
-                          <div className="settings-group-help-popover" role="tooltip">
-                            <p>{group.description}</p>
-                          </div>
-                        )}
-                        </div>
-                        {group.category && (
-                          <button
-                            className="settings-icon-btn"
-                            onClick={() => setActivePickerGroupId(group.id)}
-                            title={`Choose ${group.label}`}
-                          >
-                            <Download size={14} />
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                    <div className="settings-list">
-                      {shownModels.length === 0 && (
-                        <div className="settings-empty">No installed models found in this category.</div>
-                      )}
-                      {shownModels.map((model) => {
-                        const isDownloading = downloads[model.id] !== undefined;
-                        const dlState = downloads[model.id];
-
-                        return (
-                          <div key={model.id} className="settings-item">
-                            <div className="settings-item-info">
-                              <div className="settings-item-name">{model.name}</div>
-                              <div className="settings-item-meta">
-                                {model.is_downloaded ? "Installed" : "Not installed"} · {formatModelSizeLabel(model.memory_mb)}
-                              </div>
-                            </div>
-                            {isDownloading ? (
-                              <div className="settings-actions">
-                                <div className="settings-progress">
-                                  <Loader2 size={14} className="animate-spin" />
-                                  <span>{dlState.progress.toFixed(0)}%</span>
-                                </div>
-                                {onCancelDownload && (
-                                  <button
-                                    className="settings-icon-btn"
-                                    onClick={() => onCancelDownload(model.id)}
-                                    title="Cancel Download"
-                                  >
-                                    <X size={14} />
-                                  </button>
-                                )}
-                              </div>
-                            ) : (
-                              <div className="settings-actions">
-                                {model.is_downloaded && onUninstall && (
-                                  <button
-                                    className="settings-icon-btn danger"
-                                    onClick={async () => {
-                                      const ok = onConfirm
-                                        ? await onConfirm("Delete model", `Delete ${model.name} from this device?`, "Delete")
-                                        : window.confirm(`Uninstall ${model.name}?`);
-                                      if (ok) onUninstall(model.id);
-                                    }}
-                                    title="Uninstall Model"
-                                  >
-                                    <Trash2 size={14} />
-                                  </button>
-                                )}
-                              </div>
                             )}
                           </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                );
-              })}
+                        </div>
+                        <div className="settings-list">
+                          {shownModels.length === 0 && (
+                            <div className="settings-empty">
+                              No installed models found in this category.
+                            </div>
+                          )}
+                          {shownModels.map((model) => {
+                            const isDownloading = downloads[model.id] !== undefined;
+                            const dlState = downloads[model.id];
+
+                            return (
+                              <div key={model.id} className="settings-item">
+                                <div className="settings-item-info">
+                                  <div className="settings-item-name">{model.name}</div>
+                                  <div className="settings-item-meta">
+                                    {model.is_downloaded ? "Installed" : "Not installed"} ·{" "}
+                                    {formatModelSizeLabel(model.memory_mb)}
+                                  </div>
+                                </div>
+                                {isDownloading ? (
+                                  <div className="settings-actions">
+                                    <div className="settings-progress">
+                                      <Loader2 size={14} className="animate-spin" />
+                                      <span>{dlState.progress.toFixed(0)}%</span>
+                                    </div>
+                                    {onCancelDownload && (
+                                      <button
+                                        className="settings-icon-btn"
+                                        onClick={() => onCancelDownload(model.id)}
+                                        title="Cancel Download"
+                                      >
+                                        <X size={14} />
+                                      </button>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <div className="settings-actions">
+                                    {model.is_downloaded && onUninstall && (
+                                      <button
+                                        className="settings-icon-btn danger"
+                                        onClick={async () => {
+                                          const ok = onConfirm
+                                            ? await onConfirm(
+                                                "Delete model",
+                                                `Delete ${model.name} from this device?`,
+                                                "Delete"
+                                              )
+                                            : window.confirm(`Uninstall ${model.name}?`);
+                                          if (ok) onUninstall(model.id);
+                                        }}
+                                        title="Uninstall Model"
+                                      >
+                                        <Trash2 size={14} />
+                                      </button>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </>
+              )}
             </div>
 
-            {showRuntimeParamsInAdvanced && (
+            {showRuntimeParams && (
             <aside className="settings-params-sidebar">
               <div className="settings-params-header">
                 <div className="settings-title-inline">

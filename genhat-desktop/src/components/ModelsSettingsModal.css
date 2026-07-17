@@ -21,6 +21,14 @@
   color: var(--color-txt);
 }
 
+.settings-modal--basic {
+  width: min(640px, 96vw);
+}
+
+.settings-modal--advanced {
+  width: min(1160px, 96vw);
+}
+
 .settings-modal-header {
   display: flex;
   align-items: center;
@@ -594,4 +602,36 @@
 .settings-secondary-btn:hover {
   border-color: var(--color-neon);
   color: var(--color-neon);
+}
+
+.settings-basic-mode-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.settings-basic-mode-card {
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--modal-border-subtle);
+  background: var(--modal-item-bg-subtle);
+}
+
+.settings-basic-mode-name {
+  font-size: 0.88rem;
+  font-weight: 650;
+  color: var(--color-txt);
+  margin-bottom: 4px;
+}
+
+.settings-basic-mode-hint {
+  font-size: 0.76rem;
+  line-height: 1.35;
+  color: var(--color-txt-muted);
+}
+
+@media (max-width: 640px) {
+  .settings-basic-mode-grid {
+    grid-template-columns: 1fr;
+  }
 }
