@@ -803,25 +803,33 @@ export const Api = {
 
       let res = await postCompletion(requestBody);
 
-      // If llama-server rejects the GBNF (parse/sampler init), retry without grammar.
-      // Artifact plan parsers already repair free-form JSON.
+      // If llama-server rejects the GBNF (parse/sampler init) — or the process
+      // crashes under grammar load ("proxy error: Failed to read connection") —
+      // retry without grammar. Artifact plan parsers already repair free-form JSON.
       if (
         !res.ok &&
         generationOptions?.grammar &&
         requestBody.grammar
       ) {
         const errBody = await res.text().catch(() => res.statusText);
-        const grammarRejected =
-          /failed to parse grammar|Failed to initialize samplers|grammar/i.test(
+        const shouldRetryWithoutGrammar =
+          /failed to parse grammar|Failed to initialize samplers|grammar|proxy error|Failed to read connection|connection reset|ECONNRESET|timed?\s*out|context.*(size|length|window)|out of memory/i.test(
             errBody
           );
-        if (grammarRejected) {
+        if (shouldRetryWithoutGrammar) {
           console.warn(
-            "LLM rejected grammar constraint; retrying without grammar:",
+            "LLM request failed with grammar; retrying without grammar:",
             errBody
           );
           const retryBody = { ...requestBody };
           delete retryBody.grammar;
+          // Slightly smaller output budget on retry to reduce crash risk.
+          if (typeof retryBody.max_tokens === "number") {
+            retryBody.max_tokens = Math.max(
+              256,
+              Math.floor((retryBody.max_tokens as number) * 0.6)
+            );
+          }
           res = await postCompletion(retryBody);
           if (!res.ok) {
             const retryErr = await res.text().catch(() => res.statusText);

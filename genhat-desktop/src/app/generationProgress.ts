@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import type { PipelineStageKind } from "../components/ProgressSlate";
 
-/** Quirky rotating status lines — 120+ entries. */
+/**
+ * Friendly rotating status verbs while waiting for the model.
+ * Kept deliberately plain-English so it’s always understandable.
+ */
 export const SPINNER_VERB_POOL: string[] = [
   "Consulting the oracle…",
   "Bribing the electrons…",
@@ -193,11 +196,8 @@ export function pickSpinnerVerb(
   stage?: PipelineStageKind | null
 ): string {
   const stageList = stage ? STAGE_VERBS[stage] : undefined;
-  const pool =
-    stageList && stageList.length > 0
-      ? [...stageList, ...SPINNER_VERB_POOL]
-      : SPINNER_VERB_POOL;
-  return pool[seed % pool.length];
+  const pool = stageList && stageList.length > 0 ? stageList : SPINNER_VERB_POOL;
+  return pool[Math.abs(seed) % pool.length];
 }
 
 export function estimateEtaSeconds(

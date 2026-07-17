@@ -4,6 +4,7 @@ import type { ArtifactResult } from "../../types";
 import { parseArtifactPlanJson, parseHtmlPlanJson } from "../artifactPlanJson";
 import { normalizePresentationPlan } from "../artifactPlanNormalize";
 import { fitArtifactPlanPrompt } from "../artifactContextBudget";
+import { buildPresentationFallbackPlan } from "../presentationDocumentPlan";
 import {
   buildSpreadsheetDataContext,
   buildSpreadsheetFallbackPlan,
@@ -113,7 +114,9 @@ export async function handleArtifactGeneration(
     let spreadsheetData: SpreadsheetData | null = null;
     let ambientFileContent = "";
 
-    let attachedFile = ctx.directDocumentPaths.length > 0 ? ctx.directDocumentPaths[0] : null;
+    const attachedPaths =
+      ctx.directDocumentPaths.length > 0 ? [...ctx.directDocumentPaths] : [];
+    let attachedFile = attachedPaths[0] ?? null;
 
     const wantsAmbientFileSearch = shouldRunAmbientFileSearch(text, {
       forceFileSearch: options?.forceFileSearch,
@@ -129,6 +132,7 @@ export async function handleArtifactGeneration(
         if (top.length > 0) {
           const best = top[0];
           attachedFile = best.path;
+          attachedPaths.push(best.path);
           const filename = attachedFile.split(/[/\\]/).pop() ?? "file";
           ctx.updateSession(sid, (prev) => ({
             messages: [
@@ -145,60 +149,85 @@ export async function handleArtifactGeneration(
       }
     }
 
-    if (attachedFile) {
-      updateArtifactMsg("SearchingDisk");
+    const loadDocumentBody = async (
+      path: string,
+      contentLimit: number
+    ): Promise<string> => {
       const isSpreadsheet =
-        attachedFile.endsWith(".csv") ||
-        attachedFile.endsWith(".tsv") ||
-        attachedFile.endsWith(".xlsx") ||
-        attachedFile.endsWith(".xls") ||
-        attachedFile.endsWith(".ods");
+        path.endsWith(".csv") ||
+        path.endsWith(".tsv") ||
+        path.endsWith(".xlsx") ||
+        path.endsWith(".xls") ||
+        path.endsWith(".ods");
 
       if (isSpreadsheet) {
         try {
-          const parsed = await Api.parseSpreadsheetData(attachedFile);
+          const parsed = await Api.parseSpreadsheetData(path);
           const sheet = spreadsheetFromParsed(parsed.rows);
           if (sheet) {
-            headers = sheet.headers;
-            rows = sheet.rows;
-            spreadsheetData = sheet;
+            // Prefer the first structured spreadsheet for table ops.
+            if (!spreadsheetData) {
+              headers = sheet.headers;
+              rows = sheet.rows;
+              spreadsheetData = sheet;
+            }
+            return formatAmbientFileSection(
+              path,
+              `Columns: [${sheet.headers.join(", ")}]\nRow count: ${sheet.rows.length}`
+            );
           }
         } catch (err) {
           console.warn("Failed to parse spreadsheet file:", err);
         }
-        if (!spreadsheetData) {
-          try {
-            const cached = await Api.getAmbientFileContent(attachedFile);
-            if (cached) {
-              ambientFileContent = formatAmbientFileSection(attachedFile, cached);
-            }
-          } catch (err) {
-            console.warn("Failed to query Excel metadata cache:", err);
+        try {
+          const cached = await Api.getAmbientFileContent(path);
+          if (cached) {
+            return formatAmbientFileSection(path, cached.substring(0, contentLimit));
           }
+        } catch (err) {
+          console.warn("Failed to query Excel metadata cache:", err);
         }
-      } else {
-        // Documents (PDF, DOCX, resume, etc.): cache first, then on-demand parse.
-        const contentLimit =
-          schemaId === "spreadsheet_synthesis"
-            ? 20480
-            : MAX_ARTIFACT_SOURCE_CHARS;
-        const body = await loadAmbientFileBody(attachedFile, contentLimit);
-        ambientFileContent = formatAmbientFileSection(attachedFile, body);
+        return "";
       }
+
+      // Documents (PDF, DOCX, resume, etc.): cache first, then on-demand parse.
+      const body = await loadAmbientFileBody(path, contentLimit);
+      return formatAmbientFileSection(path, body);
+    };
+
+    if (attachedPaths.length > 0) {
+      updateArtifactMsg("SearchingDisk");
+      const perFileLimit =
+        schemaId === "spreadsheet_synthesis"
+          ? 20480
+          : Math.floor(MAX_ARTIFACT_SOURCE_CHARS / Math.max(1, Math.min(attachedPaths.length, 3)));
+      const sections: string[] = [];
+      for (const path of attachedPaths.slice(0, 3)) {
+        const section = await loadDocumentBody(path, perFileLimit);
+        if (section.trim()) sections.push(section);
+      }
+      ambientFileContent = sections.join("\n\n");
     }
 
     // Ensure document text is loaded for PDF/DOC paths (index cache or search snippet may be incomplete).
-    if (
+    const needsOnDemandParse =
       attachedFile &&
       !headers?.length &&
-      !ambientFileContent &&
-      /\.(pdf|docx|pptx|doc|ppt)$/i.test(attachedFile)
-    ) {
+      (!ambientFileContent ||
+        ambientFileContent.includes("(Content could not be extracted")) &&
+      /\.(pdf|docx|pptx|doc|ppt)$/i.test(attachedFile);
+
+    if (needsOnDemandParse && attachedFile) {
       try {
         const fileContent = await Api.readFileText(attachedFile);
         const contentLimit =
           schemaId === "spreadsheet_synthesis" ? 20480 : 10240;
-        ambientFileContent = fileContent.substring(0, contentLimit);
+        if (fileContent?.trim()) {
+          ambientFileContent = formatAmbientFileSection(
+            attachedFile,
+            fileContent.substring(0, contentLimit)
+          );
+        }
       } catch (err) {
         console.warn("Failed to read attached document for artifact context:", err);
       }
@@ -293,10 +322,25 @@ export async function handleArtifactGeneration(
       }
     }
 
-    // When web grounding is active, cap document text so prompts fit 4k models.
-    if (webActive && ambientFileContent) {
-      const docCap = contextWindowTokens <= 4096 ? 3000 : 8000;
-      ambientFileContent = ambientFileContent.substring(0, docCap);
+    // Cap document text so prompts fit the local model's context (prevents llama 500s).
+    if (ambientFileContent) {
+      const docCap =
+        contextWindowTokens <= 4096
+          ? webActive
+            ? 2500
+            : 4500
+          : contextWindowTokens <= 8192
+            ? webActive
+              ? 5000
+              : 9000
+            : webActive
+              ? 8000
+              : MAX_ARTIFACT_SOURCE_CHARS;
+      if (ambientFileContent.length > docCap) {
+        ambientFileContent =
+          ambientFileContent.substring(0, docCap) +
+          "\n\n[...document truncated to fit model context]\n";
+      }
     }
 
     const hasSourceData = Boolean(headers && headers.length > 0 && rows);
@@ -449,11 +493,15 @@ Content rules:
 
     // Presentations need far more output room than a single artifact plan: budget
     // roughly per-slide so larger decks aren't truncated mid-array.
+    // Keep budgets conservative when a source document is attached — oversized
+    // max_tokens + long prompts frequently crash llama-server (proxy 500).
     const desiredPlanMaxTokens =
       schemaId === "presentation_synthesis"
         ? Math.min(
-            8192,
-            900 + slidePlan.count * 420 + (hasSourceDocument ? 1400 : 0)
+            contextWindowTokens <= 4096 ? 1800 : contextWindowTokens <= 8192 ? 3200 : 8192,
+            700 +
+              slidePlan.count * (hasSourceDocument ? 280 : 420) +
+              (hasSourceDocument ? 600 : 0)
           )
         : schemaId === "html_synthesis"
         ? HTML_PLAN_MAX_TOKENS
@@ -479,6 +527,115 @@ Content rules:
 
     let planJson = "";
     const generationOptions = ctx.getChatGenerationOptions(ctx.selectedModel);
+
+    const executePlanObj = async (planObjIn: Record<string, unknown>) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let planObj: any = repairNestedKeys(planObjIn);
+
+      if (schemaId === "html_synthesis") {
+        planObj.archetype = htmlArchetype;
+        planObj.theme = mapHtmlRendererTheme(
+          planObj.theme || htmlThemeHint || defaultThemeForArchetype(htmlArchetype)
+        );
+        if (!planObj.title || String(planObj.title).trim() === "") {
+          planObj.title = text.trim().slice(0, 120) || "Generated Page";
+        }
+        if (!Array.isArray(planObj.sections)) {
+          planObj.sections = [];
+        }
+        if (spreadsheetData) {
+          planObj = attachSpreadsheetToPlan(planObj, spreadsheetData);
+        }
+        if (imagePool.length) {
+          planObj = attachImagesToHtmlPlan(planObj, imagePool);
+        }
+      }
+
+      if (schemaId === "presentation_synthesis" && imagePool.length) {
+        planObj = attachImagesToPresentationPlan(planObj, imagePool);
+      }
+
+      if (headers && rows && schemaId === "spreadsheet_synthesis") {
+        planObj.headers = headers;
+        planObj.source_rows = rows;
+      }
+
+      if (schemaId === "presentation_synthesis") {
+        planObj.theme = themeHint;
+        planObj = normalizePresentationPlan(planObj, text, {
+          targetSlideCount: slidePlan.count,
+        });
+        if (!planObj.output_name) {
+          const slides = Array.isArray(planObj.slides) ? planObj.slides : [];
+          const titleSlide =
+            slides.find((s: { layout?: string; title?: string }) => s?.layout === "TITLE") ??
+            slides[0];
+          const deckTitle = (titleSlide?.title ?? "").toString().trim();
+          const slug = deckTitle
+            .replace(/[\\/:*?"<>|]+/g, " ")
+            .replace(/\s+/g, " ")
+            .trim()
+            .slice(0, 80);
+          if (slug) planObj.output_name = slug;
+        }
+      }
+
+      let result: ArtifactResult;
+      if (schemaId === "spreadsheet_synthesis") {
+        result = await Api.generateSpreadsheet(
+          normalizeSpreadsheetPlan(planObj, {
+            prompt: text,
+            hasSourceData: Boolean(headers && headers.length > 0 && rows),
+            expectedRowCount: rowPlan.count,
+          })
+        );
+      } else if (schemaId === "presentation_synthesis") {
+        result = await Api.generatePresentation(planObj);
+      } else {
+        result = await Api.generateHtml(planObj);
+      }
+
+      ctx.updateSession(sid, { loading: false });
+      const filename = result.path.split(/[/\\]/).pop();
+      updateArtifactMsg(
+        "LivePreview",
+        result.path,
+        `Generated artifact successfully: **${filename}**\nPath: \`${result.path}\``
+      );
+    };
+
+    /** When the LLM fails, still produce PPT/Excel from attached document text. */
+    const tryDocumentFallback = async (reason: unknown): Promise<boolean> => {
+      if (schemaId === "presentation_synthesis" && hasSourceDocument) {
+        const fallback = buildPresentationFallbackPlan({
+          userPrompt: text,
+          ambientContent: ambientFileContent,
+          theme: themeHint,
+          targetSlideCount: slidePlan.count,
+        });
+        if (fallback) {
+          console.warn("Using document fallback for presentation:", reason);
+          updateArtifactMsg("WritingCode");
+          await executePlanObj(fallback);
+          return true;
+        }
+      }
+      if (schemaId === "spreadsheet_synthesis") {
+        const sheetFallback = {
+          prompt: text,
+          hasSourceData: Boolean(headers && headers.length > 0 && rows),
+          ambientContent: ambientFileContent || undefined,
+        };
+        const fallback = buildSpreadsheetFallbackPlan(sheetFallback);
+        if (fallback) {
+          console.warn("Using document fallback for spreadsheet:", reason);
+          updateArtifactMsg("WritingCode");
+          await executePlanObj(fallback);
+          return true;
+        }
+      }
+      return false;
+    };
 
     await Api.streamChat(
       [
@@ -528,101 +685,46 @@ Content rules:
                 schemaId,
               });
             } catch (jsonErr) {
-              console.warn("Failed to parse artifact plan JSON:", jsonErr);
-              throw jsonErr;
+              const docFallback = buildPresentationFallbackPlan({
+                userPrompt: text,
+                ambientContent: ambientFileContent,
+                theme: themeHint,
+                targetSlideCount: slidePlan.count,
+              });
+              if (docFallback) {
+                console.warn(
+                  "Presentation parse failed; using document fallback:",
+                  jsonErr
+                );
+                planObj = docFallback;
+              } else {
+                console.warn("Failed to parse artifact plan JSON:", jsonErr);
+                throw jsonErr;
+              }
             }
           }
 
-          planObj = repairNestedKeys(planObj);
-
-          if (schemaId === "html_synthesis") {
-            planObj.archetype = htmlArchetype;
-            planObj.theme = mapHtmlRendererTheme(
-              planObj.theme || htmlThemeHint || defaultThemeForArchetype(htmlArchetype)
-            );
-            if (!planObj.title || String(planObj.title).trim() === "") {
-              planObj.title = text.trim().slice(0, 120) || "Generated Page";
-            }
-            if (!Array.isArray(planObj.sections)) {
-              planObj.sections = [];
-            }
-            if (spreadsheetData) {
-              planObj = attachSpreadsheetToPlan(planObj, spreadsheetData);
-            }
-            if (imagePool.length) {
-              planObj = attachImagesToHtmlPlan(planObj, imagePool);
-            }
-          }
-
-          if (schemaId === "presentation_synthesis" && imagePool.length) {
-            planObj = attachImagesToPresentationPlan(planObj, imagePool);
-          }
-
-          if (headers && rows && schemaId === "spreadsheet_synthesis") {
-            planObj.headers = headers;
-            planObj.source_rows = rows;
-          }
-
-          // The theme is decided directly from the prompt and is authoritative:
-          // the same prompt always yields the same theme, chosen among all 12.
-          if (schemaId === "presentation_synthesis") {
-            planObj.theme = themeHint;
-            planObj = normalizePresentationPlan(planObj, text, {
-              targetSlideCount: slidePlan.count,
-            });
-            // Name the deck file after its title slide (falls back to the first
-            // slide's title) instead of the generic "nela_presentation".
-            if (!planObj.output_name) {
-              const slides = Array.isArray(planObj.slides) ? planObj.slides : [];
-              const titleSlide =
-                slides.find((s: { layout?: string; title?: string }) => s?.layout === "TITLE") ??
-                slides[0];
-              const deckTitle = (titleSlide?.title ?? "").toString().trim();
-              const slug = deckTitle
-                .replace(/[\\/:*?"<>|]+/g, " ")
-                .replace(/\s+/g, " ")
-                .trim()
-                .slice(0, 80);
-              if (slug) planObj.output_name = slug;
-            }
-          }
-
-          let result: ArtifactResult;
-          if (schemaId === "spreadsheet_synthesis") {
-            result = await Api.generateSpreadsheet(
-              normalizeSpreadsheetPlan(planObj, {
-                prompt: text,
-                hasSourceData: Boolean(headers && headers.length > 0 && rows),
-                expectedRowCount: rowPlan.count,
-              })
-            );
-          } else if (schemaId === "presentation_synthesis") {
-            result = await Api.generatePresentation(planObj);
-          } else {
-            result = await Api.generateHtml(planObj);
-          }
-
-          ctx.updateSession(sid, {
-            loading: false,
-          });
-
-          const filename = result.path.split(/[/\\]/).pop();
-          updateArtifactMsg("LivePreview", result.path, `Generated artifact successfully: **${filename}**\nPath: \`${result.path}\``);
-
+          await executePlanObj(planObj);
         } catch (execErr: unknown) {
+          try {
+            if (await tryDocumentFallback(execErr)) return;
+          } catch (fallbackErr) {
+            console.error("Document fallback also failed:", fallbackErr);
+          }
           console.error("Artifact generation execution failed:", execErr);
-          ctx.updateSession(sid, {
-            loading: false,
-          });
+          ctx.updateSession(sid, { loading: false });
           const msg = execErr instanceof Error ? execErr.message : String(execErr);
           updateArtifactMsg("Error", null, `Failed to compile/execute artifact plan: ${msg}`);
         }
       },
-      (err) => {
+      async (err) => {
         console.error("Artifact plan generation failed:", err);
-        ctx.updateSession(sid, {
-          loading: false,
-        });
+        try {
+          if (await tryDocumentFallback(err)) return;
+        } catch (fallbackErr) {
+          console.error("Document fallback after LLM error failed:", fallbackErr);
+        }
+        ctx.updateSession(sid, { loading: false });
         updateArtifactMsg("Error", null, `Failed to generate artifact plan: ${err}`);
       },
       undefined,

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { FileText, Eye, EyeOff, Play, AlertCircle, Download, FileType, Presentation, Loader2, FileCode, Table2 } from "lucide-react";
+import { FileText, Eye, EyeOff, AlertCircle, Download, FileType, Presentation, Loader2, FileCode, Table2 } from "lucide-react";
 import { type PipelineStageKind } from "./ProgressSlate";
 import DiffPatchOverlay from "./DiffPatchOverlay";
 import GenerationProgressLabel from "./GenerationProgressLabel";
@@ -8,7 +8,6 @@ import { Api } from "../api";
 import { downloadArtifactCopy, exportArtifactDeck } from "../app/artifactDownload";
 import type { DeckExportFormat } from "../app/exportDeck";
 import { prepareArtifactHtmlPreview } from "../app/artifactHtmlPreview";
-import { openArtifactInOs } from "../app/openArtifact";
 
 export interface InlineArtifactProps {
   artifactPath?: string | null;
@@ -20,11 +19,11 @@ export interface InlineArtifactProps {
 type ExportKind = DeckExportFormat | "html" | "copy";
 
 const STAGE_LABELS: Record<PipelineStageKind, { label: string; desc: string; icon: string }> = {
-  IntentLocked: { label: "Intent Locked", desc: "Analyzing request...", icon: "🔒" },
-  SearchingDisk: { label: "Searching", desc: "Locating dataset files...", icon: "🔍" },
-  CrunchingMetrics: { label: "Crunching Data", desc: "Analyzing structure...", icon: "⚙️" },
-  WritingCode: { label: "Generating", desc: "Writing code / spreadsheet...", icon: "✍️" },
-  LivePreview: { label: "Ready", desc: "Artifact generated successfully.", icon: "✅" },
+  IntentLocked: { label: "Checking request", desc: "Understanding what you need…", icon: "🔒" },
+  SearchingDisk: { label: "Reading files", desc: "Looking for attached document/data…", icon: "🔍" },
+  CrunchingMetrics: { label: "Preparing content", desc: "Organizing and extracting details…", icon: "⚙️" },
+  WritingCode: { label: "Building output", desc: "Generating your PPT/Excel/HTML…", icon: "✍️" },
+  LivePreview: { label: "Done", desc: "Artifact generated successfully.", icon: "✅" },
   Error: { label: "Failed", desc: "Error generating artifact.", icon: "⚠️" },
 };
 
@@ -46,7 +45,6 @@ export default function InlineArtifact({ artifactPath, artifactStage, errorMessa
   const [downloadMenuOpen, setDownloadMenuOpen] = useState(false);
   const [exporting, setExporting] = useState<ExportKind | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
-  const [openError, setOpenError] = useState<string | null>(null);
   const [stageElapsedSec, setStageElapsedSec] = useState(0);
 
   const [spreadsheetData, setSpreadsheetData] = useState<{ sheetName: string; rows: string[][] } | null>(null);
@@ -229,19 +227,6 @@ export default function InlineArtifact({ artifactPath, artifactStage, errorMessa
   const isSpreadsheet = currentPath ? (currentPath.endsWith(".xlsx") || currentPath.endsWith(".xls") || currentPath.endsWith(".csv")) : false;
   const isNativePptx = currentPath ? (currentPath.endsWith(".pptx") || currentPath.endsWith(".ppt")) : false;
 
-  // Open file in OS default app (browser, Excel, PowerPoint, …)
-  const handleOpenFile = async () => {
-    if (!currentPath) return;
-    setOpenError(null);
-    try {
-      await openArtifactInOs(currentPath);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setOpenError(msg);
-      console.error("Failed to open artifact:", err);
-    }
-  };
-
   const handleExport = useCallback(
     async (kind: ExportKind) => {
       if (!currentPath || exporting) return;
@@ -308,7 +293,6 @@ export default function InlineArtifact({ artifactPath, artifactStage, errorMessa
               mode="artifact"
               elapsedSec={stageElapsedSec}
               stage={stage}
-              showEta
             />
           </div>
         </div>
@@ -489,22 +473,8 @@ export default function InlineArtifact({ artifactPath, artifactStage, errorMessa
             )}
           </div>
 
-          <button
-            onClick={() => void handleOpenFile()}
-            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[0.74rem] bg-neon text-void-900 font-medium border border-neon/50 transition-all duration-150 hover:bg-neon-hover"
-            title="Open in your default app (browser, Excel, PowerPoint, …)"
-          >
-            <Play size={11} fill="currentColor" />
-            <span>Open File</span>
-          </button>
         </div>
       </div>
-
-      {openError && (
-        <div className="px-3.5 py-2 text-[0.72rem] text-amber-200 bg-amber-500/10 border-b border-amber-500/20">
-          Could not open file: {openError}
-        </div>
-      )}
 
       {exportError && (
         <div className="px-3.5 py-2 text-[0.72rem] text-red-300 bg-red-500/10 border-b border-red-500/20">
@@ -560,7 +530,7 @@ export default function InlineArtifact({ artifactPath, artifactStage, errorMessa
           </div>
           {spreadsheetData.rows.length > 50 && (
             <div className="px-3.5 py-1.5 bg-void-950/40 text-[0.65rem] text-txt-muted text-center border-t border-glass-border">
-              Showing top 50 rows. Open the file to view the remaining {spreadsheetData.rows.length - 50} rows.
+              Showing the first 50 rows. Use the download option to view the full spreadsheet.
             </div>
           )}
         </div>

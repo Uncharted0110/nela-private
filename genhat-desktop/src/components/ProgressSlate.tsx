@@ -42,64 +42,57 @@ const STAGE_ORDER: PipelineStageKind[] = [
 
 const STAGE_INFO: Record<PipelineStageKind, StageInfo> = {
   IntentLocked: {
-    label: "Intent Locked",
+    label: "Checking request",
     description: "Understanding what you need…",
     icon: "🔒",
   },
   SearchingDisk: {
-    label: "Searching SSD…",
-    description: "Locating relevant files and data…",
+    label: "Reading files",
+    description: "Looking for attached document/data…",
     icon: "🔍",
   },
   CrunchingMetrics: {
-    label: "Crunching Metrics…",
-    description: "Processing and aggregating data…",
+    label: "Preparing content",
+    description: "Organizing and extracting details…",
     icon: "⚙️",
   },
   WritingCode: {
-    label: "Writing Code…",
-    description: "Generating the artifact…",
+    label: "Building output",
+    description: "Generating your PPT/Excel/HTML…",
     icon: "✍️",
   },
   LivePreview: {
-    label: "Live Preview",
+    label: "Done",
     description: "Your artifact is ready.",
     icon: "✅",
   },
   Error: {
     label: "Error",
-    description: "Something went wrong.",
+    description: "Something went wrong while generating.",
     icon: "⚠️",
   },
 };
 
 const SPINNER_VERBS: Record<PipelineStageKind, string[]> = {
   IntentLocked: [
-    "Locking in intent...",
-    "Analyzing request...",
-    "Ruminating on prompt...",
-    "Forging plan...",
+    "Checking request…",
+    "Understanding prompt…",
+    "Preparing a plan…",
   ],
   SearchingDisk: [
-    "Locating dataset files...",
-    "Scanning local indices...",
-    "Querying file database...",
-    "Retrieving system context...",
+    "Reading attached files…",
+    "Looking for relevant data…",
   ],
   CrunchingMetrics: [
-    "Analyzing structure...",
-    "Synthesizing data...",
-    "Crunching metrics...",
-    "Computing aggregates...",
+    "Organizing content…",
+    "Extracting details…",
   ],
   WritingCode: [
-    "Writing code / layout...",
-    "Forging layouts...",
-    "Polishing cells...",
-    "Formatting stylesheet...",
+    "Building your output…",
+    "Generating the final artifact…",
   ],
-  LivePreview: ["Your artifact is ready."],
-  Error: ["Something went wrong."],
+  LivePreview: ["Done."],
+  Error: ["Error generating artifact."],
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

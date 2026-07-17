@@ -1086,7 +1086,6 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
                   active
                   mode={chatModeToProgressMode(chatMode)}
                   elapsedSec={generalElapsedTime}
-                  showEta
                 />
               ) : null}
             </div>
@@ -1108,7 +1107,6 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
               active
               mode={chatModeToProgressMode(chatMode)}
               elapsedSec={generalElapsedTime}
-              showEta
             />
           </div>
         )}

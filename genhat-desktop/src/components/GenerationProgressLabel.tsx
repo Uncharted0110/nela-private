@@ -7,7 +7,6 @@ interface GenerationProgressLabelProps {
   elapsedSec: number;
   stage?: PipelineStageKind | null;
   className?: string;
-  showEta?: boolean;
 }
 
 export default function GenerationProgressLabel({
@@ -16,20 +15,15 @@ export default function GenerationProgressLabel({
   elapsedSec,
   stage,
   className = "",
-  showEta = true,
 }: GenerationProgressLabelProps) {
-  const { verb, etaSec } = useGenerationProgressLabel(active, mode, elapsedSec, stage);
+  const { verb } = useGenerationProgressLabel(active, mode, elapsedSec, stage);
 
   if (!active) return null;
 
   return (
     <div className={`flex flex-col gap-0.5 ${className}`}>
       <span className="nela-gradient-verb text-[0.8rem] font-medium leading-snug">{verb}</span>
-      {showEta && (
-        <span className="text-[0.7rem] text-txt-muted tabular-nums">
-          ~{etaSec}s remaining · {elapsedSec.toFixed(1)}s elapsed
-        </span>
-      )}
+      {/* Display only a friendly status verb (no remaining/elapsed timing). */}
     </div>
   );
 }
