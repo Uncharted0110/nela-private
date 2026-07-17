@@ -8,27 +8,33 @@
 //!   - `inference_threads()` — safe thread count for the current state
 //!   - `indexer_duty_cycle()` — DutyCycleGuard configured for current state
 //!   - `on_battery()` — direct battery check
+//!   - `HostProfile` — device-agnostic sizing for threads / RAM / batches
 //!
 //! ## Module layout
 //! - `cancel` — per-request `CancellationToken`
 //! - `duty`   — `DutyCycleGuard` for background loops
+//! - `host`   — hardware probing and adaptive resource policy
 
 pub mod cancel;
 pub mod duty;
+pub mod host;
 
 pub use cancel::CancellationToken;
 pub use duty::DutyCycleGuard;
+pub use host::HostProfile;
 
 use std::sync::atomic::{AtomicBool, Ordering};
-
-/// Hard cap: never use more than this many inference threads regardless of
-/// physical core count. Leaves cores for the OS/UI and stays below thermal
-/// throttle threshold.
-pub const MAX_INFERENCE_THREADS: usize = 8;
 
 /// Idle timeout (seconds) after which the active SLM is evicted from memory.
 /// After eviction, idle RAM drops to < 150 MB (revamp.md §3.1 / §6.2).
 pub const IDLE_EVICT_SECS: u64 = 180;
+
+/// Count physical CPU cores (not SMT/hyperthread logical processors).
+///
+/// Prefer [`HostProfile::detect`] when you also need RAM / batch policy.
+pub fn physical_core_count() -> usize {
+    HostProfile::detect().physical_cores
+}
 
 /// Central thermal and power governor.
 ///
@@ -56,10 +62,16 @@ impl Governor {
             battery: AtomicBool::new(battery),
             thermal_pressure: AtomicBool::new(false),
         };
+        let host = HostProfile::detect();
         log::info!(
-            "Governor initialized: on_battery={}, max_inference_threads={}",
+            "Governor initialized: on_battery={}, physical_cores={}, logical_cores={}, \
+             total_ram_mb={}, inference_threads={}, memory_budget_mb={}",
             battery,
-            gov.inference_threads()
+            host.physical_cores,
+            host.logical_cores,
+            host.total_ram_mb,
+            gov.inference_threads(),
+            host.memory_budget_mb()
         );
         gov
     }
@@ -87,20 +99,10 @@ impl Governor {
 
     /// Safe inference thread count for the current power/thermal state.
     ///
-    /// | Condition           | Threads              |
-    /// |---------------------|----------------------|
-    /// | AC power, cool      | min(cores - 1, 8)    |
-    /// | Battery or thermal  | min(cores / 2, 8)    |
+    /// Delegates to [`HostProfile`] so the formula is identical on every
+    /// machine — only the measured core count changes.
     pub fn inference_threads(&self) -> usize {
-        let cores = std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(4);
-
-        if self.on_battery() || self.thermal_pressure() {
-            (cores / 2).max(1).min(MAX_INFERENCE_THREADS)
-        } else {
-            cores.saturating_sub(1).max(1).min(MAX_INFERENCE_THREADS)
-        }
+        HostProfile::detect().inference_threads(self.on_battery(), self.thermal_pressure())
     }
 
     /// Build a `DutyCycleGuard` tuned for the current power state.
@@ -192,3 +194,30 @@ fn detect_battery_windows() -> bool {
 
 /// Managed state wrapper for use with Tauri's state system.
 pub struct GovernorState(pub std::sync::Arc<Governor>);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn physical_core_count_is_sane() {
+        let physical = physical_core_count();
+        let logical = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1);
+        assert!(physical >= 1);
+        assert!(
+            physical <= logical,
+            "physical ({physical}) must be ≤ logical ({logical})"
+        );
+    }
+
+    #[test]
+    fn inference_threads_stay_within_physical_cores() {
+        let gov = Governor::new();
+        let n = gov.inference_threads();
+        let physical = physical_core_count();
+        assert!(n >= 1);
+        assert!(n <= physical);
+    }
+}

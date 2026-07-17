@@ -126,11 +126,14 @@ fn enrich_slide(slide: &mut PresentationSlide) {
         }
     }
 
-    // TITLE / SECTION: synthesize a subtitle from title words if still empty.
+    // TITLE / SECTION: synthesize a subtitle from title / notes if still empty.
+    // Never invent generic "Point N on …" filler — that reads as off-topic junk.
     if matches!(slide.layout, SlideLayout::Title | SlideLayout::Section) && slide.bullets.is_empty() {
-        if let Some(notes) = &slide.notes {
-            slide.bullets.push(notes.clone());
-            slide.notes = None;
+        if let Some(notes) = slide.notes.take() {
+            let trimmed = notes.trim();
+            if !trimmed.is_empty() {
+                slide.bullets.push(trimmed.to_string());
+            }
         }
     }
 }

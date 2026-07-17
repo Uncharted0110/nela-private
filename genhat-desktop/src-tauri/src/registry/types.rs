@@ -282,7 +282,9 @@ impl ModelDef {
 /// Handle to a running child-process model instance.
 #[derive(Debug)]
 pub struct ProcessHandle {
-    pub child: Child,
+    /// Owned child process. `None` when this handle is a client of the shared
+    /// llama-server router (parent Child lives in the router singleton).
+    pub child: Option<Child>,
     pub pid: u32,
     /// Assigned port (for server-based backends like llama-server).
     pub port: Option<u16>,
@@ -291,6 +293,9 @@ pub struct ProcessHandle {
     pub work_dir: PathBuf,
     /// Persistent HTTP client for this instance (connection pooling + keep-alive).
     pub http_client: Option<reqwest::Client>,
+    /// When set, `stop()` unloads this model id from the shared router instead
+    /// of killing the parent llama-server process.
+    pub router_model_id: Option<String>,
 }
 
 /// Handle to an in-process model instance (placeholder for candle models).

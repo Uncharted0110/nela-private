@@ -103,13 +103,114 @@ fn normalize_slide_value(slide: &Value, index: usize, fallback_title: &str) -> P
     }
 }
 
+fn is_placeholder_slide(slide: &PresentationSlide) -> bool {
+    let title = slide.title.trim();
+    let empty_bullets = slide.bullets.iter().all(|b| b.trim().is_empty());
+    let empty_notes = slide
+        .notes
+        .as_ref()
+        .map(|n| n.trim().is_empty())
+        .unwrap_or(true);
+
+    if title.is_empty() && empty_bullets && empty_notes {
+        return true;
+    }
+    let placeholder_title = {
+        let lower = title.to_lowercase();
+        lower.starts_with("slide ")
+            && lower
+                .split_whitespace()
+                .nth(1)
+                .map(|s| s.chars().all(|c| c.is_ascii_digit()))
+                .unwrap_or(false)
+    };
+    if placeholder_title && empty_bullets {
+        return true;
+    }
+
+    // Title/section/centered with no body → drop (do not invent filler).
+    if matches!(
+        slide.layout,
+        SlideLayout::Title | SlideLayout::Section | SlideLayout::Centered
+    ) && empty_bullets
+        && empty_notes
+    {
+        return true;
+    }
+
+    let needs_content = matches!(
+        slide.layout,
+        SlideLayout::Bullet
+            | SlideLayout::TwoColumn
+            | SlideLayout::ImageLeft
+            | SlideLayout::Stat
+            | SlideLayout::Quote
+            | SlideLayout::Cards
+            | SlideLayout::Comparison
+    );
+    needs_content && empty_bullets && empty_notes
+}
+
+fn clean_topic(prompt: &str) -> String {
+    let mut t = prompt.trim().to_string();
+    for prefix in [
+        "/ppt ",
+        "/ppt",
+        "/slides ",
+        "/slides",
+        "/presentation ",
+        "/presentation",
+        "/deck ",
+        "/deck",
+    ] {
+        let lower = t.to_lowercase();
+        let p = prefix.to_lowercase();
+        if lower.starts_with(&p) {
+            t = t[prefix.len()..].trim().to_string();
+            break;
+        }
+    }
+    let lower = t.to_lowercase();
+    for prefix in ["on ", "about ", "regarding ", "concerning "] {
+        if lower.starts_with(prefix) {
+            t = t[prefix.len()..].trim().to_string();
+            break;
+        }
+    }
+    let t = t.trim();
+    if t.is_empty() {
+        "Presentation".to_string()
+    } else {
+        t.chars().take(120).collect()
+    }
+}
+
+fn strip_legacy_filler(bullets: Vec<String>) -> Vec<String> {
+    bullets
+        .into_iter()
+        .filter(|b| {
+            let lower = b.to_lowercase();
+            !(lower.starts_with("an introduction to")
+                || lower.starts_with("core themes, turning points")
+                || lower.starts_with("this section frames how")
+                || lower.starts_with("point ")
+                    && lower.contains("how it connects to the broader topic")
+                || lower.contains("how it connects to the broader topic"))
+        })
+        .collect()
+}
+
 /// Repair a presentation plan JSON value and deserialize it.
+///
+/// Keeps model content. Drops empty slides. Never invents domain boilerplate
+/// by injecting the topic into industrial-history templates.
 pub fn parse_presentation_plan(mut value: Value, prompt: &str) -> Result<PresentationPlan, String> {
     if !value.is_object() {
         value = serde_json::json!({ "slides": [] });
     }
 
-    let fallback_title = prompt.trim().chars().take(120).collect::<String>();
+    let topic = clean_topic(prompt);
+
     let slides_value = value
         .get("slides")
         .cloned()
@@ -120,28 +221,44 @@ pub fn parse_presentation_plan(mut value: Value, prompt: &str) -> Result<Present
         .map(|arr| {
             arr.iter()
                 .enumerate()
-                .map(|(i, slide)| normalize_slide_value(slide, i, &fallback_title))
+                .map(|(i, slide)| {
+                    let mut s = normalize_slide_value(slide, i, &topic);
+                    s.bullets = strip_legacy_filler(std::mem::take(&mut s.bullets));
+                    s
+                })
                 .collect()
         })
         .unwrap_or_default();
 
+    slides.retain(|s| !is_placeholder_slide(s));
+
+    // Keep only the first TITLE slide.
+    let mut saw_title = false;
+    slides.retain(|s| {
+        if s.layout == SlideLayout::Title {
+            if saw_title {
+                return false;
+            }
+            saw_title = true;
+        }
+        true
+    });
+
     if slides.is_empty() {
         slides.push(PresentationSlide {
-            title: if fallback_title.is_empty() {
-                "Presentation".to_string()
-            } else {
-                fallback_title.clone()
-            },
+            title: topic.clone(),
             layout: SlideLayout::Title,
-            bullets: vec![prompt.trim().chars().take(200).collect()],
+            bullets: vec![
+                format!("Presentation on {topic}"),
+                "Regenerate if this deck looks incomplete — content could not be recovered from the model output."
+                    .to_string(),
+            ],
             notes: None,
             image_index: None,
             left_title: None,
             right_title: None,
         });
-    }
-
-    if slides[0].layout != SlideLayout::Title {
+    } else if slides[0].layout != SlideLayout::Title {
         slides[0].layout = SlideLayout::Title;
     }
 

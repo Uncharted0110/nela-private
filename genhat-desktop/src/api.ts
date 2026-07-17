@@ -668,6 +668,11 @@ export const Api = {
       const requestBody: Record<string, unknown> = {
         messages: apiMessages,
         stream: true,
+        // Route via llama-server router preset section (GenHat model id).
+        model: modelId?.trim() || "local",
+        // Reuse KV cache prefix across turns (O(1) decode). Without this,
+        // llama-server may re-prefill the entire growing transcript each request.
+        cache_prompt: true,
         max_tokens: generationOptions?.maxTokens ?? 2048,
         temperature: generationOptions?.temperature ?? 0.7,
         top_p: generationOptions?.topP ?? 0.95,

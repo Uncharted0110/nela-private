@@ -223,12 +223,13 @@ impl super::ModelBackend for LlamaCliBackend {
         let pid = child.id();
 
         Ok(ModelHandle::Process(ProcessHandle {
-            child,
+            child: Some(child),
             pid,
             port: None,
             started_at: Instant::now(),
             work_dir: std::env::current_dir().unwrap_or_default(),
             http_client: None,
+            router_model_id: None,
         }))
     }
 

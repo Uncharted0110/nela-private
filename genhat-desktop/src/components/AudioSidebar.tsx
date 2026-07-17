@@ -1,12 +1,19 @@
 import AudioPlayer from "./AudioPlayer";
-import type { ChatSession } from "../types";
+import { useSessionStore } from "../stores/sessionStore";
 
-interface AudioSidebarProps {
-  sessions: ChatSession[];
-  onDeleteAudio: (sessionId: string, msgIdx: number) => void;
-}
+export default function AudioSidebar() {
+  // ── Store subscriptions ───────────────────────────────────────────────────
+  const sessions = useSessionStore(s => s.sessions);
+  const updateSession = useSessionStore(s => s.updateSession);
 
-export default function AudioSidebar({ sessions, onDeleteAudio }: AudioSidebarProps) {
+  // ── Audio deletion handler ────────────────────────────────────────────────
+  const handleDeleteAudio = (sessionId: string, msgIdx: number) => {
+    updateSession(sessionId, (prev) => ({
+      messages: prev.messages.map((m, i) =>
+        i === msgIdx ? { ...m, audioSaved: false } : m
+      ),
+    }));
+  };
   const allAudio = sessions.flatMap((session) =>
     session.messages
       .map((msg, idx, arr) => {
@@ -53,7 +60,7 @@ export default function AudioSidebar({ sessions, onDeleteAudio }: AudioSidebarPr
                   <button
                     className="absolute top-1 right-1 opacity-60 group-hover:opacity-100 transition-opacity text-danger hover:text-danger/80"
                     title="Delete audio"
-                    onClick={() => onDeleteAudio(item!.sessionId, item!.msgIdx)}
+                    onClick={() => handleDeleteAudio(item!.sessionId, item!.msgIdx)}
                   >
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                       <line x1="18" y1="6" x2="6" y2="18" />

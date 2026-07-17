@@ -288,7 +288,7 @@ fn model_def_from_discovered_unit(unit: &DiscoveredModelUnit) -> ModelDef {
         model_file: unit.llm_rel_path.clone(),
         tasks,
         auto_start: false,
-        max_instances: 2,
+        max_instances: 1,
         idle_timeout_s: 30,
         priority: 12,
         memory_mb: 1600,
@@ -600,7 +600,7 @@ async fn resolve_switch_target_id(
             TaskType::PodcastScript,
         ],
         auto_start: false,
-        max_instances: 2,
+        max_instances: 1,
         idle_timeout_s: 0,
         priority: 10,
         memory_mb: 1400,
@@ -796,7 +796,7 @@ pub async fn import_downloaded_model(
         model_file: model_rel.to_string_lossy().to_string(),
         tasks,
         auto_start: false,
-        max_instances: 2,
+        max_instances: 1,
         idle_timeout_s: 0,
         priority: 12,
         memory_mb: 1600,
@@ -820,7 +820,7 @@ pub async fn import_downloaded_model(
             ImportModelProfile::Vlm => CustomModelProfile::Vlm,
         },
         engine_adapter,
-        max_instances: 2,
+        max_instances: 1,
         idle_timeout_s: 0,
         priority: 12,
         memory_mb: 1600,
@@ -868,6 +868,12 @@ pub async fn stop_llama(state: State<'_, ProcessManagerState>) -> Result<(), Str
         }
     }
     Ok(())
+}
+
+/// Get the currently-active chat LLM model id (for router `"model"` field).
+#[tauri::command]
+pub async fn get_active_model_id(state: State<'_, ProcessManagerState>) -> Result<String, String> {
+    Ok(state.0.active_llm_id().await)
 }
 
 /// Get the port of the running llama-server (for frontend SSE streaming).

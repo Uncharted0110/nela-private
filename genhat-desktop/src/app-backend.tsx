@@ -283,16 +283,19 @@ function App() {
       if (!port) {
         throw new Error("LLM server not running");
       }
+      const activeModel = await invoke<string>("get_active_model_id").catch(() => "local");
 
       const res = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          model: activeModel || "local",
           messages: [
             { role: "user", content: prompt }
           ],
           max_tokens: 256,
           stream: true,
+          cache_prompt: true,
         }),
       });
 
