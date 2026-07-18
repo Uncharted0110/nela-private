@@ -21,6 +21,7 @@ import {
   hasLocalFilePathReference,
   loadAmbientFileBody,
 } from "../ambientFileContent";
+import { NELA_SYSTEM_PROMPT } from "../nelaSystemPrompt";
 import { parseCSV } from "./csvParse";
 import type { SendHandlerContext } from "./types";
 import { runWebSearchToolLoop } from "./webSearchToolLoop";
@@ -152,7 +153,10 @@ export async function handleSendTextChat(
     newMsg,
     // discoveryMsg is UI-only; omit it here so the LLM sees user as the last turn.
   ];
-  let apiMessages = toContextMessages(fullSessionMessages);
+  let apiMessages = [
+    { role: "system" as const, content: NELA_SYSTEM_PROMPT },
+    ...toContextMessages(fullSessionMessages),
+  ];
 
   // Inject ambient file search results. The retrieved document text goes into the
   // FINAL USER message (not a system message): small local models weight the current
@@ -175,7 +179,7 @@ export async function handleSendTextChat(
       {
         role: "system",
         content:
-          "You are NELA, a local desktop assistant. The user's message includes text retrieved from their computer. " +
+          "The user's message includes text retrieved from their computer. " +
           "You ALREADY have the file contents below — answer directly from that text. " +
           "NEVER say you cannot access local files, paths, or the user's system. " +
           "Summarize or explain the document in clear prose. If the excerpt is incomplete, say what you can from the provided text.",

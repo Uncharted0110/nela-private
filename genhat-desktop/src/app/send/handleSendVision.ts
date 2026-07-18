@@ -1,5 +1,6 @@
 import { listen } from "@tauri-apps/api/event";
 import { Api } from "../../api";
+import { withNelaIdentity } from "../nelaSystemPrompt";
 import type { SendHandlerContext } from "./types";
 
 export async function handleSendVision(
@@ -82,7 +83,7 @@ export async function handleSendVision(
 
     await Api.visionChatStream(
       currentVisionImagePath || undefined,
-      visionPrompt,
+      withNelaIdentity(visionPrompt),
       ctx.selectedVisionModel || undefined
     );
   } catch (e) {
