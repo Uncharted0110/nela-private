@@ -48,7 +48,7 @@ function resolveRequestIdSlot(opts?: {
     useWorkspaceStore.getState().activeWorkspace?.id ??
     "default";
   const sessionId =
-    opts?.sessionId ?? useSessionStore.getState().activeSessionId || "anon";
+    opts?.sessionId ?? (useSessionStore.getState().activeSessionId || "anon");
   return resolveLlamaSlot(llamaContextKey(workspaceId, sessionId));
 }
 
