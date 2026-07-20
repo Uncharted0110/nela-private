@@ -21,6 +21,7 @@ pub mod backends;
 pub mod process;
 pub mod router;
 pub mod commands;
+pub mod auth;
 pub mod rag;
 pub mod workspace;
 pub mod tts;

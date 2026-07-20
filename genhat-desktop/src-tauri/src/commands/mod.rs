@@ -11,6 +11,7 @@ pub mod workspace;
 pub mod download;
 pub mod system;
 pub mod playground;
+pub mod auth;
 pub mod web_search;
 pub mod web_tables;
 pub mod artifact;

@@ -26,6 +26,9 @@ import type {
   ArtifactImageAsset,
   FileRecord,
   LlmMessage,
+  UserProfile,
+  AvatarSource,
+  UserPlan,
 } from "./types";
 import {
   llamaContextKey,
@@ -1320,6 +1323,41 @@ export async function listWatchedPaths(): Promise<import("./types").WatchedPath[
 
 export async function triggerScan(): Promise<import("./types").ScanResult> {
   return invoke<import("./types").ScanResult>("trigger_scan");
+}
+
+// ── User profile / Google auth ───────────────────────────────────────────────
+
+export type { UserProfile, AvatarSource, UserPlan };
+
+export async function getUserProfile(): Promise<UserProfile | null> {
+  return invoke<UserProfile | null>("get_user_profile");
+}
+
+export async function saveUserProfile(input: {
+  name: string;
+  email: string;
+  avatar?: AvatarSource | null;
+}): Promise<UserProfile> {
+  return invoke<UserProfile>("save_user_profile", { input });
+}
+
+export async function startGoogleOAuth(): Promise<UserProfile> {
+  return invoke<UserProfile>("start_google_oauth");
+}
+
+export async function signOutUser(): Promise<void> {
+  return invoke<void>("sign_out_user");
+}
+
+export async function setUserPlan(plan: UserPlan): Promise<UserProfile> {
+  return invoke<UserProfile>("set_user_plan", { plan });
+}
+
+export async function saveUploadedAvatar(input: {
+  imageBase64: string;
+  mime: string;
+}): Promise<AvatarSource> {
+  return invoke<AvatarSource>("save_uploaded_avatar", { input });
 }
 
 function convertFileSrc(filePath: string): string {

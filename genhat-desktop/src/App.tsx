@@ -41,6 +41,7 @@ function App() {
   const suppressStartupModal = useUIStore((s) => s.suppressStartupModal);
   const setSuppressStartupModal = useUIStore((s) => s.setSuppressStartupModal);
   const setSettingsOpen = useUIStore((s) => s.setSettingsOpen);
+  const setProfileOpen = useUIStore((s) => s.setProfileOpen);
   const setToursOpen = useUIStore((s) => s.setToursOpen);
   const setHfModalPreset = useUIStore((s) => s.setHfModalPreset);
   const setHfModalOpen = useUIStore((s) => s.setHfModalOpen);
@@ -117,6 +118,7 @@ function App() {
           onImportProject={() => void openWorkspaceFromFile()}
           onExportProject={() => void saveWorkspaceFile()}
           onOpenSettings={() => setSettingsOpen(true)}
+          onOpenProfile={() => setProfileOpen(true)}
           onOpenTours={() => setToursOpen(true)}
           onOpenHuggingFaceSearch={handleAddModel}
           workspaceBusy={workspaceBusy}

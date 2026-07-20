@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { 
   refreshModels,
   handleDownloadModel,
@@ -9,12 +10,13 @@ import { useUIStore } from "../stores/uiStore";
 import { useModelStore } from "../stores/modelStore";
 import { useDownloadStore } from "../stores/downloadStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
+import { useAuthStore } from "../stores/authStore";
 import AppModal from "./AppModal";
 import HuggingFaceModal from "./HuggingFaceModal";
 import ModelsSettingsModal from "./ModelsSettingsModal";
 import StartupModal from "./StartupModal";
 import ToursModal from "./ToursModal";
-
+import ProfileModal from "./ProfileModal";
 interface AppDialogsLayerProps {
   showStartupModal: boolean;
   onContinueWorkspace: () => void;
@@ -48,7 +50,14 @@ export default function AppDialogsLayer({
   const hfModalPreset = useUIStore(s => s.hfModalPreset);
   const toursOpen = useUIStore(s => s.toursOpen);
   const setToursOpen = useUIStore(s => s.setToursOpen);
+  const profileOpen = useUIStore(s => s.profileOpen);
+  const setProfileOpen = useUIStore(s => s.setProfileOpen);
   const confirmAction = useUIStore(s => s.confirmAction);
+  const hydrateAuth = useAuthStore(s => s.hydrate);
+
+  useEffect(() => {
+    void hydrateAuth();
+  }, [hydrateAuth]);
   
   const registeredModels = useModelStore(s => s.registeredModels);
   const modelCatalog = useModelStore(s => s.modelCatalog);
@@ -104,6 +113,8 @@ export default function AppDialogsLayer({
       />
 
       <ToursModal isOpen={toursOpen} onClose={() => setToursOpen(false)} />
+
+      <ProfileModal isOpen={profileOpen} onClose={() => setProfileOpen(false)} />
     </>
   );
 }

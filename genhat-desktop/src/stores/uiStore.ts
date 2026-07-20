@@ -20,6 +20,7 @@ interface AppModalState {
 
 interface UIState {
   settingsOpen: boolean;
+  profileOpen: boolean;
   toursOpen: boolean;
   suppressStartupModal: boolean;
   hfModalOpen: boolean;
@@ -36,6 +37,7 @@ interface UIState {
 
 interface UIActions {
   setSettingsOpen: (open: boolean) => void;
+  setProfileOpen: (open: boolean) => void;
   setToursOpen: (open: boolean) => void;
   setSuppressStartupModal: (suppress: boolean) => void;
   setHfModalOpen: (open: boolean) => void;
@@ -80,6 +82,7 @@ interface UIActions {
 
 export const useUIStore = create<UIState & UIActions>((set, get) => ({
   settingsOpen: false,
+  profileOpen: false,
   toursOpen: false,
   suppressStartupModal: false,
   hfModalOpen: false,
@@ -102,6 +105,7 @@ export const useUIStore = create<UIState & UIActions>((set, get) => ({
   docViewerFile: null,
 
   setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
+  setProfileOpen: (profileOpen) => set({ profileOpen }),
   setToursOpen: (toursOpen) => set({ toursOpen }),
   setSuppressStartupModal: (suppressStartupModal) =>
     set({ suppressStartupModal }),

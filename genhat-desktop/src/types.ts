@@ -511,3 +511,24 @@ export interface FileRecord {
   snippet?: string;
 }
 
+// ── User profile / auth ──────────────────────────────────────────────────────
+
+export type UserPlan = "free" | "premium";
+export type AuthProvider = "google" | "local";
+export type AvatarKind = "google" | "upload" | "preset";
+
+export interface AvatarSource {
+  kind: AvatarKind;
+  value: string;
+}
+
+export interface UserProfile {
+  id: string;
+  name: string;
+  email: string;
+  avatar: AvatarSource | null;
+  plan: UserPlan;
+  authProvider: AuthProvider;
+  updatedAt: string;
+}
+

@@ -55,6 +55,10 @@ fn copy_missing_tree(src: &Path, dst: &Path) -> std::io::Result<()> {
 }
 
 fn main() {
+    // Load genhat-desktop/.env (and src-tauri/.env) so NELA_GOOGLE_CLIENT_ID works without shell export.
+    let _ = dotenvy::from_path("../.env");
+    let _ = dotenvy::dotenv();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
@@ -396,6 +400,13 @@ fn main() {
             app_lib::commands::system::reveal_in_explorer,
             app_lib::commands::system::open_path_in_os,
             app_lib::commands::system::copy_file_to_path,
+            // Auth / profile commands
+            app_lib::commands::auth::get_user_profile,
+            app_lib::commands::auth::save_user_profile,
+            app_lib::commands::auth::start_google_oauth,
+            app_lib::commands::auth::sign_out_user,
+            app_lib::commands::auth::set_user_plan,
+            app_lib::commands::auth::save_uploaded_avatar,
             // Playground commands
             app_lib::commands::playground::playground_list_pipelines,
             app_lib::commands::playground::playground_load_pipeline,

@@ -10,7 +10,10 @@ import {
   HelpCircle,
   Sun,
   Moon,
+  User,
 } from "lucide-react";
+import { useAuthStore } from "../stores/authStore";
+import { convertFileSrc } from "@tauri-apps/api/core";
 
 interface SidebarNavProps {
   selected: "chats" | "audio" | "mindmaps" | "playground" | null;
@@ -18,6 +21,7 @@ interface SidebarNavProps {
   onImportProject: () => void;
   onExportProject: () => void;
   onOpenSettings: () => void;
+  onOpenProfile: () => void;
   onOpenTours: () => void;
   onOpenHuggingFaceSearch?: () => void;
   workspaceBusy?: boolean;
@@ -32,6 +36,7 @@ const SidebarNav: React.FC<SidebarNavProps> = ({
   onImportProject,
   onExportProject,
   onOpenSettings,
+  onOpenProfile,
   onOpenTours,
   onOpenHuggingFaceSearch,
   workspaceBusy = false,
@@ -39,6 +44,25 @@ const SidebarNav: React.FC<SidebarNavProps> = ({
   theme = "neon",
   onToggleTheme,
 }) => {
+  const profile = useAuthStore((s) => s.profile);
+  let avatarUrl: string | null = null;
+  if (profile?.avatar) {
+    const v = profile.avatar.value;
+    if (
+      profile.avatar.kind === "upload" &&
+      !v.startsWith("data:") &&
+      !v.startsWith("http")
+    ) {
+      try {
+        avatarUrl = convertFileSrc(v);
+      } catch {
+        avatarUrl = null;
+      }
+    } else {
+      avatarUrl = v;
+    }
+  }
+
   return (
     <nav
       className="relative flex flex-col gap-2 py-4 w-14 min-w-14 bg-void-800/80 backdrop-blur-xl items-center"
@@ -102,6 +126,22 @@ const SidebarNav: React.FC<SidebarNavProps> = ({
           data-tour="sidebar-help-tours"
         >
           <HelpCircle size={22} />
+        </button>
+        <button
+          className="flex flex-col items-center gap-1 px-2 py-2 rounded-lg transition-colors text-txt-secondary hover:text-neon overflow-hidden"
+          title={profile ? `Profile · ${profile.name}` : "Profile"}
+          onClick={onOpenProfile}
+          data-tour="sidebar-profile"
+        >
+          {avatarUrl ? (
+            <img
+              src={avatarUrl}
+              alt=""
+              className="w-[22px] h-[22px] rounded-full object-cover"
+            />
+          ) : (
+            <User size={22} />
+          )}
         </button>
         <button
           className="flex flex-col items-center gap-1 px-2 py-2 rounded-lg transition-colors text-txt-secondary hover:text-neon"
