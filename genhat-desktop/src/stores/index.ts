@@ -13,6 +13,8 @@ export {
   type MindmapOverlayState
 } from "./chatModeStore";
 export { useUIStore, modalResolve, setModalResolve } from "./uiStore";
+export { useAuthStore } from "./authStore";
+export { useCloudStore } from "./cloudStore";
 export { 
   useDownloadStore, 
   startupCancelRequested, 

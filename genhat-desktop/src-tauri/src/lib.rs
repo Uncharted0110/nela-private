@@ -22,6 +22,7 @@ pub mod process;
 pub mod router;
 pub mod commands;
 pub mod auth;
+pub mod cloud;
 pub mod rag;
 pub mod workspace;
 pub mod tts;

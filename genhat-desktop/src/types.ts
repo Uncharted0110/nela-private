@@ -511,9 +511,17 @@ export interface FileRecord {
   snippet?: string;
 }
 
-// ── User profile / auth ──────────────────────────────────────────────────────
+// ── User profile / NELA Cloud auth ───────────────────────────────────────────
 
-export type UserPlan = "free" | "premium";
+export type UserPlan = "free" | "starter" | "pro";
+
+export type EntitlementStatus =
+  | "inactive"
+  | "active"
+  | "past_due"
+  | "cancelled"
+  | "quota_exhausted";
+
 export type AuthProvider = "google" | "local";
 export type AvatarKind = "google" | "upload" | "preset";
 
@@ -528,7 +536,87 @@ export interface UserProfile {
   email: string;
   avatar: AvatarSource | null;
   plan: UserPlan;
+  entitlementStatus?: EntitlementStatus;
   authProvider: AuthProvider;
   updatedAt: string;
+}
+
+export type CloudMode = "local" | "cloud" | "auto";
+
+export type CloudIntent =
+  | "quick_chat"
+  | "summarize"
+  | "rag_answer"
+  | "artifact_plan"
+  | "deep_reasoning"
+  | "vision"
+  | "cheap_background";
+
+export interface DeviceStartResponse {
+  deviceCode: string;
+  userCode: string;
+  verificationUrl: string;
+  expiresIn: number;
+  interval: number;
+}
+
+export interface DevicePollPendingResponse {
+  status: "pending";
+}
+
+export interface DevicePollApprovedResponse {
+  status: "approved";
+  profile: UserProfile;
+}
+
+export type DevicePollResponse =
+  | DevicePollPendingResponse
+  | DevicePollApprovedResponse;
+
+export interface EntitlementResponse {
+  cloudEnabled: boolean;
+  plan: UserPlan;
+  status: EntitlementStatus;
+  quota: {
+    includedUsd: number;
+    usedUsd: number;
+    remainingUsd: number;
+  };
+  limits: {
+    maxInputTokens: number;
+    maxOutputTokens: number;
+    requestsPerMinute: number;
+  };
+}
+
+export interface CheckoutResponse {
+  checkoutUrl: string;
+}
+
+export interface BillingManageResponse {
+  manageUrl: string;
+}
+
+export interface CloudChatRequest {
+  intent: CloudIntent;
+  messages: Array<{
+    role: "system" | "user" | "assistant";
+    content: string;
+  }>;
+  stream: boolean;
+  privacy: {
+    containsFileContext: boolean;
+    userConfirmedCloudContext: boolean;
+    contextSource?: string;
+  };
+  generation?: {
+    maxTokens?: number;
+    temperature?: number;
+  };
+  client?: {
+    appVersion?: string;
+    platform?: string;
+    workspaceIdHash?: string;
+  };
 }
 

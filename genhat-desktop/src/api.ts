@@ -28,7 +28,6 @@ import type {
   LlmMessage,
   UserProfile,
   AvatarSource,
-  UserPlan,
 } from "./types";
 import {
   llamaContextKey,
@@ -1325,9 +1324,19 @@ export async function triggerScan(): Promise<import("./types").ScanResult> {
   return invoke<import("./types").ScanResult>("trigger_scan");
 }
 
-// ── User profile / Google auth ───────────────────────────────────────────────
+// ── User profile / NELA Cloud auth ───────────────────────────────────────────
 
-export type { UserProfile, AvatarSource, UserPlan };
+export type {
+  UserProfile,
+  AvatarSource,
+  UserPlan,
+  DeviceStartResponse,
+  DevicePollResponse,
+  EntitlementResponse,
+  CheckoutResponse,
+  BillingManageResponse,
+  CloudChatRequest,
+} from "./types";
 
 export async function getUserProfile(): Promise<UserProfile | null> {
   return invoke<UserProfile | null>("get_user_profile");
@@ -1341,16 +1350,8 @@ export async function saveUserProfile(input: {
   return invoke<UserProfile>("save_user_profile", { input });
 }
 
-export async function startGoogleOAuth(): Promise<UserProfile> {
-  return invoke<UserProfile>("start_google_oauth");
-}
-
 export async function signOutUser(): Promise<void> {
   return invoke<void>("sign_out_user");
-}
-
-export async function setUserPlan(plan: UserPlan): Promise<UserProfile> {
-  return invoke<UserProfile>("set_user_plan", { plan });
 }
 
 export async function saveUploadedAvatar(input: {
@@ -1358,6 +1359,70 @@ export async function saveUploadedAvatar(input: {
   mime: string;
 }): Promise<AvatarSource> {
   return invoke<AvatarSource>("save_uploaded_avatar", { input });
+}
+
+export async function startCloudAuth(): Promise<
+  import("./types").DeviceStartResponse
+> {
+  return invoke<import("./types").DeviceStartResponse>("cloud_auth_start");
+}
+
+export async function pollCloudAuth(
+  deviceCode: string
+): Promise<import("./types").DevicePollResponse> {
+  return invoke<import("./types").DevicePollResponse>("cloud_auth_poll", {
+    deviceCode,
+  });
+}
+
+export async function refreshCloudToken(): Promise<void> {
+  return invoke<void>("cloud_refresh_token");
+}
+
+export async function signOutCloud(): Promise<void> {
+  return invoke<void>("cloud_sign_out");
+}
+
+export async function getCloudProfile(): Promise<UserProfile | null> {
+  return invoke<UserProfile | null>("cloud_get_profile");
+}
+
+export async function getCloudEntitlement(): Promise<
+  import("./types").EntitlementResponse
+> {
+  return invoke<import("./types").EntitlementResponse>("cloud_get_entitlement");
+}
+
+export async function createCloudCheckout(
+  plan: "starter" | "pro"
+): Promise<import("./types").CheckoutResponse> {
+  return invoke<import("./types").CheckoutResponse>("cloud_create_checkout", {
+    plan,
+  });
+}
+
+export async function createBillingManage(): Promise<
+  import("./types").BillingManageResponse
+> {
+  return invoke<import("./types").BillingManageResponse>(
+    "cloud_create_billing_manage"
+  );
+}
+
+export async function cloudCompleteChat(
+  request: import("./types").CloudChatRequest
+): Promise<string> {
+  return invoke<string>("cloud_chat_complete", { request });
+}
+
+/**
+ * Start streaming cloud chat. Emits "cloud-chat-stream" Tauri events.
+ * Frontend should `listen("cloud-chat-stream", handler)` before calling this.
+ */
+export async function cloudStreamChat(
+  request: import("./types").CloudChatRequest
+): Promise<void> {
+  return invoke<void>("cloud_chat_stream", { request });
 }
 
 function convertFileSrc(filePath: string): string {

@@ -1,10 +1,7 @@
-//! User profile and Google OAuth Tauri commands.
+//! Local profile cache commands (no Google OAuth / no plan mutation).
 
-use crate::auth::{
-    self, AvatarSource, UserPlan, UserProfile,
-};
+use crate::auth::{self, AvatarSource, UserProfile};
 use tauri::{AppHandle, Manager};
-use tauri_plugin_opener::OpenerExt;
 
 fn app_data_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
     app.path()
@@ -36,33 +33,12 @@ pub async fn save_user_profile(
 }
 
 #[tauri::command]
-pub async fn start_google_oauth(app: AppHandle) -> Result<UserProfile, String> {
-    let dir = app_data_dir(&app)?;
-    let app_for_open = app.clone();
-    auth::start_google_oauth(&dir, move |url| {
-        app_for_open
-            .opener()
-            .open_url(url, None::<&str>)
-            .map_err(|e| format!("Failed to open browser for Google sign-in: {e}"))
-    })
-    .await
-}
-
-#[tauri::command]
 pub async fn sign_out_user(app: AppHandle) -> Result<(), String> {
     let dir = app_data_dir(&app)?;
+    // Clear local profile cache and NELA Cloud tokens.
+    let _ = crate::cloud::client::logout(&dir).await;
+    crate::cloud::token_store::clear_tokens(&dir)?;
     auth::sign_out_user(&dir)
-}
-
-#[tauri::command]
-pub async fn set_user_plan(app: AppHandle, plan: String) -> Result<UserProfile, String> {
-    let dir = app_data_dir(&app)?;
-    let plan = match plan.to_lowercase().as_str() {
-        "free" => UserPlan::Free,
-        "premium" => UserPlan::Premium,
-        other => return Err(format!("Unknown plan: {other}")),
-    };
-    auth::set_user_plan(&dir, plan)
 }
 
 #[derive(Debug, serde::Deserialize)]

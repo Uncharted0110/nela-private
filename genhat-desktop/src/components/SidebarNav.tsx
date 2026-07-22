@@ -11,6 +11,7 @@ import {
   Sun,
   Moon,
   User,
+  Cloud,
 } from "lucide-react";
 import { useAuthStore } from "../stores/authStore";
 import { convertFileSrc } from "@tauri-apps/api/core";
@@ -22,6 +23,7 @@ interface SidebarNavProps {
   onExportProject: () => void;
   onOpenSettings: () => void;
   onOpenProfile: () => void;
+  onOpenCloudSettings: () => void;
   onOpenTours: () => void;
   onOpenHuggingFaceSearch?: () => void;
   workspaceBusy?: boolean;
@@ -37,6 +39,7 @@ const SidebarNav: React.FC<SidebarNavProps> = ({
   onExportProject,
   onOpenSettings,
   onOpenProfile,
+  onOpenCloudSettings,
   onOpenTours,
   onOpenHuggingFaceSearch,
   workspaceBusy = false,
@@ -142,6 +145,14 @@ const SidebarNav: React.FC<SidebarNavProps> = ({
           ) : (
             <User size={22} />
           )}
+        </button>
+        <button
+          className="flex flex-col items-center gap-1 px-2 py-2 rounded-lg transition-colors text-txt-secondary hover:text-neon"
+          title="NELA Cloud"
+          onClick={onOpenCloudSettings}
+          data-tour="sidebar-cloud"
+        >
+          <Cloud size={22} />
         </button>
         <button
           className="flex flex-col items-center gap-1 px-2 py-2 rounded-lg transition-colors text-txt-secondary hover:text-neon"

@@ -12,6 +12,8 @@ pub mod download;
 pub mod system;
 pub mod playground;
 pub mod auth;
+pub mod cloud_auth;
+pub mod cloud_inference;
 pub mod web_search;
 pub mod web_tables;
 pub mod artifact;

@@ -21,6 +21,7 @@ interface AppModalState {
 interface UIState {
   settingsOpen: boolean;
   profileOpen: boolean;
+  cloudSettingsOpen: boolean;
   toursOpen: boolean;
   suppressStartupModal: boolean;
   hfModalOpen: boolean;
@@ -38,6 +39,7 @@ interface UIState {
 interface UIActions {
   setSettingsOpen: (open: boolean) => void;
   setProfileOpen: (open: boolean) => void;
+  setCloudSettingsOpen: (open: boolean) => void;
   setToursOpen: (open: boolean) => void;
   setSuppressStartupModal: (suppress: boolean) => void;
   setHfModalOpen: (open: boolean) => void;
@@ -83,6 +85,7 @@ interface UIActions {
 export const useUIStore = create<UIState & UIActions>((set, get) => ({
   settingsOpen: false,
   profileOpen: false,
+  cloudSettingsOpen: false,
   toursOpen: false,
   suppressStartupModal: false,
   hfModalOpen: false,
@@ -106,6 +109,7 @@ export const useUIStore = create<UIState & UIActions>((set, get) => ({
 
   setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
   setProfileOpen: (profileOpen) => set({ profileOpen }),
+  setCloudSettingsOpen: (cloudSettingsOpen) => set({ cloudSettingsOpen }),
   setToursOpen: (toursOpen) => set({ toursOpen }),
   setSuppressStartupModal: (suppressStartupModal) =>
     set({ suppressStartupModal }),

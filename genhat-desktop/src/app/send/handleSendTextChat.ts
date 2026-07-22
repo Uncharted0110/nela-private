@@ -23,6 +23,7 @@ import {
 } from "../ambientFileContent";
 import { NELA_SYSTEM_PROMPT } from "../nelaSystemPrompt";
 import { parseCSV } from "./csvParse";
+import { streamChatByMode } from "./cloudOrLocalStream";
 import type { SendHandlerContext } from "./types";
 import { runWebSearchToolLoop } from "./webSearchToolLoop";
 
@@ -329,16 +330,22 @@ export async function handleSendTextChat(
     return;
   }
 
-  Api.streamChat(
-    apiMessages,
+  const containsFileContext = Boolean(
+    ambientFileContext && ambientFileContext !== "FILE_SEARCH_NO_RESULTS"
+  );
+
+  streamChatByMode({
+    messages: apiMessages,
+    intent: "quick_chat",
+    containsFileContext,
+    contextSource: containsFileContext ? "ambient_file" : undefined,
+    modelId: ctx.selectedModel || undefined,
+    signal: ctrl.signal,
+    disableThinking: !ctx.thinkingEnabled,
+    generationOptions,
     onChunk,
     onThinking,
-    () => finishOk(fullResponse, fullThinking, null),
-    finishErr,
-    undefined,
-    ctx.selectedModel || undefined,
-    ctrl.signal,
-    !ctx.thinkingEnabled,
-    generationOptions
-  );
+    onFinish: () => finishOk(fullResponse, fullThinking, null),
+    onError: finishErr,
+  });
 }

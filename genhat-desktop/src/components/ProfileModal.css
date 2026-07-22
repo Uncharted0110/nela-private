@@ -336,6 +336,12 @@
   font-size: 0.85rem;
 }
 
+.profile-hint {
+  margin: 0;
+  color: var(--color-txt-muted);
+  font-size: 0.85rem;
+}
+
 .profile-success {
   margin: 0;
   color: #34d399;

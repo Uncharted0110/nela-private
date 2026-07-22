@@ -42,6 +42,7 @@ function App() {
   const setSuppressStartupModal = useUIStore((s) => s.setSuppressStartupModal);
   const setSettingsOpen = useUIStore((s) => s.setSettingsOpen);
   const setProfileOpen = useUIStore((s) => s.setProfileOpen);
+  const setCloudSettingsOpen = useUIStore((s) => s.setCloudSettingsOpen);
   const setToursOpen = useUIStore((s) => s.setToursOpen);
   const setHfModalPreset = useUIStore((s) => s.setHfModalPreset);
   const setHfModalOpen = useUIStore((s) => s.setHfModalOpen);
@@ -119,6 +120,7 @@ function App() {
           onExportProject={() => void saveWorkspaceFile()}
           onOpenSettings={() => setSettingsOpen(true)}
           onOpenProfile={() => setProfileOpen(true)}
+          onOpenCloudSettings={() => setCloudSettingsOpen(true)}
           onOpenTours={() => setToursOpen(true)}
           onOpenHuggingFaceSearch={handleAddModel}
           workspaceBusy={workspaceBusy}

@@ -5,6 +5,7 @@ import { parseArtifactPlanJson, parseHtmlPlanJson } from "../artifactPlanJson";
 import { normalizePresentationPlan } from "../artifactPlanNormalize";
 import { fitArtifactPlanPrompt } from "../artifactContextBudget";
 import { buildPresentationFallbackPlan } from "../presentationDocumentPlan";
+import { streamChatByMode } from "./cloudOrLocalStream";
 import {
   buildSpreadsheetDataContext,
   buildSpreadsheetFallbackPlan,
@@ -637,107 +638,116 @@ Content rules:
       return false;
     };
 
-    await Api.streamChat(
-      [
-        { role: "system", content: fitted.systemPrompt },
-        { role: "user", content: fitted.userPrompt }
-      ],
-      (chunk) => {
-        planJson += chunk;
-      },
-      () => {},
-      async () => {
-        updateArtifactMsg("WritingCode");
-        try {
-          // LLM plan JSON — shape varies by schemaId
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          let planObj: any;
-          if (schemaId === "html_synthesis") {
-            planObj = parseHtmlPlanJson(planJson, {
-              prompt: text,
-              archetype: htmlArchetype,
-              theme: defaultThemeForArchetype(htmlArchetype),
-            });
-          } else if (schemaId === "spreadsheet_synthesis") {
-            const sheetFallback = {
-              prompt: text,
-              hasSourceData: Boolean(headers && headers.length > 0 && rows),
-              ambientContent: ambientFileContent || undefined,
-            };
-            try {
-              planObj = parseSpreadsheetPlanJson(planJson, sheetFallback);
-            } catch (parseErr) {
-              const docFallback = buildSpreadsheetFallbackPlan(sheetFallback);
-              if (docFallback) {
-                console.warn(
-                  "Spreadsheet parse failed; using document fallback:",
-                  parseErr
-                );
-                planObj = docFallback;
-              } else {
-                throw parseErr;
-              }
-            }
-          } else {
-            try {
-              planObj = parseArtifactPlanJson(planJson, {
-                userPrompt: text,
-                schemaId,
-              });
-            } catch (jsonErr) {
-              const docFallback = buildPresentationFallbackPlan({
-                userPrompt: text,
-                ambientContent: ambientFileContent,
-                theme: themeHint,
-                targetSlideCount: slidePlan.count,
-              });
-              if (docFallback) {
-                console.warn(
-                  "Presentation parse failed; using document fallback:",
-                  jsonErr
-                );
-                planObj = docFallback;
-              } else {
-                console.warn("Failed to parse artifact plan JSON:", jsonErr);
-                throw jsonErr;
-              }
-            }
-          }
+    const containsFileContext = Boolean(ambientFileContent?.trim());
 
-          await executePlanObj(planObj);
-        } catch (execErr: unknown) {
-          try {
-            if (await tryDocumentFallback(execErr)) return;
-          } catch (fallbackErr) {
-            console.error("Document fallback also failed:", fallbackErr);
-          }
-          console.error("Artifact generation execution failed:", execErr);
-          ctx.updateSession(sid, { loading: false });
-          const msg = execErr instanceof Error ? execErr.message : String(execErr);
-          updateArtifactMsg("Error", null, `Failed to compile/execute artifact plan: ${msg}`);
-        }
-      },
-      async (err) => {
-        console.error("Artifact plan generation failed:", err);
-        try {
-          if (await tryDocumentFallback(err)) return;
-        } catch (fallbackErr) {
-          console.error("Document fallback after LLM error failed:", fallbackErr);
-        }
-        ctx.updateSession(sid, { loading: false });
-        updateArtifactMsg("Error", null, `Failed to generate artifact plan: ${err}`);
-      },
-      undefined,
-      ctx.selectedModel || undefined,
-      ctrl.signal,
-      true,
-      {
+    streamChatByMode({
+      messages: [
+        { role: "system", content: fitted.systemPrompt },
+        { role: "user", content: fitted.userPrompt },
+      ],
+      intent: "artifact_plan",
+      containsFileContext,
+      contextSource: containsFileContext ? "artifact_source_document" : undefined,
+      modelId: ctx.selectedModel || undefined,
+      signal: ctrl.signal,
+      disableThinking: true,
+      generationOptions: {
         ...generationOptions,
         maxTokens: planMaxTokens,
         temperature: planTemperature,
+        // grammar is local-only; cloud path relies on JSON repair parsers
         grammar,
-      }
-    );
+      },
+      onChunk: (chunk) => {
+        planJson += chunk;
+      },
+      onThinking: () => {},
+      onFinish: () => {
+        void (async () => {
+          updateArtifactMsg("WritingCode");
+          try {
+            // LLM plan JSON — shape varies by schemaId
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            let planObj: any;
+            if (schemaId === "html_synthesis") {
+              planObj = parseHtmlPlanJson(planJson, {
+                prompt: text,
+                archetype: htmlArchetype,
+                theme: defaultThemeForArchetype(htmlArchetype),
+              });
+            } else if (schemaId === "spreadsheet_synthesis") {
+              const sheetFallback = {
+                prompt: text,
+                hasSourceData: Boolean(headers && headers.length > 0 && rows),
+                ambientContent: ambientFileContent || undefined,
+              };
+              try {
+                planObj = parseSpreadsheetPlanJson(planJson, sheetFallback);
+              } catch (parseErr) {
+                const docFallback = buildSpreadsheetFallbackPlan(sheetFallback);
+                if (docFallback) {
+                  console.warn(
+                    "Spreadsheet parse failed; using document fallback:",
+                    parseErr
+                  );
+                  planObj = docFallback;
+                } else {
+                  throw parseErr;
+                }
+              }
+            } else {
+              try {
+                planObj = parseArtifactPlanJson(planJson, {
+                  userPrompt: text,
+                  schemaId,
+                });
+              } catch (jsonErr) {
+                const docFallback = buildPresentationFallbackPlan({
+                  userPrompt: text,
+                  ambientContent: ambientFileContent,
+                  theme: themeHint,
+                  targetSlideCount: slidePlan.count,
+                });
+                if (docFallback) {
+                  console.warn(
+                    "Presentation parse failed; using document fallback:",
+                    jsonErr
+                  );
+                  planObj = docFallback;
+                } else {
+                  console.warn("Failed to parse artifact plan JSON:", jsonErr);
+                  throw jsonErr;
+                }
+              }
+            }
+
+            await executePlanObj(planObj);
+          } catch (execErr: unknown) {
+            try {
+              if (await tryDocumentFallback(execErr)) return;
+            } catch (fallbackErr) {
+              console.error("Document fallback also failed:", fallbackErr);
+            }
+            console.error("Artifact generation execution failed:", execErr);
+            ctx.updateSession(sid, { loading: false });
+            const msg = execErr instanceof Error ? execErr.message : String(execErr);
+            updateArtifactMsg("Error", null, `Failed to compile/execute artifact plan: ${msg}`);
+          }
+        })();
+      },
+      onError: (err) => {
+        void (async () => {
+          console.error("Artifact plan generation failed:", err);
+          try {
+            if (await tryDocumentFallback(err)) return;
+          } catch (fallbackErr) {
+            console.error("Document fallback after LLM error failed:", fallbackErr);
+          }
+          ctx.updateSession(sid, { loading: false });
+          updateArtifactMsg("Error", null, `Failed to generate artifact plan: ${err}`);
+        })();
+      },
+    });
 
   } catch (err: unknown) {
     console.error("Artifact setup failed:", err);

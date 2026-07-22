@@ -1,24 +1,36 @@
 import { create } from "zustand";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   getUserProfile,
+  getCloudProfile,
   saveUserProfile,
-  startGoogleOAuth,
-  signOutUser,
+  startCloudAuth,
+  pollCloudAuth,
+  signOutCloud,
   saveUploadedAvatar,
 } from "../api";
 import type { AvatarSource, UserProfile } from "../types";
+import { useCloudStore } from "./cloudStore";
 
 interface AuthState {
   profile: UserProfile | null;
   loading: boolean;
   hydrated: boolean;
   error: string | null;
+  loginPending: boolean;
 }
 
 interface AuthActions {
   hydrate: () => Promise<void>;
-  signInWithGoogle: () => Promise<void>;
+  signInToCloud: () => Promise<void>;
   signOut: () => Promise<void>;
+  refreshProfile: () => Promise<void>;
+  updateCachedProfile: (fields: {
+    name: string;
+    email: string;
+    avatar?: AvatarSource | null;
+  }) => Promise<void>;
+  /** @deprecated Prefer updateCachedProfile */
   updateProfile: (fields: {
     name: string;
     email: string;
@@ -29,18 +41,43 @@ interface AuthActions {
   clearError: () => void;
 }
 
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function normalizePlan(plan: string | undefined): UserProfile["plan"] {
+  const p = (plan ?? "free").toLowerCase();
+  if (p === "premium" || p === "pro") return "pro";
+  if (p === "starter") return "starter";
+  return "free";
+}
+
+function normalizeProfile(profile: UserProfile | null): UserProfile | null {
+  if (!profile) return null;
+  return {
+    ...profile,
+    plan: normalizePlan(profile.plan),
+  };
+}
+
 export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
   profile: null,
   loading: false,
   hydrated: false,
   error: null,
+  loginPending: false,
 
   clearError: () => set({ error: null }),
 
   hydrate: async () => {
     try {
-      const profile = await getUserProfile();
+      const profile = normalizeProfile(await getUserProfile());
       set({ profile, hydrated: true, error: null });
+      if (profile) {
+        void useCloudStore.getState().refreshEntitlement().catch(() => {
+          /* offline / unsigned cloud is fine */
+        });
+      }
     } catch (err) {
       set({
         profile: null,
@@ -50,14 +87,55 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
     }
   },
 
-  signInWithGoogle: async () => {
-    set({ loading: true, error: null });
+  refreshProfile: async () => {
     try {
-      const profile = await startGoogleOAuth();
-      set({ profile, loading: false, error: null });
+      const profile = normalizeProfile(await getCloudProfile());
+      set({ profile, error: null });
+    } catch (err) {
+      set({
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  },
+
+  signInToCloud: async () => {
+    set({ loading: true, loginPending: true, error: null });
+    try {
+      const start = await startCloudAuth();
+      try {
+        await openUrl(start.verificationUrl);
+      } catch (err) {
+        throw new Error(
+          err instanceof Error
+            ? `Failed to open browser: ${err.message}`
+            : "Failed to open browser for NELA Cloud sign-in"
+        );
+      }
+
+      const intervalMs = Math.max(1, start.interval || 2) * 1000;
+      const deadline = Date.now() + Math.max(30, start.expiresIn || 300) * 1000;
+
+      while (Date.now() < deadline) {
+        await sleep(intervalMs);
+        const poll = await pollCloudAuth(start.deviceCode);
+        if (poll.status === "approved") {
+          const profile = normalizeProfile(poll.profile);
+          set({
+            profile,
+            loading: false,
+            loginPending: false,
+            error: null,
+          });
+          await useCloudStore.getState().refreshEntitlement();
+          return;
+        }
+      }
+
+      throw new Error("NELA Cloud sign-in timed out. Please try again.");
     } catch (err) {
       set({
         loading: false,
+        loginPending: false,
         error: err instanceof Error ? err.message : String(err),
       });
       throw err;
@@ -67,7 +145,8 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
   signOut: async () => {
     set({ loading: true, error: null });
     try {
-      await signOutUser();
+      await signOutCloud();
+      useCloudStore.setState({ entitlement: null, error: null });
       set({ profile: null, loading: false });
     } catch (err) {
       set({
@@ -78,16 +157,18 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
     }
   },
 
-  updateProfile: async ({ name, email, avatar }) => {
+  updateCachedProfile: async ({ name, email, avatar }) => {
     const current = get().profile;
     if (!current) throw new Error("Not signed in");
     set({ loading: true, error: null });
     try {
-      const profile = await saveUserProfile({
-        name,
-        email,
-        avatar: avatar === undefined ? current.avatar : avatar,
-      });
+      const profile = normalizeProfile(
+        await saveUserProfile({
+          name,
+          email,
+          avatar: avatar === undefined ? current.avatar : avatar,
+        })
+      );
       set({ profile, loading: false });
     } catch (err) {
       set({
@@ -98,10 +179,12 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
     }
   },
 
+  updateProfile: async (fields) => get().updateCachedProfile(fields),
+
   setAvatar: async (avatar) => {
     const current = get().profile;
     if (!current) throw new Error("Not signed in");
-    await get().updateProfile({
+    await get().updateCachedProfile({
       name: current.name,
       email: current.email,
       avatar,
@@ -114,11 +197,13 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
     set({ loading: true, error: null });
     try {
       const avatar = await saveUploadedAvatar({ imageBase64, mime });
-      const profile = await saveUserProfile({
-        name: current.name,
-        email: current.email,
-        avatar,
-      });
+      const profile = normalizeProfile(
+        await saveUserProfile({
+          name: current.name,
+          email: current.email,
+          avatar,
+        })
+      );
       set({ profile, loading: false });
     } catch (err) {
       set({

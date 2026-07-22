@@ -1,0 +1,230 @@
+.cloud-settings-overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--modal-overlay-bg);
+  backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 60;
+}
+
+.cloud-settings-modal {
+  width: min(480px, 94vw);
+  max-height: 88vh;
+  background: var(--modal-surface-solid);
+  border: 1px solid var(--color-glass-border);
+  border-radius: 18px;
+  box-shadow: var(--modal-shadow);
+  display: flex;
+  flex-direction: column;
+  color: var(--color-txt);
+}
+
+.cloud-settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--modal-border-subtle);
+}
+
+.cloud-settings-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 600;
+  font-size: 16px;
+}
+
+.cloud-settings-close {
+  background: transparent;
+  border: none;
+  color: var(--color-txt-muted);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 8px;
+}
+
+.cloud-settings-close:hover {
+  color: var(--color-txt);
+  background: var(--modal-panel-bg);
+}
+
+.cloud-settings-body {
+  padding: 20px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.cloud-settings-section h3 {
+  margin: 0 0 6px;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.cloud-settings-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.cloud-settings-hint {
+  margin: 0 0 12px;
+  color: var(--color-txt-muted);
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+.cloud-mode-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cloud-mode-option {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 12px 14px;
+  border: 1px solid var(--color-glass-border);
+  border-radius: 12px;
+  cursor: pointer;
+  background: transparent;
+}
+
+.cloud-mode-option.is-selected {
+  border-color: var(--color-neon, #3ee0a0);
+  background: var(--modal-panel-bg);
+}
+
+.cloud-mode-option input {
+  margin-top: 3px;
+}
+
+.cloud-mode-option strong {
+  display: block;
+  font-size: 0.92rem;
+}
+
+.cloud-mode-option span {
+  display: block;
+  margin-top: 2px;
+  color: var(--color-txt-muted);
+  font-size: 0.8rem;
+}
+
+.cloud-settings-refresh {
+  background: transparent;
+  border: none;
+  color: var(--color-txt-muted);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 6px;
+}
+
+.cloud-settings-refresh:hover {
+  color: var(--color-txt);
+}
+
+.cloud-plan-banner {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 12px 14px;
+  border-radius: 12px;
+  margin-bottom: 12px;
+}
+
+.cloud-plan-banner.is-free {
+  background: color-mix(in srgb, var(--color-txt-muted) 12%, transparent);
+}
+
+.cloud-plan-banner.is-paid {
+  background: color-mix(in srgb, var(--color-neon, #3ee0a0) 16%, transparent);
+}
+
+.cloud-plan-banner strong {
+  display: block;
+  font-size: 0.95rem;
+}
+
+.cloud-plan-banner span {
+  display: block;
+  margin-top: 2px;
+  font-size: 0.8rem;
+  color: var(--color-txt-muted);
+  text-transform: capitalize;
+}
+
+.cloud-quota {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--modal-panel-bg);
+}
+
+.cloud-quota-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.85rem;
+  color: var(--color-txt-muted);
+}
+
+.cloud-quota-row strong {
+  color: var(--color-txt);
+  font-weight: 600;
+}
+
+.cloud-billing-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cloud-upgrade-btn,
+.cloud-manage-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--color-glass-border);
+  background: var(--modal-panel-bg);
+  color: var(--color-txt);
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.cloud-upgrade-btn-pro {
+  border-color: color-mix(in srgb, var(--color-neon, #3ee0a0) 50%, transparent);
+}
+
+.cloud-upgrade-btn:disabled,
+.cloud-manage-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.cloud-settings-error {
+  margin: 0;
+  color: #e85d5d;
+  font-size: 0.85rem;
+}
+
+@keyframes cloud-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.cloud-spin {
+  animation: cloud-spin 0.8s linear infinite;
+}

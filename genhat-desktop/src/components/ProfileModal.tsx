@@ -36,12 +36,13 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) => {
   const profile = useAuthStore((s) => s.profile);
   const loading = useAuthStore((s) => s.loading);
   const error = useAuthStore((s) => s.error);
-  const signInWithGoogle = useAuthStore((s) => s.signInWithGoogle);
+  const signInToCloud = useAuthStore((s) => s.signInToCloud);
   const signOut = useAuthStore((s) => s.signOut);
-  const updateProfile = useAuthStore((s) => s.updateProfile);
+  const updateProfile = useAuthStore((s) => s.updateCachedProfile);
   const setAvatar = useAuthStore((s) => s.setAvatar);
   const uploadAvatar = useAuthStore((s) => s.uploadAvatar);
   const clearError = useAuthStore((s) => s.clearError);
+  const loginPending = useAuthStore((s) => s.loginPending);
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -61,12 +62,15 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) => {
   if (!isOpen) return null;
 
   const avatarUrl = resolveAvatarUrl(profile?.avatar ?? null);
-  const isPremium = profile?.plan === "premium";
+  const plan = (profile?.plan ?? "free").toLowerCase();
+  const isPaid = plan === "starter" || plan === "pro";
+  const planTitle =
+    plan === "pro" ? "Pro" : plan === "starter" ? "Starter" : "Free";
 
   const handleSignIn = async () => {
     clearError();
     try {
-      await signInWithGoogle();
+      await signInToCloud();
     } catch {
       // error stored in authStore
     }
@@ -153,38 +157,43 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) => {
               <div className="profile-avatar-placeholder">
                 <User size={40} />
               </div>
-              <h2>Sign in to NELA</h2>
+              <h2>Sign in to NELA Cloud</h2>
               <p>
-                Use your Google account to save a profile. New accounts start on
-                the Free plan.
+                Sign in to NELA Cloud to sync your profile, manage your plan, and
+                use Fast Cloud.
               </p>
               <button
                 type="button"
                 className="profile-google-btn"
                 onClick={() => void handleSignIn()}
-                disabled={loading}
+                disabled={loading || loginPending}
               >
-                {loading ? (
+                {loading || loginPending ? (
                   <Loader2 size={18} className="profile-spin" />
                 ) : (
                   <GoogleGlyph />
                 )}
-                Sign in with Google
+                Continue with Google
               </button>
+              {loginPending && (
+                <p className="profile-hint">
+                  Complete sign-in in your browser, then return here…
+                </p>
+              )}
               {error && <p className="profile-error">{error}</p>}
             </div>
           ) : (
             <>
               <div
-                className={`profile-plan-banner ${isPremium ? "is-premium" : "is-free"}`}
+                className={`profile-plan-banner ${isPaid ? "is-premium" : "is-free"}`}
               >
                 <Crown size={16} />
                 <div>
-                  <strong>{isPremium ? "Premium" : "Free"}</strong>
+                  <strong>{planTitle}</strong>
                   <span>
-                    {isPremium
-                      ? "You have access to Premium features."
-                      : "Upgrade options will be available later."}
+                    {isPaid
+                      ? "Your plan is managed by NELA Cloud."
+                      : "Upgrade from Cloud settings when you are ready."}
                   </span>
                 </div>
               </div>

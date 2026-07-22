@@ -17,6 +17,7 @@ import ModelsSettingsModal from "./ModelsSettingsModal";
 import StartupModal from "./StartupModal";
 import ToursModal from "./ToursModal";
 import ProfileModal from "./ProfileModal";
+import CloudSettingsModal from "./CloudSettingsModal";
 interface AppDialogsLayerProps {
   showStartupModal: boolean;
   onContinueWorkspace: () => void;
@@ -52,6 +53,8 @@ export default function AppDialogsLayer({
   const setToursOpen = useUIStore(s => s.setToursOpen);
   const profileOpen = useUIStore(s => s.profileOpen);
   const setProfileOpen = useUIStore(s => s.setProfileOpen);
+  const cloudSettingsOpen = useUIStore(s => s.cloudSettingsOpen);
+  const setCloudSettingsOpen = useUIStore(s => s.setCloudSettingsOpen);
   const confirmAction = useUIStore(s => s.confirmAction);
   const hydrateAuth = useAuthStore(s => s.hydrate);
 
@@ -115,6 +118,11 @@ export default function AppDialogsLayer({
       <ToursModal isOpen={toursOpen} onClose={() => setToursOpen(false)} />
 
       <ProfileModal isOpen={profileOpen} onClose={() => setProfileOpen(false)} />
+
+      <CloudSettingsModal
+        isOpen={cloudSettingsOpen}
+        onClose={() => setCloudSettingsOpen(false)}
+      />
     </>
   );
 }
