@@ -408,6 +408,8 @@ fn main() {
             // NELA Cloud auth / billing / entitlement
             app_lib::commands::cloud_auth::cloud_auth_start,
             app_lib::commands::cloud_auth::cloud_auth_poll,
+            app_lib::commands::cloud_auth::cloud_auth_email_login,
+            app_lib::commands::cloud_auth::cloud_auth_email_register,
             app_lib::commands::cloud_auth::cloud_refresh_token,
             app_lib::commands::cloud_auth::cloud_sign_out,
             app_lib::commands::cloud_auth::cloud_get_profile,

@@ -37,18 +37,31 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) => {
   const loading = useAuthStore((s) => s.loading);
   const error = useAuthStore((s) => s.error);
   const signInToCloud = useAuthStore((s) => s.signInToCloud);
+  const signInWithEmail = useAuthStore((s) => s.signInWithEmail);
+  const registerWithEmail = useAuthStore((s) => s.registerWithEmail);
   const signOut = useAuthStore((s) => s.signOut);
   const updateProfile = useAuthStore((s) => s.updateCachedProfile);
   const setAvatar = useAuthStore((s) => s.setAvatar);
   const uploadAvatar = useAuthStore((s) => s.uploadAvatar);
   const clearError = useAuthStore((s) => s.clearError);
   const loginPending = useAuthStore((s) => s.loginPending);
+  const pendingUserCode = useAuthStore((s) => s.pendingUserCode);
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  const [authMode, setAuthMode] = useState<"login" | "register">("login");
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authName, setAuthName] = useState("");
   const [showAvatarPicker, setShowAvatarPicker] = useState(false);
   const [saveNotice, setSaveNotice] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const pendingCodeChars = (pendingUserCode ?? "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "")
+    .slice(0, 8)
+    .split("");
 
   useEffect(() => {
     if (!isOpen || !profile) return;
@@ -71,6 +84,26 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) => {
     clearError();
     try {
       await signInToCloud();
+    } catch {
+      // error stored in authStore
+    }
+  };
+
+  const handleEmailAuth = async () => {
+    clearError();
+    try {
+      if (authMode === "register") {
+        await registerWithEmail({
+          email: authEmail,
+          password: authPassword,
+          name: authName || undefined,
+        });
+      } else {
+        await signInWithEmail({
+          email: authEmail,
+          password: authPassword,
+        });
+      }
     } catch {
       // error stored in authStore
     }
@@ -173,13 +206,102 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) => {
                 ) : (
                   <GoogleGlyph />
                 )}
-                Continue with Google
+                {loginPending ? "Waiting for browser…" : "Link desktop with code"}
               </button>
-              {loginPending && (
-                <p className="profile-hint">
-                  Complete sign-in in your browser, then return here…
-                </p>
-              )}
+              {loginPending && pendingCodeChars.length === 8 ? (
+                <div className="profile-device-code">
+                  <p className="profile-hint">
+                    Already signed in on the website? Enter this code there:
+                  </p>
+                  <div className="profile-code-boxes" aria-label="Device link code">
+                    {pendingCodeChars.map((char, index) => (
+                      <span key={`${char}-${index}`} className="profile-code-box">
+                        {char}
+                      </span>
+                    ))}
+                  </div>
+                  <p className="profile-hint">
+                    Opened your browser to the link-device page. Keep this window
+                    open until linking finishes.
+                  </p>
+                </div>
+              ) : null}
+
+              <div className="profile-auth-divider">or sign in here</div>
+
+              <div className="profile-auth-tabs">
+                <button
+                  type="button"
+                  className={authMode === "login" ? "is-active" : ""}
+                  onClick={() => setAuthMode("login")}
+                  disabled={loading || loginPending}
+                >
+                  Sign in
+                </button>
+                <button
+                  type="button"
+                  className={authMode === "register" ? "is-active" : ""}
+                  onClick={() => setAuthMode("register")}
+                  disabled={loading || loginPending}
+                >
+                  Create account
+                </button>
+              </div>
+
+              {authMode === "register" ? (
+                <label className="profile-field">
+                  <span>Name</span>
+                  <input
+                    type="text"
+                    value={authName}
+                    onChange={(e) => setAuthName(e.target.value)}
+                    disabled={loading || loginPending}
+                    autoComplete="name"
+                  />
+                </label>
+              ) : null}
+              <label className="profile-field">
+                <span>Email</span>
+                <input
+                  type="email"
+                  value={authEmail}
+                  onChange={(e) => setAuthEmail(e.target.value)}
+                  disabled={loading || loginPending}
+                  autoComplete="email"
+                />
+              </label>
+              <label className="profile-field">
+                <span>Password</span>
+                <input
+                  type="password"
+                  value={authPassword}
+                  onChange={(e) => setAuthPassword(e.target.value)}
+                  disabled={loading || loginPending}
+                  autoComplete={
+                    authMode === "register" ? "new-password" : "current-password"
+                  }
+                  minLength={8}
+                />
+              </label>
+              <button
+                type="button"
+                className="profile-save-btn"
+                onClick={() => void handleEmailAuth()}
+                disabled={
+                  loading ||
+                  loginPending ||
+                  !authEmail.trim() ||
+                  authPassword.length < 8
+                }
+              >
+                {loading ? (
+                  <Loader2 size={16} className="profile-spin" />
+                ) : null}
+                {authMode === "register"
+                  ? "Create account"
+                  : "Sign in with email"}
+              </button>
+
               {error && <p className="profile-error">{error}</p>}
             </div>
           ) : (

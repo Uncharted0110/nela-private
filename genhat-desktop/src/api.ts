@@ -1375,6 +1375,21 @@ export async function pollCloudAuth(
   });
 }
 
+export async function emailLoginCloud(input: {
+  email: string;
+  password: string;
+}): Promise<UserProfile> {
+  return invoke<UserProfile>("cloud_auth_email_login", input);
+}
+
+export async function emailRegisterCloud(input: {
+  email: string;
+  password: string;
+  name?: string;
+}): Promise<UserProfile> {
+  return invoke<UserProfile>("cloud_auth_email_register", input);
+}
+
 export async function refreshCloudToken(): Promise<void> {
   return invoke<void>("cloud_refresh_token");
 }

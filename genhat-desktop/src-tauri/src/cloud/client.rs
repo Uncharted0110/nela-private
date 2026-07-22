@@ -4,7 +4,7 @@
 
 use crate::cloud::token_store;
 use crate::cloud::types::{
-    BillingManageResponse, CheckoutRequest, CheckoutResponse, CloudChatRequest,
+    AuthTokenResponse, BillingManageResponse, CheckoutRequest, CheckoutResponse, CloudChatRequest,
     DevicePollRequest, DevicePollResponse, DeviceStartResponse, EntitlementResponse,
     LogoutRequest, RefreshRequest, RefreshTokenResponse, UserProfileDto,
 };
@@ -135,6 +135,66 @@ pub async fn device_poll(device_code: &str) -> Result<DevicePollResponse, String
     resp.json()
         .await
         .map_err(|e| format!("Invalid device poll response: {e}"))
+}
+
+pub async fn email_login(
+    email: &str,
+    password: &str,
+    device_name: &str,
+) -> Result<AuthTokenResponse, String> {
+    let client = http_client()?;
+    let resp = client
+        .post(api_url("/v1/auth/email/login"))
+        .json(&serde_json::json!({
+            "email": email,
+            "password": password,
+            "deviceName": device_name,
+        }))
+        .send()
+        .await
+        .map_err(|e| format!("Email login failed: {e}"))?;
+
+    if !resp.status().is_success() {
+        return Err(read_error_body(resp).await);
+    }
+
+    resp.json()
+        .await
+        .map_err(|e| format!("Invalid email login response: {e}"))
+}
+
+pub async fn email_register(
+    email: &str,
+    password: &str,
+    name: Option<&str>,
+    device_name: &str,
+) -> Result<AuthTokenResponse, String> {
+    let client = http_client()?;
+    let mut body = serde_json::json!({
+        "email": email,
+        "password": password,
+        "deviceName": device_name,
+    });
+    if let Some(name) = name {
+        if !name.trim().is_empty() {
+            body["name"] = serde_json::Value::String(name.trim().to_string());
+        }
+    }
+
+    let resp = client
+        .post(api_url("/v1/auth/email/register"))
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("Email register failed: {e}"))?;
+
+    if !resp.status().is_success() {
+        return Err(read_error_body(resp).await);
+    }
+
+    resp.json()
+        .await
+        .map_err(|e| format!("Invalid email register response: {e}"))
 }
 
 pub async fn logout(app_data_dir: &Path) -> Result<(), String> {

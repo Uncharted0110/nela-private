@@ -30,6 +30,7 @@ fn map_entitlement_status(status: &CloudEntitlementStatus) -> LocalEntitlementSt
 fn map_auth_provider(provider: &str) -> AuthProvider {
     match provider.trim().to_lowercase().as_str() {
         "google" => AuthProvider::Google,
+        "email" | "local" => AuthProvider::Local,
         _ => AuthProvider::Local,
     }
 }

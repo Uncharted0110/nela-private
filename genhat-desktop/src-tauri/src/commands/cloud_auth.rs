@@ -54,6 +54,37 @@ pub async fn cloud_auth_poll(
     }
 }
 
+async fn persist_email_auth(
+    app: &AppHandle,
+    response: crate::cloud::types::AuthTokenResponse,
+) -> Result<UserProfile, String> {
+    let dir = app_data_dir(app)?;
+    token_store::save_tokens(&dir, &response.access_token, &response.refresh_token)?;
+    profile_cache::cache_cloud_profile(&dir, &response.profile)
+}
+
+#[tauri::command]
+pub async fn cloud_auth_email_login(
+    app: AppHandle,
+    email: String,
+    password: String,
+) -> Result<UserProfile, String> {
+    let response = client::email_login(&email, &password, "NELA Desktop").await?;
+    persist_email_auth(&app, response).await
+}
+
+#[tauri::command]
+pub async fn cloud_auth_email_register(
+    app: AppHandle,
+    email: String,
+    password: String,
+    name: Option<String>,
+) -> Result<UserProfile, String> {
+    let response =
+        client::email_register(&email, &password, name.as_deref(), "NELA Desktop").await?;
+    persist_email_auth(&app, response).await
+}
+
 #[tauri::command]
 pub async fn cloud_refresh_token(app: AppHandle) -> Result<(), String> {
     let dir = app_data_dir(&app)?;

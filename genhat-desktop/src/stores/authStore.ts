@@ -6,6 +6,8 @@ import {
   saveUserProfile,
   startCloudAuth,
   pollCloudAuth,
+  emailLoginCloud,
+  emailRegisterCloud,
   signOutCloud,
   saveUploadedAvatar,
 } from "../api";
@@ -18,11 +20,21 @@ interface AuthState {
   hydrated: boolean;
   error: string | null;
   loginPending: boolean;
+  pendingUserCode: string | null;
 }
 
 interface AuthActions {
   hydrate: () => Promise<void>;
   signInToCloud: () => Promise<void>;
+  signInWithEmail: (input: {
+    email: string;
+    password: string;
+  }) => Promise<void>;
+  registerWithEmail: (input: {
+    email: string;
+    password: string;
+    name?: string;
+  }) => Promise<void>;
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
   updateCachedProfile: (fields: {
@@ -66,6 +78,7 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
   hydrated: false,
   error: null,
   loginPending: false,
+  pendingUserCode: null,
 
   clearError: () => set({ error: null }),
 
@@ -99,9 +112,10 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
   },
 
   signInToCloud: async () => {
-    set({ loading: true, loginPending: true, error: null });
+    set({ loading: true, loginPending: true, error: null, pendingUserCode: null });
     try {
       const start = await startCloudAuth();
+      set({ pendingUserCode: start.userCode });
       try {
         await openUrl(start.verificationUrl);
       } catch (err) {
@@ -124,6 +138,7 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
             profile,
             loading: false,
             loginPending: false,
+            pendingUserCode: null,
             error: null,
           });
           await useCloudStore.getState().refreshEntitlement();
@@ -136,6 +151,41 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
       set({
         loading: false,
         loginPending: false,
+        pendingUserCode: null,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      throw err;
+    }
+  },
+
+  signInWithEmail: async ({ email, password }) => {
+    set({ loading: true, loginPending: false, error: null });
+    try {
+      const profile = normalizeProfile(
+        await emailLoginCloud({ email, password })
+      );
+      set({ profile, loading: false, error: null });
+      await useCloudStore.getState().refreshEntitlement();
+    } catch (err) {
+      set({
+        loading: false,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      throw err;
+    }
+  },
+
+  registerWithEmail: async ({ email, password, name }) => {
+    set({ loading: true, loginPending: false, error: null });
+    try {
+      const profile = normalizeProfile(
+        await emailRegisterCloud({ email, password, name })
+      );
+      set({ profile, loading: false, error: null });
+      await useCloudStore.getState().refreshEntitlement();
+    } catch (err) {
+      set({
+        loading: false,
         error: err instanceof Error ? err.message : String(err),
       });
       throw err;
