@@ -10,6 +10,7 @@ import { normalizeSpreadsheetPlan } from "../spreadsheetPlan";
 import { spreadsheetFromParsed } from "../htmlChartData";
 import { parseCSV } from "./csvParse";
 import { repairNestedKeys } from "./repairNestedKeys";
+import { streamChatByMode, willRouteToCloud } from "./cloudOrLocalStream";
 import type { GenerationOptions, SendHandlerContext } from "./types";
 
 export async function runSpreadsheetArtifactEdit(
@@ -55,7 +56,10 @@ export async function runSpreadsheetArtifactEdit(
 
   updateEditMsg("CrunchingMetrics");
 
-  const grammar = await Api.getSchemaGrammar("spreadsheet_synthesis");
+  const useCloud = willRouteToCloud();
+  const grammar = useCloud
+    ? undefined
+    : await Api.getSchemaGrammar("spreadsheet_synthesis");
   const sampleContext = buildSpreadsheetEditSample(headers, rows);
   const outputName = editedOutputName(artifactPath);
 
@@ -79,75 +83,102 @@ User edit request: "${text}"
 Produce a plan that applies the requested changes to this spreadsheet.`;
 
   let planJson = "";
-  await Api.streamChat(
-    [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: userPrompt },
-    ],
-    (chunk) => {
-      planJson += chunk;
-    },
-    () => {},
-    async () => {
-      updateEditMsg("WritingCode");
-      try {
-        let planObj = parseArtifactPlanJson(planJson, {
-          userPrompt: text,
-          schemaId: "spreadsheet_synthesis",
-        });
-        planObj = repairNestedKeys(planObj);
-        planObj.headers = headers;
-        planObj.source_rows = rows;
-        planObj.output_name = outputName;
+  await new Promise<void>((resolve, reject) => {
+    streamChatByMode({
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
+      intent: "artifact_plan",
+      containsFileContext: true,
+      contextSource: "artifact_edit",
+      modelId: ctx.selectedModel || undefined,
+      signal: ctrl.signal,
+      disableThinking: true,
+      response_format: useCloud ? { type: "json_object" } : undefined,
+      generationOptions: {
+        ...generationOptions,
+        maxTokens: 4096,
+        temperature: 0.1,
+        grammar,
+      },
+      onChunk: (chunk) => {
+        planJson += chunk;
+      },
+      onThinking: () => {},
+      onFinish: () => {
+        void (async () => {
+          updateEditMsg("WritingCode");
+          try {
+            let planObj = parseArtifactPlanJson(planJson, {
+              userPrompt: text,
+              schemaId: "spreadsheet_synthesis",
+            });
+            planObj = repairNestedKeys(planObj);
+            planObj.headers = headers;
+            planObj.source_rows = rows;
+            planObj.output_name = outputName;
 
-        const hasWriteData = Array.isArray(planObj.ops)
-          && planObj.ops.some(
-            (op: { op?: string }) => String(op?.op ?? "").toUpperCase() === "WRITE_DATA"
-          );
-        if (hasWriteData) {
-          const writeOp = (planObj.ops as Array<{ op?: string; headers?: string[]; rows?: string[][] }>).find(
-            (op) => String(op?.op ?? "").toUpperCase() === "WRITE_DATA"
-          );
-          if (writeOp?.headers?.length) {
-            planObj.headers = writeOp.headers;
-          }
-          if (writeOp?.rows?.length) {
-            planObj.source_rows = writeOp.rows;
-          }
-        }
+            const hasWriteData =
+              Array.isArray(planObj.ops) &&
+              planObj.ops.some(
+                (op: { op?: string }) =>
+                  String(op?.op ?? "").toUpperCase() === "WRITE_DATA"
+              );
+            if (hasWriteData) {
+              const writeOp = (
+                planObj.ops as Array<{
+                  op?: string;
+                  headers?: string[];
+                  rows?: string[][];
+                }>
+              ).find(
+                (op) => String(op?.op ?? "").toUpperCase() === "WRITE_DATA"
+              );
+              if (writeOp?.headers?.length) {
+                planObj.headers = writeOp.headers;
+              }
+              if (writeOp?.rows?.length) {
+                planObj.source_rows = writeOp.rows;
+              }
+            }
 
-        const result = await Api.generateSpreadsheet(
-          normalizeSpreadsheetPlan(planObj, {
-            prompt: text,
-            hasSourceData: true,
-          })
-        );
+            const result = await Api.generateSpreadsheet(
+              normalizeSpreadsheetPlan(planObj, {
+                prompt: text,
+                hasSourceData: true,
+              })
+            );
+            ctx.updateSession(sid, { loading: false });
+            const filename = result.path.split(/[/\\]/).pop();
+            updateEditMsg(
+              "LivePreview",
+              result.path,
+              `Updated spreadsheet: **${filename}**\nPath: \`${result.path}\``
+            );
+            resolve();
+          } catch (execErr: unknown) {
+            const message =
+              execErr instanceof Error ? execErr.message : String(execErr);
+            ctx.updateSession(sid, { loading: false });
+            updateEditMsg(
+              "Error",
+              null,
+              `Failed to apply spreadsheet edits: ${message}`
+            );
+            resolve();
+          }
+        })();
+      },
+      onError: (err) => {
         ctx.updateSession(sid, { loading: false });
-        const filename = result.path.split(/[/\\]/).pop();
         updateEditMsg(
-          "LivePreview",
-          result.path,
-          `Updated spreadsheet: **${filename}**\nPath: \`${result.path}\``
+          "Error",
+          null,
+          `Failed to generate spreadsheet edit plan: ${err}`
         );
-      } catch (execErr: unknown) {
-        const message = execErr instanceof Error ? execErr.message : String(execErr);
-        ctx.updateSession(sid, { loading: false });
-        updateEditMsg("Error", null, `Failed to apply spreadsheet edits: ${message}`);
-      }
-    },
-    (err) => {
-      ctx.updateSession(sid, { loading: false });
-      updateEditMsg("Error", null, `Failed to generate spreadsheet edit plan: ${err}`);
-    },
-    undefined,
-    ctx.selectedModel || undefined,
-    ctrl.signal,
-    true,
-    {
-      ...generationOptions,
-      maxTokens: 4096,
-      temperature: 0.1,
-      grammar,
-    }
-  );
+        reject(err);
+      },
+    });
+  });
 }

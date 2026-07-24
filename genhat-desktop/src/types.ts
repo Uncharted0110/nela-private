@@ -541,7 +541,14 @@ export interface UserProfile {
   updatedAt: string;
 }
 
-export type CloudMode = "local" | "cloud" | "auto";
+/** Where to run inference: private local, NELA Cloud, or prefer-cloud auto. */
+export type CloudRoutingPreference = "local" | "cloud" | "auto";
+
+/** @deprecated Use CloudRoutingPreference */
+export type CloudMode = CloudRoutingPreference;
+
+/** OpenRouter quality tier (matches API CloudMode). */
+export type CloudQualityMode = "fast" | "smart" | "deep" | "auto";
 
 export type CloudIntent =
   | "quick_chat"
@@ -577,10 +584,16 @@ export interface EntitlementResponse {
   cloudEnabled: boolean;
   plan: UserPlan;
   status: EntitlementStatus;
+  paidCloud?: boolean;
   quota: {
     includedUsd: number;
     usedUsd: number;
     remainingUsd: number;
+  };
+  fastFree?: {
+    limit: number;
+    used: number;
+    remaining: number;
   };
   limits: {
     maxInputTokens: number;
@@ -597,12 +610,39 @@ export interface BillingManageResponse {
   manageUrl: string;
 }
 
+export interface CloudToolCall {
+  id: string;
+  type: "function";
+  function: { name: string; arguments: string };
+}
+
+export interface CloudToolDefinition {
+  type: "function";
+  function: {
+    name: string;
+    description?: string;
+    parameters?: Record<string, unknown>;
+  };
+}
+
+export type CloudToolChoice =
+  | "none"
+  | "auto"
+  | "required"
+  | { type: "function"; function: { name: string } };
+
+export interface CloudChatMessage {
+  role: "system" | "user" | "assistant" | "tool";
+  content?: string | null;
+  tool_calls?: CloudToolCall[];
+  tool_call_id?: string;
+  name?: string;
+}
+
 export interface CloudChatRequest {
-  intent: CloudIntent;
-  messages: Array<{
-    role: "system" | "user" | "assistant";
-    content: string;
-  }>;
+  mode: CloudQualityMode;
+  intent?: CloudIntent;
+  messages: CloudChatMessage[];
   stream: boolean;
   privacy: {
     containsFileContext: boolean;
@@ -613,6 +653,9 @@ export interface CloudChatRequest {
     maxTokens?: number;
     temperature?: number;
   };
+  tools?: CloudToolDefinition[];
+  tool_choice?: CloudToolChoice;
+  response_format?: { type: "json_object" | "text" };
   client?: {
     appVersion?: string;
     platform?: string;

@@ -14,6 +14,7 @@ import {
 } from "../ambientFileContent";
 import { inferPresentationTheme } from "./presentationTheme";
 import { repairNestedKeys } from "./repairNestedKeys";
+import { streamChatByMode, willRouteToCloud } from "./cloudOrLocalStream";
 import type { GenerationOptions, SendHandlerContext } from "./types";
 
 export async function runPresentationArtifactEdit(
@@ -42,7 +43,12 @@ export async function runPresentationArtifactEdit(
 
   updateEditMsg("CrunchingMetrics");
 
-  const grammar = await Api.getSchemaGrammar("presentation_synthesis");
+  const useCloud = willRouteToCloud({
+    containsFileContext: Boolean(sourceContext.trim()),
+  });
+  const grammar = useCloud
+    ? undefined
+    : await Api.getSchemaGrammar("presentation_synthesis");
   const themeHint = inferPresentationTheme(text);
   const outputName = editedOutputName(artifactPath);
 
@@ -66,54 +72,73 @@ User edit request: "${text}"
 Produce an updated presentation plan that applies these edits. Use the "${themeHint}" theme unless the user specifies another style.`;
 
   let planJson = "";
-  await Api.streamChat(
-    [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: userPrompt },
-    ],
-    (chunk) => {
-      planJson += chunk;
-    },
-    () => {},
-    async () => {
-      updateEditMsg("WritingCode");
-      try {
-        let planObj = parseArtifactPlanJson(planJson, {
-          userPrompt: text,
-          schemaId: "presentation_synthesis",
-        });
-        planObj = repairNestedKeys(planObj);
-        planObj.theme = themeHint;
-        planObj = normalizePresentationPlan(planObj, text);
-        planObj.output_name = outputName;
+  await new Promise<void>((resolve, reject) => {
+    streamChatByMode({
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
+      intent: "artifact_plan",
+      containsFileContext: Boolean(sourceContext.trim()),
+      contextSource: "artifact_edit",
+      modelId: ctx.selectedModel || undefined,
+      signal: ctrl.signal,
+      disableThinking: true,
+      response_format: useCloud ? { type: "json_object" } : undefined,
+      generationOptions: {
+        ...generationOptions,
+        maxTokens: 6144,
+        temperature: 0.15,
+        grammar,
+      },
+      onChunk: (chunk) => {
+        planJson += chunk;
+      },
+      onThinking: () => {},
+      onFinish: () => {
+        void (async () => {
+          updateEditMsg("WritingCode");
+          try {
+            let planObj = parseArtifactPlanJson(planJson, {
+              userPrompt: text,
+              schemaId: "presentation_synthesis",
+            });
+            planObj = repairNestedKeys(planObj);
+            planObj.theme = themeHint;
+            planObj = normalizePresentationPlan(planObj, text);
+            planObj.output_name = outputName;
 
-        const result = await Api.generatePresentation(planObj);
+            const result = await Api.generatePresentation(planObj);
+            ctx.updateSession(sid, { loading: false });
+            const filename = result.path.split(/[/\\]/).pop();
+            updateEditMsg(
+              "LivePreview",
+              result.path,
+              `Updated presentation: **${filename}**\nPath: \`${result.path}\``
+            );
+            resolve();
+          } catch (execErr: unknown) {
+            const message =
+              execErr instanceof Error ? execErr.message : String(execErr);
+            ctx.updateSession(sid, { loading: false });
+            updateEditMsg(
+              "Error",
+              null,
+              `Failed to apply presentation edits: ${message}`
+            );
+            resolve();
+          }
+        })();
+      },
+      onError: (err) => {
         ctx.updateSession(sid, { loading: false });
-        const filename = result.path.split(/[/\\]/).pop();
         updateEditMsg(
-          "LivePreview",
-          result.path,
-          `Updated presentation: **${filename}**\nPath: \`${result.path}\``
+          "Error",
+          null,
+          `Failed to generate presentation edit plan: ${err}`
         );
-      } catch (execErr: unknown) {
-        const message = execErr instanceof Error ? execErr.message : String(execErr);
-        ctx.updateSession(sid, { loading: false });
-        updateEditMsg("Error", null, `Failed to apply presentation edits: ${message}`);
-      }
-    },
-    (err) => {
-      ctx.updateSession(sid, { loading: false });
-      updateEditMsg("Error", null, `Failed to generate presentation edit plan: ${err}`);
-    },
-    undefined,
-    ctx.selectedModel || undefined,
-    ctrl.signal,
-    true,
-    {
-      ...generationOptions,
-      maxTokens: 6144,
-      temperature: 0.15,
-      grammar,
-    }
-  );
+        reject(err);
+      },
+    });
+  });
 }

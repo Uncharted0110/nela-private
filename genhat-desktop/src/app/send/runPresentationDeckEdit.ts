@@ -10,6 +10,7 @@ import { parseArtifactPlanJson } from "../artifactPlanJson";
 import { normalizePresentationPlan } from "../artifactPlanNormalize";
 import { inferPresentationTheme } from "./presentationTheme";
 import { repairNestedKeys } from "./repairNestedKeys";
+import { streamChatByMode, willRouteToCloud } from "./cloudOrLocalStream";
 import type { GenerationOptions, SendHandlerContext } from "./types";
 
 export async function runPresentationDeckEdit(
@@ -85,7 +86,10 @@ export async function runPresentationDeckEdit(
 
   updateEditMsg("CrunchingMetrics");
 
-  const grammar = await Api.getSchemaGrammar("presentation_synthesis");
+  const useCloud = willRouteToCloud();
+  const grammar = useCloud
+    ? undefined
+    : await Api.getSchemaGrammar("presentation_synthesis");
   const themeHint = parsedDeck.theme ?? inferPresentationTheme(text);
   const slidesJson = JSON.stringify(parsedDeck.slides);
 
@@ -115,58 +119,76 @@ User edit request: "${text}"
 Return the complete updated slides array with the requested changes applied.`;
 
   let planJson = "";
-  await Api.streamChat(
-    [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: userPrompt },
-    ],
-    (chunk) => {
-      planJson += chunk;
-    },
-    () => {},
-    async () => {
-      updateEditMsg("WritingCode");
-      try {
-        let planObj = parseArtifactPlanJson(planJson, {
-          userPrompt: text,
-          schemaId: "presentation_synthesis",
-        });
-        planObj = repairNestedKeys(planObj);
-        planObj.theme = themeHint;
-        planObj = normalizePresentationPlan(planObj, text);
+  await new Promise<void>((resolve, reject) => {
+    streamChatByMode({
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
+      intent: "artifact_plan",
+      containsFileContext: false,
+      modelId: ctx.selectedModel || undefined,
+      signal: ctrl.signal,
+      disableThinking: true,
+      response_format: useCloud ? { type: "json_object" } : undefined,
+      generationOptions: {
+        ...generationOptions,
+        maxTokens: 6144,
+        temperature: 0.15,
+        grammar,
+      },
+      onChunk: (chunk) => {
+        planJson += chunk;
+      },
+      onThinking: () => {},
+      onFinish: () => {
+        void (async () => {
+          updateEditMsg("WritingCode");
+          try {
+            let planObj = parseArtifactPlanJson(planJson, {
+              userPrompt: text,
+              schemaId: "presentation_synthesis",
+            });
+            planObj = repairNestedKeys(planObj);
+            planObj.theme = themeHint;
+            planObj = normalizePresentationPlan(planObj, text);
 
-        const result = await Api.editPresentationDeck({
-          path: artifactPath,
-          replacementPlan: planObj,
-          outputName,
-        });
+            const result = await Api.editPresentationDeck({
+              path: artifactPath,
+              replacementPlan: planObj,
+              outputName,
+            });
 
+            ctx.updateSession(sid, { loading: false });
+            const filename = result.path.split(/[/\\]/).pop();
+            updateEditMsg(
+              "LivePreview",
+              result.path,
+              `Updated presentation deck: **${filename}**`
+            );
+            resolve();
+          } catch (execErr: unknown) {
+            const message =
+              execErr instanceof Error ? execErr.message : String(execErr);
+            ctx.updateSession(sid, { loading: false });
+            updateEditMsg(
+              "Error",
+              null,
+              `Failed to apply deck edits: ${message}`
+            );
+            resolve();
+          }
+        })();
+      },
+      onError: (err) => {
         ctx.updateSession(sid, { loading: false });
-        const filename = result.path.split(/[/\\]/).pop();
         updateEditMsg(
-          "LivePreview",
-          result.path,
-          `Updated presentation deck: **${filename}**`
+          "Error",
+          null,
+          `Failed to generate deck edit plan: ${err}`
         );
-      } catch (execErr: unknown) {
-        const message = execErr instanceof Error ? execErr.message : String(execErr);
-        ctx.updateSession(sid, { loading: false });
-        updateEditMsg("Error", null, `Failed to apply deck edits: ${message}`);
-      }
-    },
-    (err) => {
-      ctx.updateSession(sid, { loading: false });
-      updateEditMsg("Error", null, `Failed to generate deck edit plan: ${err}`);
-    },
-    undefined,
-    ctx.selectedModel || undefined,
-    ctrl.signal,
-    true,
-    {
-      ...generationOptions,
-      maxTokens: 6144,
-      temperature: 0.15,
-      grammar,
-    }
-  );
+        reject(err);
+      },
+    });
+  });
 }

@@ -10,10 +10,11 @@ import { useTheme, type ThemeName } from "../hooks/useTheme";
 import {
   DEFAULT_INTELLIGENCE_MAPPING,
   INTELLIGENCE_MODE_OPTIONS,
-  type IntelligenceMode,
+  LOCAL_INTELLIGENCE_TIERS,
   modelIsDownloadable,
   readIntelligenceMapping,
   writeIntelligenceMapping,
+  type LocalIntelligenceTier,
 } from "../app/intelligenceModes";
 import "./ModelsSettingsModal.css";
 
@@ -362,7 +363,7 @@ const ModelsSettingsModal: React.FC<ModelsSettingsModalProps> = ({
       .map((model) => ({ value: model.id, label: model.name }));
   }, [modelCatalog, models]);
 
-  const updateIntelligenceMapping = (mode: IntelligenceMode, modelId: string) => {
+  const updateIntelligenceMapping = (mode: LocalIntelligenceTier, modelId: string) => {
     setIntelligenceMapping((prev) => {
       const next = { ...prev, [mode]: modelId };
       writeIntelligenceMapping(next);
@@ -805,10 +806,13 @@ const ModelsSettingsModal: React.FC<ModelsSettingsModalProps> = ({
                   <div className="settings-intelligence-mapping">
                     <div className="settings-group-title">Intelligence modes</div>
                     <div className="settings-field-hint">
-                      Choose which model is used for Fast, Smart, and Deep in the main toolbar.
+                      Choose which local model is used for Fast, Smart, and Deep.
+                      Auto uses the Smart model on this device (and cloud Auto on NELA Cloud).
                     </div>
                     <div className="settings-intelligence-grid">
-                      {INTELLIGENCE_MODE_OPTIONS.map((option) => (
+                      {LOCAL_INTELLIGENCE_TIERS.map((key) => {
+                        const option = INTELLIGENCE_MODE_OPTIONS.find((o) => o.key === key)!;
+                        return (
                         <label key={option.key} className="settings-intelligence-row">
                           <span className="settings-intelligence-label">{option.label}</span>
                           <DropdownSelect
@@ -818,7 +822,8 @@ const ModelsSettingsModal: React.FC<ModelsSettingsModalProps> = ({
                             disabled={chatModelOptions.length === 0}
                           />
                         </label>
-                      ))}
+                        );
+                      })}
                     </div>
                     <button
                       type="button"

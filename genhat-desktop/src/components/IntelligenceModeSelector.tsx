@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { ChevronDown, Loader2, Sparkles, Zap, Brain } from "lucide-react";
+import { ChevronDown, Loader2, Sparkles, Zap, Brain, Wand2 } from "lucide-react";
 import type { IntelligenceMode } from "../app/intelligenceModes";
 import { INTELLIGENCE_MODE_OPTIONS } from "../app/intelligenceModes";
 import { COPY } from "../app/copy";
@@ -9,6 +9,7 @@ const MODE_ICONS: Record<IntelligenceMode, React.ElementType> = {
   fast: Zap,
   smart: Sparkles,
   deep: Brain,
+  auto: Wand2,
 };
 
 interface IntelligenceModeSelectorProps {

@@ -4,12 +4,12 @@ import {
   createCloudCheckout,
   createBillingManage,
 } from "../api";
-import type { CloudMode, EntitlementResponse } from "../types";
+import type { CloudRoutingPreference, EntitlementResponse } from "../types";
 
 const PREFERRED_MODE_KEY = "nela.cloud.preferredMode";
 const ENTITLEMENT_CACHE_KEY = "nela.cloud.entitlementDisplay";
 
-function readPreferredMode(): CloudMode {
+function readPreferredMode(): CloudRoutingPreference {
   try {
     const raw = localStorage.getItem(PREFERRED_MODE_KEY);
     if (raw === "local" || raw === "cloud" || raw === "auto") return raw;
@@ -29,7 +29,7 @@ function readCachedEntitlement(): EntitlementResponse | null {
   }
 }
 
-function persistPreferredMode(mode: CloudMode) {
+function persistPreferredMode(mode: CloudRoutingPreference) {
   try {
     localStorage.setItem(PREFERRED_MODE_KEY, mode);
   } catch {
@@ -51,12 +51,12 @@ function persistEntitlementDisplay(entitlement: EntitlementResponse | null) {
 }
 
 export interface CloudStoreState {
-  preferredMode: CloudMode;
+  preferredMode: CloudRoutingPreference;
   entitlement: EntitlementResponse | null;
   loading: boolean;
   error: string | null;
 
-  setPreferredMode: (mode: CloudMode) => void;
+  setPreferredMode: (mode: CloudRoutingPreference) => void;
   refreshEntitlement: () => Promise<void>;
   openCheckout: (plan: "starter" | "pro") => Promise<void>;
   openBillingManage: () => Promise<void>;

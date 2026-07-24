@@ -1,6 +1,7 @@
 //! NELA Cloud API contract types (duplicated from website shared contracts).
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -85,6 +86,14 @@ pub struct EntitlementQuota {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct EntitlementFastFree {
+    pub limit: u32,
+    pub used: u32,
+    pub remaining: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct EntitlementLimits {
     pub max_input_tokens: u32,
     pub max_output_tokens: u32,
@@ -97,7 +106,11 @@ pub struct EntitlementResponse {
     pub cloud_enabled: bool,
     pub plan: CloudPlan,
     pub status: EntitlementStatus,
+    #[serde(default)]
+    pub paid_cloud: bool,
     pub quota: EntitlementQuota,
+    #[serde(default)]
+    pub fast_free: Option<EntitlementFastFree>,
     pub limits: EntitlementLimits,
 }
 
@@ -125,11 +138,42 @@ pub enum CloudIntent {
     CheapBackground,
 }
 
+/// OpenRouter quality tier (Fast / Smart / Deep / Auto).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum CloudQualityMode {
+    Fast,
+    Smart,
+    Deep,
+    Auto,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CloudToolCallFunction {
+    pub name: String,
+    pub arguments: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CloudToolCall {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub function: CloudToolCallFunction,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CloudChatMessage {
     pub role: String,
-    pub content: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<CloudToolCall>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -162,14 +206,44 @@ pub struct CloudChatClientMeta {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CloudToolFunctionDef {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parameters: Option<Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CloudToolDefinition {
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub function: CloudToolFunctionDef,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CloudResponseFormat {
+    #[serde(rename = "type")]
+    pub kind: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CloudChatRequest {
-    pub intent: CloudIntent,
+    pub mode: CloudQualityMode,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub intent: Option<CloudIntent>,
     pub messages: Vec<CloudChatMessage>,
     pub stream: bool,
     pub privacy: CloudChatPrivacy,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub generation: Option<CloudChatGeneration>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<CloudToolDefinition>>,
+    #[serde(rename = "tool_choice", skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<Value>,
+    #[serde(rename = "response_format", skip_serializing_if = "Option::is_none")]
+    pub response_format: Option<CloudResponseFormat>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client: Option<CloudChatClientMeta>,
 }
@@ -178,7 +252,7 @@ pub struct CloudChatRequest {
 #[serde(rename_all = "camelCase")]
 pub struct RefreshTokenResponse {
     pub access_token: String,
-    pub refresh_token: Option<String>,
+    pub refresh_token: String,
     pub expires_in: Option<u64>,
 }
 

@@ -9,7 +9,7 @@ import {
 } from "lucide-react";
 import { useAuthStore } from "../stores/authStore";
 import { useCloudStore } from "../stores/cloudStore";
-import type { CloudMode } from "../types";
+import type { CloudRoutingPreference } from "../types";
 import "./CloudSettingsModal.css";
 
 interface CloudSettingsModalProps {
@@ -17,7 +17,11 @@ interface CloudSettingsModalProps {
   onClose: () => void;
 }
 
-const MODE_OPTIONS: Array<{ value: CloudMode; label: string; hint: string }> = [
+const MODE_OPTIONS: Array<{
+  value: CloudRoutingPreference;
+  label: string;
+  hint: string;
+}> = [
   {
     value: "local",
     label: "Private Local",
@@ -25,13 +29,13 @@ const MODE_OPTIONS: Array<{ value: CloudMode; label: string; hint: string }> = [
   },
   {
     value: "cloud",
-    label: "Fast Cloud",
-    hint: "Use NELA Cloud when signed in and entitled.",
+    label: "NELA Cloud",
+    hint: "Use NELA Cloud quality tiers (Fast / Smart / Deep / Auto from the Intelligence selector).",
   },
   {
     value: "auto",
-    label: "Auto",
-    hint: "Prefer cloud when available; fall back to local.",
+    label: "Auto (prefer cloud)",
+    hint: "Prefer cloud when signed in and entitled; fall back to local.",
   },
 ];
 
@@ -179,6 +183,20 @@ const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                       <span>Remaining</span>
                       <strong>${quota.remainingUsd.toFixed(2)}</strong>
                     </div>
+                    {entitlement?.fastFree && (
+                      <div className="cloud-quota-row">
+                        <span>Fast free today</span>
+                        <strong>
+                          {entitlement.fastFree.remaining}/{entitlement.fastFree.limit}
+                        </strong>
+                      </div>
+                    )}
+                    {typeof entitlement?.paidCloud === "boolean" && (
+                      <div className="cloud-quota-row">
+                        <span>Smart / Deep</span>
+                        <strong>{entitlement.paidCloud ? "Unlocked" : "Upgrade required"}</strong>
+                      </div>
+                    )}
                   </div>
                 )}
 

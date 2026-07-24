@@ -4,7 +4,7 @@ import type {
   RegisteredModel,
   KittenTtsVoice,
 } from "../types";
-import type { IntelligenceMode } from "../app/intelligenceModes";
+import type { IntelligenceMode, LocalIntelligenceTier } from "../app/intelligenceModes";
 import {
   readIntelligenceMode,
   readIntelligenceMapping,
@@ -30,7 +30,7 @@ interface ModelState {
   models: ModelFile[];
   selectedModel: string;
   intelligenceMode: IntelligenceMode;
-  intelligenceMapping: Record<IntelligenceMode, string>;
+  intelligenceMapping: Record<LocalIntelligenceTier, string>;
   useSpecificModelPicker: boolean;
   registeredModels: RegisteredModel[];
   modelCatalog: RegisteredModel[];
@@ -49,7 +49,7 @@ interface ModelActions {
   setModels: (models: ModelFile[]) => void;
   setSelectedModel: (model: string | ((prev: string) => string)) => void;
   setIntelligenceMode: (mode: IntelligenceMode) => void;
-  setIntelligenceMapping: (mapping: Record<IntelligenceMode, string>) => void;
+  setIntelligenceMapping: (mapping: Record<LocalIntelligenceTier, string>) => void;
   setUseSpecificModelPicker: (use: boolean) => void;
   setRegisteredModels: (models: RegisteredModel[]) => void;
   setModelCatalog: (catalog: RegisteredModel[]) => void;

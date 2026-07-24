@@ -2,6 +2,7 @@
 //!
 //! Attaches Bearer access tokens and auto-refreshes on HTTP 401.
 
+use crate::cloud::profile_cache;
 use crate::cloud::token_store;
 use crate::cloud::types::{
     AuthTokenResponse, BillingManageResponse, CheckoutRequest, CheckoutResponse, CloudChatRequest,
@@ -12,7 +13,18 @@ use futures_util::StreamExt;
 use reqwest::StatusCode;
 use serde_json::Value;
 use std::path::Path;
+use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
+use tokio::sync::Mutex;
+
+/// Serialize refresh so parallel 401s don't rotate the same token twice.
+static REFRESH_LOCK: std::sync::OnceLock<Arc<Mutex<()>>> = std::sync::OnceLock::new();
+
+fn refresh_lock() -> Arc<Mutex<()>> {
+    REFRESH_LOCK
+        .get_or_init(|| Arc::new(Mutex::new(())))
+        .clone()
+}
 
 fn api_url(path: &str) -> String {
     let base = crate::cloud::api_base_url();
@@ -40,6 +52,22 @@ async fn read_error_body(resp: reqwest::Response) -> String {
     }
 }
 
+fn is_refresh_fatal(err: &str) -> bool {
+    err.contains("REFRESH_TOKEN_INVALID")
+        || err.contains("REFRESH_TOKEN_REUSED")
+        || err.contains("Invalid refresh token")
+        || err.contains("Refresh token reuse")
+}
+
+fn clear_session(app_data_dir: &Path) {
+    let _ = token_store::clear_tokens(app_data_dir);
+    let _ = profile_cache::clear_cached_profile(app_data_dir);
+}
+
+fn session_expired_message() -> String {
+    "NELA Cloud session expired. Sign in again from Profile.".to_string()
+}
+
 /// Ensure we have a usable access token, refreshing from the stored refresh token if needed.
 pub async fn ensure_access_token(app_data_dir: &Path) -> Result<String, String> {
     if let Some(token) = token_store::get_access_token() {
@@ -47,12 +75,32 @@ pub async fn ensure_access_token(app_data_dir: &Path) -> Result<String, String> 
             return Ok(token);
         }
     }
-    refresh_access_token(app_data_dir).await
+    refresh_access_token(app_data_dir, false).await
 }
 
-pub async fn refresh_access_token(app_data_dir: &Path) -> Result<String, String> {
-    let refresh = token_store::get_refresh_token(app_data_dir)?
-        .ok_or_else(|| "Not signed in to NELA Cloud".to_string())?;
+/// Rotate tokens. When `force` is true (after HTTP 401), never reuse the in-memory access token.
+pub async fn refresh_access_token(
+    app_data_dir: &Path,
+    force: bool,
+) -> Result<String, String> {
+    let lock = refresh_lock();
+    let _guard = lock.lock().await;
+
+    if !force {
+        if let Some(token) = token_store::get_access_token() {
+            if !token.is_empty() {
+                return Ok(token);
+            }
+        }
+    }
+
+    let refresh = match token_store::get_refresh_token(app_data_dir)? {
+        Some(r) if !r.is_empty() => r,
+        _ => {
+            clear_session(app_data_dir);
+            return Err("Not signed in to NELA Cloud".to_string());
+        }
+    };
 
     let client = http_client()?;
     let resp = client
@@ -65,7 +113,12 @@ pub async fn refresh_access_token(app_data_dir: &Path) -> Result<String, String>
         .map_err(|e| format!("Token refresh failed: {e}"))?;
 
     if !resp.status().is_success() {
-        return Err(read_error_body(resp).await);
+        let err = read_error_body(resp).await;
+        if is_refresh_fatal(&err) {
+            clear_session(app_data_dir);
+            return Err(session_expired_message());
+        }
+        return Err(err);
     }
 
     let body: RefreshTokenResponse = resp
@@ -73,11 +126,7 @@ pub async fn refresh_access_token(app_data_dir: &Path) -> Result<String, String>
         .await
         .map_err(|e| format!("Invalid refresh response: {e}"))?;
 
-    token_store::set_access_token(Some(body.access_token.clone()));
-    if let Some(new_refresh) = body.refresh_token.as_deref() {
-        token_store::update_refresh_token(app_data_dir, new_refresh)?;
-    }
-
+    token_store::save_tokens(app_data_dir, &body.access_token, &body.refresh_token)?;
     Ok(body.access_token)
 }
 
@@ -95,7 +144,7 @@ where
         return Ok(resp);
     }
 
-    let token = refresh_access_token(app_data_dir).await?;
+    let token = refresh_access_token(app_data_dir, true).await?;
     send(token).await
 }
 
@@ -317,7 +366,8 @@ pub async fn create_billing_manage(
         .map_err(|e| format!("Invalid billing manage response: {e}"))
 }
 
-/// Non-streaming chat completion — returns assistant text content.
+/// Non-streaming chat completion — returns raw OpenAI-style JSON string
+/// (includes content and/or tool_calls under choices[0].message).
 pub async fn chat_complete(
     app_data_dir: &Path,
     mut request: CloudChatRequest,
@@ -351,11 +401,13 @@ pub async fn chat_complete(
         .await
         .map_err(|e| format!("Invalid chat response: {e}"))?;
 
-    extract_assistant_content(&value)
-        .ok_or_else(|| "Cloud chat response missing assistant content".to_string())
+    serde_json::to_string(&value).map_err(|e| format!("Failed to serialize chat response: {e}"))
 }
 
-/// Streaming chat — emits `cloud-chat-stream` events `{ chunk, done }`.
+/// Streaming chat — emits `cloud-chat-stream` events:
+/// `{ chunk, done, tool_calls?, error? }`.
+/// When the model emits tool_calls, they are accumulated from SSE deltas and
+/// included on the final `done: true` event.
 pub async fn chat_stream(
     app: &AppHandle,
     app_data_dir: &Path,
@@ -395,6 +447,7 @@ pub async fn chat_stream(
     if content_type.contains("text/event-stream") || content_type.contains("stream") {
         let mut stream = resp.bytes_stream();
         let mut buffer = String::new();
+        let mut tool_acc = ToolCallAccumulator::default();
 
         while let Some(item) = stream.next().await {
             let chunk = item.map_err(|e| format!("Cloud stream interrupted: {e}"))?;
@@ -413,10 +466,7 @@ pub async fn chat_stream(
                 };
                 if data.is_empty() || data == "[DONE]" {
                     if data == "[DONE]" {
-                        let _ = app.emit(
-                            "cloud-chat-stream",
-                            serde_json::json!({ "chunk": "", "done": true }),
-                        );
+                        emit_stream_done(app, &tool_acc);
                     }
                     continue;
                 }
@@ -429,14 +479,12 @@ pub async fn chat_stream(
                             );
                         }
                     }
+                    tool_acc.ingest_delta(&value);
                 }
             }
         }
 
-        let _ = app.emit(
-            "cloud-chat-stream",
-            serde_json::json!({ "chunk": "", "done": true }),
-        );
+        emit_stream_done(app, &tool_acc);
         return Ok(());
     }
 
@@ -451,11 +499,90 @@ pub async fn chat_stream(
             serde_json::json!({ "chunk": text, "done": false }),
         );
     }
-    let _ = app.emit(
-        "cloud-chat-stream",
-        serde_json::json!({ "chunk": "", "done": true }),
-    );
+    let tool_calls = extract_message_tool_calls(&value);
+    let mut payload = serde_json::json!({ "chunk": "", "done": true });
+    if let Some(calls) = tool_calls {
+        payload["tool_calls"] = calls;
+    }
+    let _ = app.emit("cloud-chat-stream", payload);
     Ok(())
+}
+
+fn emit_stream_done(app: &AppHandle, tool_acc: &ToolCallAccumulator) {
+    let mut payload = serde_json::json!({ "chunk": "", "done": true });
+    if let Some(calls) = tool_acc.finish() {
+        payload["tool_calls"] = calls;
+    }
+    let _ = app.emit("cloud-chat-stream", payload);
+}
+
+#[derive(Default)]
+struct ToolCallAccumulator {
+    /// index -> (id, name, arguments)
+    slots: std::collections::BTreeMap<usize, (String, String, String)>,
+}
+
+impl ToolCallAccumulator {
+    fn ingest_delta(&mut self, value: &Value) {
+        let Some(arr) = value
+            .pointer("/choices/0/delta/tool_calls")
+            .and_then(|v| v.as_array())
+        else {
+            return;
+        };
+        for item in arr {
+            let index = item.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+            let entry = self
+                .slots
+                .entry(index)
+                .or_insert_with(|| (String::new(), String::new(), String::new()));
+            if let Some(id) = item.get("id").and_then(|v| v.as_str()) {
+                if !id.is_empty() {
+                    entry.0 = id.to_string();
+                }
+            }
+            if let Some(name) = item
+                .pointer("/function/name")
+                .and_then(|v| v.as_str())
+            {
+                if !name.is_empty() {
+                    entry.1.push_str(name);
+                }
+            }
+            if let Some(args) = item
+                .pointer("/function/arguments")
+                .and_then(|v| v.as_str())
+            {
+                entry.2.push_str(args);
+            }
+        }
+    }
+
+    fn finish(&self) -> Option<Value> {
+        if self.slots.is_empty() {
+            return None;
+        }
+        let calls: Vec<Value> = self
+            .slots
+            .values()
+            .filter(|(_, name, _)| !name.is_empty())
+            .map(|(id, name, arguments)| {
+                serde_json::json!({
+                    "id": if id.is_empty() { format!("call_{name}") } else { id.clone() },
+                    "type": "function",
+                    "function": {
+                        "name": name,
+                        "arguments": arguments,
+                    }
+                })
+            })
+            .collect();
+        if calls.is_empty() {
+            None
+        } else {
+            Some(Value::Array(calls))
+        }
+    }
 }
 
 fn extract_assistant_content(value: &Value) -> Option<String> {
@@ -468,6 +595,13 @@ fn extract_assistant_content(value: &Value) -> Option<String> {
         .map(|s| s.to_string())
 }
 
+fn extract_message_tool_calls(value: &Value) -> Option<Value> {
+    value
+        .pointer("/choices/0/message/tool_calls")
+        .cloned()
+        .filter(|v| v.as_array().map(|a| !a.is_empty()).unwrap_or(false))
+}
+
 fn extract_stream_delta(value: &Value) -> Option<String> {
     if let Some(content) = value.get("content").and_then(|v| v.as_str()) {
         return Some(content.to_string());
@@ -477,3 +611,4 @@ fn extract_stream_delta(value: &Value) -> Option<String> {
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
 }
+

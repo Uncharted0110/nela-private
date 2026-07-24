@@ -88,7 +88,7 @@ pub async fn cloud_auth_email_register(
 #[tauri::command]
 pub async fn cloud_refresh_token(app: AppHandle) -> Result<(), String> {
     let dir = app_data_dir(&app)?;
-    let _ = client::refresh_access_token(&dir).await?;
+    let _ = client::refresh_access_token(&dir, false).await?;
     Ok(())
 }
 
@@ -112,7 +112,16 @@ pub async fn cloud_get_profile(app: AppHandle) -> Result<Option<UserProfile>, St
                 let profile = profile_cache::cache_cloud_profile(&dir, &dto)?;
                 return Ok(Some(profile));
             }
-            Err(_) => {
+            Err(err) => {
+                // Stale refresh after DB reset / revoke — drop session so UI asks to sign in.
+                if err.contains("session expired")
+                    || err.contains("REFRESH_TOKEN")
+                    || err.contains("Not signed in")
+                {
+                    let _ = token_store::clear_tokens(&dir);
+                    let _ = profile_cache::clear_cached_profile(&dir);
+                    return Ok(None);
+                }
                 return crate::auth::get_user_profile(&dir);
             }
         }

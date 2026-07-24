@@ -1,10 +1,24 @@
 import { COPY } from "./copy";
 
-export type IntelligenceMode = "fast" | "smart" | "deep";
+export type IntelligenceMode = "fast" | "smart" | "deep" | "auto";
 
-export const INTELLIGENCE_MODE_ORDER: IntelligenceMode[] = ["fast", "smart", "deep"];
+/** Local GGUF tiers only — Auto reuses Smart's mapped model on device. */
+export type LocalIntelligenceTier = "fast" | "smart" | "deep";
 
-export const DEFAULT_INTELLIGENCE_MAPPING: Record<IntelligenceMode, string> = {
+export const INTELLIGENCE_MODE_ORDER: IntelligenceMode[] = [
+  "fast",
+  "smart",
+  "deep",
+  "auto",
+];
+
+export const LOCAL_INTELLIGENCE_TIERS: LocalIntelligenceTier[] = [
+  "fast",
+  "smart",
+  "deep",
+];
+
+export const DEFAULT_INTELLIGENCE_MAPPING: Record<LocalIntelligenceTier, string> = {
   fast: "qwen3.5-0_8b",
   smart: "lfm2.5-1.2b-thinking",
   deep: "gemma-4-e2b-it",
@@ -30,12 +44,31 @@ export const INTELLIGENCE_MODE_OPTIONS: IntelligenceModeOption[] = [
   { key: "fast", label: COPY.intelligenceFast, hint: COPY.intelligenceFastHint },
   { key: "smart", label: COPY.intelligenceSmart, hint: COPY.intelligenceSmartHint },
   { key: "deep", label: COPY.intelligenceDeep, hint: COPY.intelligenceDeepHint },
+  { key: "auto", label: COPY.intelligenceAuto, hint: COPY.intelligenceAutoHint },
 ];
+
+/** Resolve which local model id to load for a mode (Auto → Smart). */
+export function localModelIdForMode(
+  mode: IntelligenceMode,
+  mapping: Record<LocalIntelligenceTier, string>
+): string {
+  if (mode === "auto") return mapping.smart;
+  return mapping[mode];
+}
+
+/** Cloud API quality mode — maps 1:1 including Auto. */
+export function cloudQualityModeForIntelligence(
+  mode: IntelligenceMode
+): "fast" | "smart" | "deep" | "auto" {
+  return mode;
+}
 
 export function readIntelligenceMode(): IntelligenceMode {
   try {
     const raw = localStorage.getItem(MODE_STORAGE_KEY);
-    if (raw === "fast" || raw === "smart" || raw === "deep") return raw;
+    if (raw === "fast" || raw === "smart" || raw === "deep" || raw === "auto") {
+      return raw;
+    }
   } catch {
     /* ignore */
   }
@@ -50,11 +83,11 @@ export function writeIntelligenceMode(mode: IntelligenceMode): void {
   }
 }
 
-export function readIntelligenceMapping(): Record<IntelligenceMode, string> {
+export function readIntelligenceMapping(): Record<LocalIntelligenceTier, string> {
   try {
     const raw = localStorage.getItem(MAPPING_STORAGE_KEY);
     if (!raw) return { ...DEFAULT_INTELLIGENCE_MAPPING };
-    const parsed = JSON.parse(raw) as Partial<Record<IntelligenceMode, string>>;
+    const parsed = JSON.parse(raw) as Partial<Record<LocalIntelligenceTier, string>>;
     return {
       fast: parsed.fast || DEFAULT_INTELLIGENCE_MAPPING.fast,
       smart: parsed.smart || DEFAULT_INTELLIGENCE_MAPPING.smart,
@@ -65,7 +98,9 @@ export function readIntelligenceMapping(): Record<IntelligenceMode, string> {
   }
 }
 
-export function writeIntelligenceMapping(mapping: Record<IntelligenceMode, string>): void {
+export function writeIntelligenceMapping(
+  mapping: Record<LocalIntelligenceTier, string>
+): void {
   try {
     localStorage.setItem(MAPPING_STORAGE_KEY, JSON.stringify(mapping));
   } catch {
@@ -91,9 +126,9 @@ export function writeSpecificModelPicker(value: boolean): void {
 
 export function resolveModeForModelId(
   modelId: string,
-  mapping: Record<IntelligenceMode, string>
-): IntelligenceMode | null {
-  for (const mode of INTELLIGENCE_MODE_ORDER) {
+  mapping: Record<LocalIntelligenceTier, string>
+): LocalIntelligenceTier | null {
+  for (const mode of LOCAL_INTELLIGENCE_TIERS) {
     if (mapping[mode] === modelId) return mode;
   }
   return null;

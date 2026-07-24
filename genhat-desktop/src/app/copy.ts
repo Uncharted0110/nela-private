@@ -72,10 +72,13 @@ export const COPY = {
   intelligenceSmartHint: "Balanced reasoning for everyday questions.",
   intelligenceDeep: "Deep",
   intelligenceDeepHint: "Best quality — may take longer to load.",
+  intelligenceAuto: "Auto",
+  intelligenceAutoHint:
+    "On cloud, pick Fast / Smart / Deep automatically. On this device, uses Smart.",
   intelligenceCustom: "Custom",
   intelligenceCustomHint: "A specific model you chose manually.",
   intelligenceChooseModel: "Choose specific model\u2026",
-  intelligenceBackToTiers: "Back to Fast / Smart / Deep",
+  intelligenceBackToTiers: "Back to Fast / Smart / Deep / Auto",
   intelligenceDeepLoadWarning:
     "Deep mode uses a large model and may take 1\u20132 minutes to load the first time. Continue?",
   intelligenceDownloadPrompt: (name: string, sizeLabel: string) =>

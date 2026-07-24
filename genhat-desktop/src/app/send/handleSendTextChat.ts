@@ -25,7 +25,7 @@ import { NELA_SYSTEM_PROMPT } from "../nelaSystemPrompt";
 import { parseCSV } from "./csvParse";
 import { streamChatByMode } from "./cloudOrLocalStream";
 import type { SendHandlerContext } from "./types";
-import { runWebSearchToolLoop } from "./webSearchToolLoop";
+import { runCloudAwareToolLoop } from "./cloudNativeToolLoop";
 
 export async function handleSendTextChat(
   text: string,
@@ -305,22 +305,41 @@ export async function handleSendTextChat(
   };
 
   if (effectiveWebEnabled) {
-    runWebSearchToolLoop({
+    runCloudAwareToolLoop({
       messages: apiMessages,
       webDepth: ctx.webDepth,
+      includeMcpTools: true,
+      containsFileContext: Boolean(
+        ambientFileContext && ambientFileContext !== "FILE_SEARCH_NO_RESULTS"
+      ),
+      contextSource:
+        ambientFileContext && ambientFileContext !== "FILE_SEARCH_NO_RESULTS"
+          ? "ambient_file"
+          : undefined,
       modelId: ctx.selectedModel || undefined,
       signal: ctrl.signal,
       disableThinking: !ctx.thinkingEnabled,
       generationOptions,
       onChunk,
       onThinking,
+      onArtifact: (artifact) => {
+        ctx.updateSession(sid, (prev) => ({
+          artifactPath: artifact.path,
+          artifactStage: "LivePreview",
+        }));
+      },
     })
       .then((result) => {
         webSearchResult = result.webSearchResult;
         if (result.thinking && !fullThinking) {
           fullThinking = result.thinking;
         }
-        // Prefer streamed/accumulated fullResponse; fall back to result.content.
+        if (result.artifacts[0]) {
+          ctx.updateSession(sid, (prev) => ({
+            artifactPath: result.artifacts[0]!.path,
+            artifactStage: "LivePreview",
+          }));
+        }
         finishOk(fullResponse || result.content, fullThinking || result.thinking, webSearchResult);
       })
       .catch((err) => {

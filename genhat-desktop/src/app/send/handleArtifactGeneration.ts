@@ -5,7 +5,7 @@ import { parseArtifactPlanJson, parseHtmlPlanJson } from "../artifactPlanJson";
 import { normalizePresentationPlan } from "../artifactPlanNormalize";
 import { fitArtifactPlanPrompt } from "../artifactContextBudget";
 import { buildPresentationFallbackPlan } from "../presentationDocumentPlan";
-import { streamChatByMode } from "./cloudOrLocalStream";
+import { streamChatByMode, willRouteToCloud } from "./cloudOrLocalStream";
 import {
   buildSpreadsheetDataContext,
   buildSpreadsheetFallbackPlan,
@@ -108,7 +108,13 @@ export async function handleArtifactGeneration(
   };
 
   try {
-    const grammar = await Api.getSchemaGrammar(schemaId);
+    const containsFileContextEarly = false; // refined later after ambient load
+    const routeCloud = willRouteToCloud({
+      containsFileContext: containsFileContextEarly,
+      userConfirmedCloudContext: false,
+    });
+    // GBNF is local-only; cloud uses free-form JSON + response_format.
+    const grammar = routeCloud ? undefined : await Api.getSchemaGrammar(schemaId);
 
     let headers: string[] | undefined;
     let rows: string[][] | undefined;
@@ -639,6 +645,10 @@ Content rules:
     };
 
     const containsFileContext = Boolean(ambientFileContent?.trim());
+    const useCloud = willRouteToCloud({
+      containsFileContext,
+      userConfirmedCloudContext: false,
+    });
 
     streamChatByMode({
       messages: [
@@ -651,12 +661,13 @@ Content rules:
       modelId: ctx.selectedModel || undefined,
       signal: ctrl.signal,
       disableThinking: true,
+      response_format: useCloud ? { type: "json_object" } : undefined,
       generationOptions: {
         ...generationOptions,
         maxTokens: planMaxTokens,
         temperature: planTemperature,
         // grammar is local-only; cloud path relies on JSON repair parsers
-        grammar,
+        grammar: useCloud ? undefined : grammar,
       },
       onChunk: (chunk) => {
         planJson += chunk;

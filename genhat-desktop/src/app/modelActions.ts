@@ -13,6 +13,7 @@ import {
   writeSpecificModelPicker,
   resolveModeForModelId,
   modelIsDownloadable,
+  localModelIdForMode,
   type IntelligenceMode,
 } from "./intelligenceModes";
 import type { RegisteredModel } from "../types";
@@ -253,7 +254,7 @@ export async function handleIntelligenceModeSelect(mode: IntelligenceMode): Prom
     if (!ok) return;
   }
 
-  const modelId = modelStore.intelligenceMapping[mode];
+  const modelId = localModelIdForMode(mode, modelStore.intelligenceMapping);
   writeIntelligenceMode(mode);
   modelStore.setIntelligenceMode(mode);
   modelStore.setUseSpecificModelPicker(false);
@@ -300,7 +301,9 @@ export async function handleBackToIntelligenceTiers(): Promise<void> {
   const modelStore = useModelStore.getState();
   modelStore.setUseSpecificModelPicker(false);
   writeSpecificModelPicker(false);
-  await ensureDownloadedAndSwitch(modelStore.intelligenceMapping[modelStore.intelligenceMode]);
+  await ensureDownloadedAndSwitch(
+    localModelIdForMode(modelStore.intelligenceMode, modelStore.intelligenceMapping)
+  );
 }
 
 export async function handleApplyRuntimeParams(nextParams: Record<string, string>): Promise<void> {
