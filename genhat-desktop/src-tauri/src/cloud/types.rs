@@ -196,6 +196,8 @@ pub struct CloudChatGeneration {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CloudChatClientMeta {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub app_version: Option<String>,
@@ -203,6 +205,9 @@ pub struct CloudChatClientMeta {
     pub platform: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workspace_id_hash: Option<String>,
+    /// Sticky OpenRouter session id for prompt-cache routing.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -2,7 +2,7 @@
 
 use crate::cloud::client;
 use crate::cloud::types::CloudChatRequest;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 
 fn app_data_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
     app.path()
@@ -10,13 +10,30 @@ fn app_data_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
         .map_err(|e| format!("app_data_dir error: {e}"))
 }
 
+/// Start a cloud chat stream.
+///
+/// Returns immediately after spawning the stream task so Tauri can deliver
+/// `cloud-chat-stream` events to the UI while tokens arrive (waiting for the
+/// full response inside the command would buffer the UI until completion).
 #[tauri::command]
 pub async fn cloud_chat_stream(
     app: AppHandle,
     request: CloudChatRequest,
 ) -> Result<(), String> {
     let dir = app_data_dir(&app)?;
-    client::chat_stream(&app, &dir, request).await
+    tauri::async_runtime::spawn(async move {
+        if let Err(err) = client::chat_stream(&app, &dir, request).await {
+            let _ = app.emit(
+                "cloud-chat-stream",
+                serde_json::json!({
+                    "chunk": "",
+                    "done": true,
+                    "error": err,
+                }),
+            );
+        }
+    });
+    Ok(())
 }
 
 #[tauri::command]

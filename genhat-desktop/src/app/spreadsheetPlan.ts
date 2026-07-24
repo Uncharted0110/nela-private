@@ -89,27 +89,8 @@ export function extractSpreadsheetRowCount(text: string): {
   return { count: null, explicit: false };
 }
 
-/** System prompt for spreadsheet synthesis plans. */
-export function buildSpreadsheetSystemPrompt(
-  hasSourceData: boolean,
-  rowCount?: number | null
-): string {
-  const dataRules = hasSourceData
-    ? `- Source data is already attached. Do NOT use WRITE_DATA to duplicate it.
-- Use transform ops: SORT_ASC, SORT_DESC, FILTER_ROWS, SUM_COLUMN, COUNT_BY_GROUP, AVERAGE_BY_GROUP, ADD_COLUMN, PIVOT.
-- Every "col", "group_col", "value_col", "row_col", "col_col" must EXACTLY match an attached column name.`
-    : `- No source table is attached. Your FIRST op MUST be WRITE_DATA with complete "headers" and "rows".
-- Populate rows from the source document context or from the user request. Do not leave rows empty.
-- Use additional ops after WRITE_DATA only when needed (SORT, FILTER, RENAME_SHEET, etc.).`;
-
-  const rowCountRule =
-    rowCount && rowCount > 0
-      ? `- The user requested EXACTLY ${rowCount} data rows in WRITE_DATA (not counting the header row).
-- WRITE_DATA.rows MUST contain precisely ${rowCount} entries — do not stop at ${rowCount - 1}.
-- Include a Rank or # column numbered 1 through ${rowCount} when listing ranked items.`
-      : "";
-
-  return `You are a professional assistant that generates precise structural JSON plans for creating Excel spreadsheets.
+/** Stable spreadsheet schema — cacheable across cloud artifact requests. */
+export const SPREADSHEET_SCHEMA_STATIC = `You are a professional assistant that generates precise structural JSON plans for creating Excel spreadsheets.
 You must return ONLY a JSON object conforming to the schema contract. Do NOT include markdown formatting, code fences (e.g. \`\`\`json), or thinking/explanations.
 
 Schema Contract:
@@ -127,16 +108,55 @@ Allowed Operations:
 - RENAME_SHEET: { "name": "sheet_name" } — short tab name only (max 31 characters, e.g. "Top Movies")
 - WRITE_DATA: { "headers": ["col1", "col2"], "rows": [["v1", "v2"], ...] }
 
-Data rules:
-${dataRules}
-${rowCountRule ? `\nRow count rules:\n${rowCountRule}` : ""}
-
 Output rules:
 - Include "output_name" (no extension) describing the spreadsheet topic.
 - Include RENAME_SHEET with a SHORT tab name (31 characters max — e.g. "Top Movies", not the full request).
 - For document/form extraction, prefer columns like "Field" and "Value", or logical domain columns.
 - When web search excerpts are provided, treat them as the only source of truth — never fabricate data not in those excerpts.
 - Keep cell values as strings; numbers without currency symbols unless requested.`;
+
+export type SpreadsheetSystemParts = {
+  cacheable: string;
+  dynamic: string;
+};
+
+export function buildSpreadsheetSystemParts(
+  hasSourceData: boolean,
+  rowCount?: number | null
+): SpreadsheetSystemParts {
+  const dataRules = hasSourceData
+    ? `- Source data is already attached. Do NOT use WRITE_DATA to duplicate it.
+- Use transform ops: SORT_ASC, SORT_DESC, FILTER_ROWS, SUM_COLUMN, COUNT_BY_GROUP, AVERAGE_BY_GROUP, ADD_COLUMN, PIVOT.
+- Every "col", "group_col", "value_col", "row_col", "col_col" must EXACTLY match an attached column name.`
+    : `- No source table is attached. Your FIRST op MUST be WRITE_DATA with complete "headers" and "rows".
+- Populate rows from the source document context or from the user request. Do not leave rows empty.
+- Use additional ops after WRITE_DATA only when needed (SORT, FILTER, RENAME_SHEET, etc.).`;
+
+  const rowCountRule =
+    rowCount && rowCount > 0
+      ? `- The user requested EXACTLY ${rowCount} data rows in WRITE_DATA (not counting the header row).
+- WRITE_DATA.rows MUST contain precisely ${rowCount} entries — do not stop at ${rowCount - 1}.
+- Include a Rank or # column numbered 1 through ${rowCount} when listing ranked items.`
+      : "";
+
+  const dynamic = [
+    "Data rules:",
+    dataRules,
+    rowCountRule ? `Row count rules:\n${rowCountRule}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  return { cacheable: SPREADSHEET_SCHEMA_STATIC, dynamic };
+}
+
+/** System prompt for spreadsheet synthesis plans. */
+export function buildSpreadsheetSystemPrompt(
+  hasSourceData: boolean,
+  rowCount?: number | null
+): string {
+  const parts = buildSpreadsheetSystemParts(hasSourceData, rowCount);
+  return `${parts.cacheable}\n\n${parts.dynamic}`;
 }
 
 function slugifySpreadsheetName(text: string): string {

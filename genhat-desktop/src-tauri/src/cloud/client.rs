@@ -38,6 +38,8 @@ fn api_url(path: &str) -> String {
 fn http_client() -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(120))
+        .tcp_nodelay(true)
+        .pool_max_idle_per_host(2)
         .build()
         .map_err(|e| format!("Failed to build HTTP client: {e}"))
 }
@@ -425,6 +427,8 @@ pub async fn chat_stream(
             client
                 .post(api_url("/v1/ai/chat/completions"))
                 .bearer_auth(token)
+                .header(reqwest::header::ACCEPT, "text/event-stream")
+                .header(reqwest::header::CACHE_CONTROL, "no-cache")
                 .json(&body)
                 .send()
                 .await
@@ -448,6 +452,7 @@ pub async fn chat_stream(
         let mut stream = resp.bytes_stream();
         let mut buffer = String::new();
         let mut tool_acc = ToolCallAccumulator::default();
+        let mut emitted_done = false;
 
         while let Some(item) = stream.next().await {
             let chunk = item.map_err(|e| format!("Cloud stream interrupted: {e}"))?;
@@ -464,8 +469,12 @@ pub async fn chat_stream(
                 } else {
                     line.as_str()
                 };
-                if data.is_empty() || data == "[DONE]" {
-                    if data == "[DONE]" {
+                if data.is_empty() {
+                    continue;
+                }
+                if data == "[DONE]" {
+                    if !emitted_done {
+                        emitted_done = true;
                         emit_stream_done(app, &tool_acc);
                     }
                     continue;
@@ -484,7 +493,9 @@ pub async fn chat_stream(
             }
         }
 
-        emit_stream_done(app, &tool_acc);
+        if !emitted_done {
+            emit_stream_done(app, &tool_acc);
+        }
         return Ok(());
     }
 

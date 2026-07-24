@@ -159,13 +159,11 @@ export async function handleSendTextChat(
     ...toContextMessages(fullSessionMessages),
   ];
 
-  // Inject ambient file search results. The retrieved document text goes into the
-  // FINAL USER message (not a system message): small local models weight the current
-  // user turn far more heavily, and wording like "you have access to local files"
-  // tends to trip their "I can't access your files" guardrail. The document text is
-  // presented inline as the source of truth — mirroring the direct-document path.
+  // Ambient file instructions AFTER the stable NELA identity so OpenRouter
+  // can cache the identity prefix. Document text still goes in the user turn.
   if (ambientFileContext === "FILE_SEARCH_NO_RESULTS") {
     apiMessages = [
+      ...apiMessages.slice(0, 1),
       {
         role: "system",
         content:
@@ -173,10 +171,11 @@ export async function handleSendTextChat(
           "Tell them you could not find that file on their system. Do NOT claim you lack the ability to access local files — this app can search them, but this particular file was not found. " +
           "Suggest they verify the path, wait for indexing to finish after restart, or attach the file directly.",
       },
-      ...apiMessages,
+      ...apiMessages.slice(1),
     ];
   } else if (ambientFileContext) {
     apiMessages = [
+      ...apiMessages.slice(0, 1),
       {
         role: "system",
         content:
@@ -185,7 +184,7 @@ export async function handleSendTextChat(
           "NEVER say you cannot access local files, paths, or the user's system. " +
           "Summarize or explain the document in clear prose. If the excerpt is incomplete, say what you can from the provided text.",
       },
-      ...apiMessages,
+      ...apiMessages.slice(1),
     ];
     // Fold the document text into the last user message so the model reads it as part
     // of the current request rather than as background context it might ignore.

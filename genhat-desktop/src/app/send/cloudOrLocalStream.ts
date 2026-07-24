@@ -3,6 +3,7 @@ import { Api, cloudStreamChat } from "../../api";
 import { useCloudStore } from "../../stores/cloudStore";
 import { useModelStore } from "../../stores/modelStore";
 import { cloudQualityModeForIntelligence } from "../intelligenceModes";
+import { prepareMessagesForCloudCaching } from "./prepareCloudMessages";
 import type {
   CloudChatMessage,
   CloudChatRequest,
@@ -174,13 +175,19 @@ async function runCloudStream(args: StreamArgs): Promise<void> {
   const mode =
     args.mode ?? cloudQualityModeForIntelligence(intelligenceMode);
 
-  const messages: CloudChatMessage[] = args.messages.map((m) => ({
+  const prepared = prepareMessagesForCloudCaching(args.messages);
+  const messages: CloudChatMessage[] = prepared.map((m) => ({
     role: m.role,
     content: m.content ?? null,
     tool_calls: m.tool_calls,
     tool_call_id: m.tool_call_id,
     name: m.name,
   }));
+
+  const sessionId =
+    args.generationOptions?.sessionId?.trim() ||
+    args.generationOptions?.workspaceId?.trim() ||
+    undefined;
 
   const request: CloudChatRequest = {
     mode,
@@ -201,55 +208,76 @@ async function runCloudStream(args: StreamArgs): Promise<void> {
     response_format: args.response_format,
     client: {
       platform: "desktop",
+      sessionId,
     },
   };
 
-  let settled = false;
-  const unlisten = await listen<{
-    chunk: string;
-    done: boolean;
-    error?: string;
-    tool_calls?: CloudToolCall[];
-  }>("cloud-chat-stream", (event) => {
-    if (settled) return;
-    const { chunk, done, error, tool_calls } = event.payload;
-    if (error) {
-      settled = true;
-      unlisten();
-      args.onError(new Error(error));
-      return;
-    }
-    if (chunk) args.onChunk(chunk);
-    if (done) {
-      settled = true;
-      unlisten();
-      args.onFinish(tool_calls?.length ? { tool_calls } : undefined);
-    }
-  });
+  await new Promise<void>((resolve, reject) => {
+    let settled = false;
 
-  if (args.signal) {
-    const onAbort = () => {
+    const finish = (fn: () => void) => {
       if (settled) return;
       settled = true;
-      unlisten();
-      args.onError(new DOMException("Aborted", "AbortError"));
+      fn();
     };
-    if (args.signal.aborted) {
-      onAbort();
-      return;
-    }
-    args.signal.addEventListener("abort", onAbort, { once: true });
-  }
 
-  try {
-    await cloudStreamChat(request);
-  } catch (err) {
-    if (!settled) {
-      settled = true;
-      unlisten();
-      args.onError(err);
-    }
-  }
+    void (async () => {
+      const unlisten = await listen<{
+        chunk: string;
+        done: boolean;
+        error?: string;
+        tool_calls?: CloudToolCall[];
+      }>("cloud-chat-stream", (event) => {
+        if (settled) return;
+        const { chunk, done, error, tool_calls } = event.payload;
+        if (error) {
+          finish(() => {
+            unlisten();
+            args.onError(new Error(error));
+            // Resolve so callers that only await this promise don't hang;
+            // onError already triggered fallback / UI handling.
+            resolve();
+          });
+          return;
+        }
+        if (chunk) args.onChunk(chunk);
+        if (done) {
+          finish(() => {
+            unlisten();
+            args.onFinish(tool_calls?.length ? { tool_calls } : undefined);
+            resolve();
+          });
+        }
+      });
+
+      if (args.signal) {
+        const onAbort = () => {
+          finish(() => {
+            unlisten();
+            args.onError(new DOMException("Aborted", "AbortError"));
+            reject(new DOMException("Aborted", "AbortError"));
+          });
+        };
+        if (args.signal.aborted) {
+          onAbort();
+          return;
+        }
+        args.signal.addEventListener("abort", onAbort, { once: true });
+      }
+
+      try {
+        // Returns immediately (stream runs in a Rust background task) so
+        // Tauri can deliver chunk events while tokens arrive.
+        await cloudStreamChat(request);
+      } catch (err) {
+        finish(() => {
+          unlisten();
+          args.onError(err);
+          reject(err);
+        });
+      }
+    })();
+  });
 }
 
 /**

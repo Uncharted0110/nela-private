@@ -9,7 +9,7 @@ import { streamChatByMode, willRouteToCloud } from "./cloudOrLocalStream";
 import {
   buildSpreadsheetDataContext,
   buildSpreadsheetFallbackPlan,
-  buildSpreadsheetSystemPrompt,
+  buildSpreadsheetSystemParts,
   extractSpreadsheetRowCount,
   normalizeSpreadsheetPlan,
   parseSpreadsheetPlanJson,
@@ -31,12 +31,13 @@ import {
 } from "../artifactImagePool";
 import {
   HTML_PLAN_MAX_TOKENS,
-  buildHtmlArtifactSystemPrompt,
+  buildHtmlArtifactSystemParts,
   defaultThemeForArchetype,
   htmlPlanRequest,
   inferHtmlPageStructure,
   mapHtmlRendererTheme,
 } from "../htmlArtifactPrompt";
+import { buildPresentationSystemParts } from "../presentationPlanPrompt";
 import {
   webArtifactGroundingPreamble,
   webContextCharLimit,
@@ -442,37 +443,27 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
     const htmlHasSourceData =
       schemaId === "html_synthesis" && spreadsheetData !== null;
 
-    const systemPrompt =
+    const systemParts =
       schemaId === "html_synthesis"
-        ? buildHtmlArtifactSystemPrompt(htmlArchetype, {
+        ? buildHtmlArtifactSystemParts(htmlArchetype, {
             hasSourceData: htmlHasSourceData,
             hasImages: imagePool.length > 0,
           })
         : schemaId === "spreadsheet_synthesis"
-        ? buildSpreadsheetSystemPrompt(hasSourceData, rowPlan.count)
-        : `You generate ONLY a JSON presentation plan. No markdown, no code fences, no commentary.
+        ? buildSpreadsheetSystemParts(hasSourceData, rowPlan.count)
+        : schemaId === "presentation_synthesis"
+        ? buildPresentationSystemParts({
+            slideCountInstruction,
+            sourceDocumentRules,
+          })
+        : null;
 
-Schema:
-{"slides":[{"title":"string","layout":"TITLE"|"SECTION"|"BULLET"|"TWO_COLUMN"|"IMAGE_LEFT"|"STAT"|"QUOTE"|"CARDS"|"COMPARISON"|"CENTERED","bullets":["string"],"notes":"string","left_title":"string","right_title":"string"}],"theme":"midnight"|"corporate"|"sunset"|"minimal"|"academic"|"cyber"|"ocean"|"forest"|"lavender"|"neon"|"rose"|"slate"}
-
-Layouts (pick to fit content):
-- TITLE: cover. bullets = subtitle + 1–2 concrete taglines.
-- SECTION: section divider with 1–3 real intro lines.
-- BULLET: 4–6 bullets, each 15–40 words with a claim + brief explanation or example.
-- TWO_COLUMN / IMAGE_LEFT: 4–6 concrete points.
-- STAT: bullets[0] = headline metric/fact; then 2–3 supporting specifics.
-- QUOTE: takeaway + attribution/context.
-- CARDS: 3–4 items as "Label: 1–2 sentence specifics".
-- COMPARISON: 3–5 points per side; left_title/right_title must be real domain terms (e.g. Classical vs Quantum), never "Primary approach".
-- CENTERED: 2–4 short paragraphs of real takeaways.
-
-Content rules:
-- ${slideCountInstruction}
-- First slide TITLE; last slide CENTERED with a concrete takeaway about THIS topic.
-- Slide 1–2 must DEFINE the topic (what it is / how it works). Later slides need named examples (algorithms, products, people, events, case studies — whatever fits).
-- Every bullet must be specifically about the user's topic. No vague fluff ("transformative potential", "continuous innovation") unless tied to a fact.
-- Use ≥4 different layouts. Avoid Q&A / References / Final Thoughts unless asked.
-- Theme must match the topic.${sourceDocumentRules}`;
+    const systemPrompt =
+      systemParts != null
+        ? systemParts.dynamic
+          ? `${systemParts.cacheable}\n\n${systemParts.dynamic}`
+          : systemParts.cacheable
+        : "You generate ONLY a JSON plan. Return valid JSON only.";
 
     const themeSuffix = ` Theme: "${themeHint}".`;
     const rowCountSuffix =
@@ -650,11 +641,22 @@ Content rules:
       userConfirmedCloudContext: false,
     });
 
+    const planMessages =
+      useCloud && systemParts
+        ? [
+            { role: "system" as const, content: systemParts.cacheable },
+            ...(systemParts.dynamic
+              ? [{ role: "system" as const, content: systemParts.dynamic }]
+              : []),
+            { role: "user" as const, content: fitted.userPrompt },
+          ]
+        : [
+            { role: "system" as const, content: fitted.systemPrompt },
+            { role: "user" as const, content: fitted.userPrompt },
+          ];
+
     streamChatByMode({
-      messages: [
-        { role: "system", content: fitted.systemPrompt },
-        { role: "user", content: fitted.userPrompt },
-      ],
+      messages: planMessages,
       intent: "artifact_plan",
       containsFileContext,
       contextSource: containsFileContext ? "artifact_source_document" : undefined,

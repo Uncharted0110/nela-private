@@ -660,6 +660,8 @@ export interface CloudChatRequest {
     appVersion?: string;
     platform?: string;
     workspaceIdHash?: string;
+    /** Sticky OpenRouter session for prompt-cache routing. */
+    sessionId?: string;
   };
 }
 

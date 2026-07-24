@@ -56,3 +56,4 @@ Intelligence selector **Fast / Smart / Deep / Auto** maps to API `mode` on cloud
 - OpenRouter keys never leave `apps/api`. Desktop only holds JWT session tokens.
 - Local path keeps GBNF grammars; cloud path skips them.
 - Tool execution (web_search, MCP writers) always runs on the desktop; the API only forwards `tools` / `tool_calls` to OpenRouter.
+- **Prompt caching:** the API marks the first system message and last tool with OpenRouter `cache_control` (1h TTL), passes desktop `sessionId` as `session_id` for sticky routing, and adds top-level `cache_control` for Anthropic models. Desktop keeps NELA identity / artifact JSON schemas as a stable first system message; dynamic RAG/ambient/per-request instructions go in later messages.

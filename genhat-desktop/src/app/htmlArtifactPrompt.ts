@@ -138,39 +138,14 @@ const ARCHETYPE_SECTIONS: Record<string, { kinds: HtmlSectionKind[]; hint: strin
 
 const THEME_LIST = HTML_RENDERER_THEMES.join(" | ");
 
-export function buildHtmlArtifactSystemPrompt(
-  archetype: string,
-  options?: { hasSourceData?: boolean; hasImages?: boolean }
-): string {
-  const spec = ARCHETYPE_SECTIONS[archetype] ?? ARCHETYPE_SECTIONS.landing;
-  const kindsList = spec.kinds.join(", ");
-  const suggestedTheme = defaultThemeForArchetype(archetype);
-  const dataRules = options?.hasSourceData
-    ? `
-SOURCE DATA RULES (attached file — STRICT):
-- NEVER invent or guess numeric values. All chart numbers are computed from the file in the renderer.
-- CHART sections: set label_column, value_column, aggregation (sum|count|avg|min|max). Omit items or use an empty items array.
-- STATS numeric KPIs are auto-computed from the file — focus chart column choices and TEXT insights.
-- Use exact column header names from the data context.`
-    : `
-NO SOURCE FILE:
-- CHART sections: provide items with label (category) and meta (numeric value as string).
-- You may use plausible illustrative data for demos when no file is attached.`;
-
-  const imageRules = options?.hasImages
-    ? `
-IMAGES (available in catalog):
-- Use IMAGE sections or HERO/SPLIT with image_index to place real images.
-- Set image_index to the catalog index; do not use placeholder URLs.`
-    : "";
-
-  return `You generate a structured JSON plan for a web page. A native renderer builds the final HTML — you only provide content.
+/** Stable schema + layout docs — cacheable across HTML artifact cloud requests. */
+export const HTML_ARTIFACT_SCHEMA_STATIC = `You generate a structured JSON plan for a web page. A native renderer builds the final HTML — you only provide content.
 
 Return ONLY valid JSON matching this shape:
 {
   "title": "Page headline / business name",
   "tagline": "Short subtitle",
-  "archetype": "${archetype}",
+  "archetype": "landing | local_business | article | portfolio | dashboard | documentation | event | comparison | catalog | resume | infographic | newsletter | interactive",
   "theme": ${THEME_LIST.split(" | ").map((t) => `"${t}"`).join(" | ")},
   "sections": [
     {
@@ -189,10 +164,7 @@ Return ONLY valid JSON matching this shape:
   "output_name": "file-slug"
 }
 
-Page archetype: ${archetype} — ${spec.hint}
-Suggested theme for this archetype: ${suggestedTheme}
-
-Required section kinds IN THIS ORDER: ${kindsList}
+Section kind reference:
 - HERO: page title in "title", tagline in subtitle, intro in body
 - INFO_BAR: items = hours, address, phone (label + detail)
 - GRID: items = cards (menu items, features, products) — use meta for price
@@ -204,7 +176,6 @@ Required section kinds IN THIS ORDER: ${kindsList}
 - FAQ: items = questions (label = Q, detail = A)
 - CTA: closing call-to-action title + subtitle
 - TEXT: article paragraphs in body
-${dataRules}${imageRules}
 
 Rules:
 - Fill EVERY required section with real, topic-specific content (no lorem ipsum).
@@ -213,6 +184,57 @@ Rules:
 - For interactive archetype: GRID must list actual pickable items, never marketing bullets.
 - Pick theme that fits the topic (food/local → sunset or rose, tech → cyber or midnight, data → aurora or corporate).
 - No markdown, no code fences, no explanations outside JSON.`;
+
+export type HtmlArtifactSystemParts = {
+  /** Stable schema — first system message for OpenRouter caching. */
+  cacheable: string;
+  /** Per-request archetype / data / image instructions. */
+  dynamic: string;
+};
+
+export function buildHtmlArtifactSystemParts(
+  archetype: string,
+  options?: { hasSourceData?: boolean; hasImages?: boolean }
+): HtmlArtifactSystemParts {
+  const spec = ARCHETYPE_SECTIONS[archetype] ?? ARCHETYPE_SECTIONS.landing;
+  const kindsList = spec.kinds.join(", ");
+  const suggestedTheme = defaultThemeForArchetype(archetype);
+  const dataRules = options?.hasSourceData
+    ? `SOURCE DATA RULES (attached file — STRICT):
+- NEVER invent or guess numeric values. All chart numbers are computed from the file in the renderer.
+- CHART sections: set label_column, value_column, aggregation (sum|count|avg|min|max). Omit items or use an empty items array.
+- STATS numeric KPIs are auto-computed from the file — focus chart column choices and TEXT insights.
+- Use exact column header names from the data context.`
+    : `NO SOURCE FILE:
+- CHART sections: provide items with label (category) and meta (numeric value as string).
+- You may use plausible illustrative data for demos when no file is attached.`;
+
+  const imageRules = options?.hasImages
+    ? `IMAGES (available in catalog):
+- Use IMAGE sections or HERO/SPLIT with image_index to place real images.
+- Set image_index to the catalog index; do not use placeholder URLs.`
+    : "";
+
+  const dynamic = [
+    `Page archetype: ${archetype} — ${spec.hint}`,
+    `Suggested theme for this archetype: ${suggestedTheme}`,
+    `Required section kinds IN THIS ORDER: ${kindsList}`,
+    `Set JSON "archetype" to "${archetype}".`,
+    dataRules,
+    imageRules,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+
+  return { cacheable: HTML_ARTIFACT_SCHEMA_STATIC, dynamic };
+}
+
+export function buildHtmlArtifactSystemPrompt(
+  archetype: string,
+  options?: { hasSourceData?: boolean; hasImages?: boolean }
+): string {
+  const parts = buildHtmlArtifactSystemParts(archetype, options);
+  return `${parts.cacheable}\n\n${parts.dynamic}`;
 }
 
 export function htmlPlanRequest(
