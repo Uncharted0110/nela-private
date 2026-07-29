@@ -11,7 +11,6 @@ import {
   Sun,
   Moon,
   User,
-  Cloud,
 } from "lucide-react";
 import { useAuthStore } from "../stores/authStore";
 import { convertFileSrc } from "@tauri-apps/api/core";
@@ -23,9 +22,7 @@ interface SidebarNavProps {
   onExportProject: () => void;
   onOpenSettings: () => void;
   onOpenProfile: () => void;
-  onOpenCloudSettings: () => void;
   onOpenTours: () => void;
-  onOpenHuggingFaceSearch?: () => void;
   workspaceBusy?: boolean;
   canExport?: boolean;
   theme?: ThemeName;
@@ -39,9 +36,7 @@ const SidebarNav: React.FC<SidebarNavProps> = ({
   onExportProject,
   onOpenSettings,
   onOpenProfile,
-  onOpenCloudSettings,
   onOpenTours,
-  onOpenHuggingFaceSearch,
   workspaceBusy = false,
   canExport = false,
   theme = "neon",
@@ -65,6 +60,11 @@ const SidebarNav: React.FC<SidebarNavProps> = ({
       avatarUrl = v;
     }
   }
+
+  const profileInitial =
+    profile?.name?.trim()?.charAt(0)?.toUpperCase() ||
+    profile?.email?.trim()?.charAt(0)?.toUpperCase() ||
+    null;
 
   return (
     <nav
@@ -105,15 +105,7 @@ const SidebarNav: React.FC<SidebarNavProps> = ({
         <Workflow size={30} />
       </button>
 
-      <div className="mt-auto flex flex-col items-center gap-2 pb-1">
-        <button
-          className="flex flex-col items-center gap-1 px-2 py-2 rounded-lg transition-colors text-txt-secondary hover:text-neon"
-          title="Search Hugging Face"
-          onClick={onOpenHuggingFaceSearch}
-          data-tour="sidebar-hf"
-        >
-          <span role="img" aria-label="Hugging Face" style={{ fontSize: "22px" }}>🤗</span>
-        </button>
+      <div className="mt-auto flex flex-col items-center gap-1.5 pb-1">
         <button
           className="flex flex-col items-center gap-1 px-2 py-2 rounded-lg transition-colors text-txt-secondary hover:text-neon"
           title={theme === "neon" ? "Switch to Professional (light) theme" : "Switch to Classic (dark) theme"}
@@ -129,30 +121,6 @@ const SidebarNav: React.FC<SidebarNavProps> = ({
           data-tour="sidebar-help-tours"
         >
           <HelpCircle size={22} />
-        </button>
-        <button
-          className="flex flex-col items-center gap-1 px-2 py-2 rounded-lg transition-colors text-txt-secondary hover:text-neon overflow-hidden"
-          title={profile ? `Profile · ${profile.name}` : "Profile"}
-          onClick={onOpenProfile}
-          data-tour="sidebar-profile"
-        >
-          {avatarUrl ? (
-            <img
-              src={avatarUrl}
-              alt=""
-              className="w-[22px] h-[22px] rounded-full object-cover"
-            />
-          ) : (
-            <User size={22} />
-          )}
-        </button>
-        <button
-          className="flex flex-col items-center gap-1 px-2 py-2 rounded-lg transition-colors text-txt-secondary hover:text-neon"
-          title="NELA Cloud"
-          onClick={onOpenCloudSettings}
-          data-tour="sidebar-cloud"
-        >
-          <Cloud size={22} />
         </button>
         <button
           className="flex flex-col items-center gap-1 px-2 py-2 rounded-lg transition-colors text-txt-secondary hover:text-neon"
@@ -177,6 +145,23 @@ const SidebarNav: React.FC<SidebarNavProps> = ({
           disabled={workspaceBusy || !canExport}
         >
           <Save size={22} />
+        </button>
+
+        <button
+          type="button"
+          className="mt-1 flex items-center justify-center w-9 h-9 rounded-full border border-glass-border bg-void-700 text-txt-secondary hover:text-neon hover:border-neon/40 transition-colors overflow-hidden shrink-0"
+          title={profile ? `Profile · ${profile.name}` : "Profile"}
+          onClick={onOpenProfile}
+          data-tour="sidebar-profile"
+          aria-label={profile ? `Profile · ${profile.name}` : "Open profile"}
+        >
+          {avatarUrl ? (
+            <img src={avatarUrl} alt="" className="w-full h-full object-cover" />
+          ) : profileInitial ? (
+            <span className="text-[0.85rem] font-semibold leading-none">{profileInitial}</span>
+          ) : (
+            <User size={18} />
+          )}
         </button>
       </div>
     </nav>

@@ -10,6 +10,7 @@ import { useTheme, type ThemeName } from "../hooks/useTheme";
 import { handleManualContextCompaction } from "../app/sessionSendActions";
 import { useSessionStore } from "../stores/sessionStore";
 import { useChatModeStore } from "../stores/chatModeStore";
+import { useUIStore } from "../stores/uiStore";
 import {
   DEFAULT_INTELLIGENCE_MAPPING,
   INTELLIGENCE_MODE_OPTIONS,
@@ -335,6 +336,8 @@ const ModelsSettingsModal: React.FC<ModelsSettingsModalProps> = ({
 }) => {
   const { advanced, setAdvanced } = useAdvancedMode();
   const { theme, setTheme } = useTheme();
+  const setHfModalOpen = useUIStore((s) => s.setHfModalOpen);
+  const setHfModalPreset = useUIStore((s) => s.setHfModalPreset);
   const sessions = useSessionStore((s) => s.sessions);
   const activeSessionId = useSessionStore((s) => s.activeSessionId);
   const contextUsageBySession = useSessionStore((s) => s.contextUsageBySession);
@@ -719,6 +722,28 @@ const ModelsSettingsModal: React.FC<ModelsSettingsModalProps> = ({
               >
                 {contextCompacting ? <Loader2 size={14} className="animate-spin" /> : <Scissors size={14} />}
                 {contextCompacting ? "Compacting..." : "Compact Context"}
+              </button>
+            </div>
+            <div className="flex items-center justify-between gap-3 py-1">
+              <div>
+                <div className="text-[0.85rem] font-semibold text-txt">Hugging Face</div>
+                <div className="text-[0.78rem] text-txt-muted">
+                  Search and import models from Hugging Face into NELA.
+                </div>
+              </div>
+              <button
+                type="button"
+                className="inline-flex items-center gap-1.5 py-1.5 px-3 text-[0.78rem] font-medium rounded-lg border border-glass-border bg-glass-bg text-txt-secondary hover:border-neon hover:text-neon"
+                onClick={() => {
+                  setHfModalPreset({ folder: "LLM", profile: "llm" });
+                  setHfModalOpen(true);
+                  onClose();
+                }}
+                title="Search Hugging Face"
+                data-tour="settings-hf"
+              >
+                <span aria-hidden="true">🤗</span>
+                Browse models
               </button>
             </div>
           </div>
