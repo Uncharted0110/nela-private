@@ -28,7 +28,6 @@ import {
   handleCancel,
   handleSend,
   handleModeSwitch,
-  handleManualContextCompaction,
   getPlaceholder,
 } from "../app/sessionSendActions";
 import { useAdvancedMode } from "../hooks/useAdvancedMode";
@@ -39,6 +38,7 @@ import { useChatModeStore } from "../stores/chatModeStore";
 import { useModelStore } from "../stores/modelStore";
 import { useUIStore } from "../stores/uiStore";
 import { useDownloadStore } from "../stores/downloadStore";
+import { useCloudStore } from "../stores/cloudStore";
 import ChatTabBar from "./ChatTabBar";
 import AppMainTopBar from "./AppMainTopBar";
 import AppMainModeControls from "./AppMainModeControls";
@@ -58,9 +58,7 @@ export default function AppMainContent({ networkActive: networkActiveProp }: App
   const sessions = useSessionStore(s => s.sessions);
   const openSessionIds = useSessionStore(s => s.openSessionIds);
   const activeSessionId = useSessionStore(s => s.activeSessionId);
-  const contextUsageBySession = useSessionStore(s => s.contextUsageBySession);
   const streamingThinking = useSessionStore(s => s.streamingThinking);
-  const contextCompacting = useSessionStore(s => s.contextCompacting);
   const updateSession = useSessionStore(s => s.updateSession);
   const addNewSession = useSessionStore(s => s.addNewSession);
   const closeViewerTab = useSessionStore(s => s.closeViewerTab);
@@ -98,6 +96,7 @@ export default function AppMainContent({ networkActive: networkActiveProp }: App
 
   const models = useModelStore(s => s.models);
   const selectedModel = useModelStore(s => s.selectedModel);
+  const intelligenceMode = useModelStore(s => s.intelligenceMode);
   const useSpecificModelPicker = useModelStore(s => s.useSpecificModelPicker);
   const modelLoadingStatus = useModelStore(s => s.modelLoadingStatus);
   const modelSwitching = useModelStore(s => s.modelSwitching);
@@ -108,12 +107,15 @@ export default function AppMainContent({ networkActive: networkActiveProp }: App
   const selectedVisionModel = useModelStore(s => s.selectedVisionModel);
   const setSelectedVisionModel = useModelStore(s => s.setSelectedVisionModel);
 
+  const preferredMode = useCloudStore(s => s.preferredMode);
+  // Cloud: show the stored tier (OpenRouter picks the model). Private: derive from loaded GGUF.
+  const displayIntelligenceMode =
+    preferredMode !== "local" ? intelligenceMode : intelligenceDisplayMode();
+
   const setHfModalPreset = useUIStore(s => s.setHfModalPreset);
   const setHfModalOpen = useUIStore(s => s.setHfModalOpen);
   const docPanelOpen = useUIStore(s => s.docPanelOpen);
   const setDocPanelOpen = useUIStore(s => s.setDocPanelOpen);
-  const paramsDockOpen = useUIStore(s => s.paramsDockOpen);
-  const setParamsDockOpen = useUIStore(s => s.setParamsDockOpen);
   const confirmAction = useUIStore(s => s.confirmAction);
   const modeSwitchNotice = useUIStore(s => s.modeSwitchNotice);
   const pdfViewerData = useUIStore(s => s.pdfViewerData);
@@ -132,12 +134,6 @@ export default function AppMainContent({ networkActive: networkActiveProp }: App
   const openViewerSessions = openSessionIds
     .map((id) => sessions.find((s) => s.id === id))
     .filter((s): s is ChatSession => !!s);
-
-  const activeContextUsage = activeSession ? contextUsageBySession[activeSession.id] ?? null : null;
-  const canManualCompactContext =
-    !!activeSession &&
-    !activeSession.loading &&
-    (chatMode === "text" || chatMode === "mindmap");
 
   const activeMindmapGraph = activeMindmapOverlay
     ? (mindmapsBySession[activeMindmapOverlay.sessionId] ?? []).find(
@@ -208,9 +204,7 @@ export default function AppMainContent({ networkActive: networkActiveProp }: App
         onRenameWorkspace={renameWorkspaceById}
         workspaceBusy={workspaceBusy}
         modelLoadingStatus={modelLoadingStatus}
-        contextUsage={activeContextUsage}
         networkActive={networkActive}
-        webEnabled={webEnabled}
         modeControls={(
           <AppMainModeControls
             chatMode={chatMode}
@@ -233,16 +227,8 @@ export default function AppMainContent({ networkActive: networkActiveProp }: App
             onSelectVisionModel={setSelectedVisionModel}
             onAddVisionModel={handleAddVisionModel}
             activeRuntimeParamTarget={getActiveRuntimeParamTarget()}
-            paramsDockOpen={paramsDockOpen}
-            onToggleParamsDock={() => setParamsDockOpen((open) => !open)}
             onApplyRuntimeParams={handleApplyRuntimeParams}
-            webEnabled={webEnabled}
-            onToggleWebEnabled={handleWebToggle}
-            contextUsage={activeContextUsage}
-            onCompactContext={() => void handleManualContextCompaction()}
-            canCompactContext={canManualCompactContext}
-            isCompactingContext={contextCompacting}
-            intelligenceMode={intelligenceDisplayMode()}
+            intelligenceMode={displayIntelligenceMode}
             useSpecificModelPicker={useSpecificModelPicker}
             onSelectIntelligenceMode={(mode) => void handleIntelligenceModeSelect(mode)}
             onChooseSpecificModel={handleChooseSpecificModel}

@@ -194,8 +194,7 @@ pub struct CloudChatGeneration {
     pub temperature: Option<f32>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CloudChatClientMeta {

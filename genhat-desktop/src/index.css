@@ -52,6 +52,36 @@
   --modal-popover-bg: rgba(9, 14, 20, 0.97);
   --modal-icon-btn-bg: rgba(255, 255, 255, 0.05);
   --modal-highlight-border: rgba(0, 212, 255, 0.9);
+
+  /* Private / Cloud mode (neon / dark defaults) */
+  --mode-private-grad: linear-gradient(115deg, #0f6b4a 0%, #17b978 38%, #0ea5a5 68%, #10b981 100%);
+  --mode-private-border-grad: linear-gradient(
+    90deg,
+    #34d399 0%,
+    #10b981 25%,
+    #2dd4bf 50%,
+    #6ee7b7 75%,
+    #34d399 100%
+  );
+  --mode-private-border: rgba(52, 211, 153, 0.55);
+  --mode-private-fg: #d1fae5;
+  --mode-private-surface: rgba(16, 185, 129, 0.18);
+  --mode-private-track: rgba(16, 185, 129, 0.45);
+  --mode-private-thumb: #ecfdf5;
+  --mode-cloud-grad: linear-gradient(115deg, #5b21b6 0%, #7c3aed 36%, #a855f7 66%, #8b5cf6 100%);
+  --mode-cloud-border-grad: linear-gradient(
+    90deg,
+    #a855f7 0%,
+    #8b5cf6 25%,
+    #c084fc 50%,
+    #7c3aed 75%,
+    #a855f7 100%
+  );
+  --mode-cloud-border: rgba(196, 181, 253, 0.55);
+  --mode-cloud-fg: #ede9fe;
+  --mode-cloud-surface: rgba(139, 92, 246, 0.22);
+  --mode-cloud-track: rgba(167, 139, 250, 0.5);
+  --mode-cloud-thumb: #f5f3ff;
 }
 
 /* ── Professional light theme (default for non-technical users) ── */
@@ -104,6 +134,36 @@ html[data-theme="professional"] {
   --modal-popover-bg: #ffffff;
   --modal-icon-btn-bg: rgba(15, 23, 42, 0.04);
   --modal-highlight-border: rgba(11, 107, 203, 0.85);
+
+  /* Private / Cloud mode (professional / light: vivid pastels, dark text) */
+  --mode-private-grad: linear-gradient(115deg, #d1fae5 0%, #6ee7b7 40%, #5eead4 70%, #a7f3d0 100%);
+  --mode-private-border-grad: linear-gradient(
+    90deg,
+    #10b981 0%,
+    #34d399 25%,
+    #2dd4bf 50%,
+    #059669 75%,
+    #10b981 100%
+  );
+  --mode-private-border: rgba(5, 150, 105, 0.5);
+  --mode-private-fg: #064e3b;
+  --mode-private-surface: rgba(16, 185, 129, 0.16);
+  --mode-private-track: rgba(16, 185, 129, 0.35);
+  --mode-private-thumb: #ffffff;
+  --mode-cloud-grad: linear-gradient(115deg, #ede9fe 0%, #c4b5fd 40%, #e9d5ff 70%, #ddd6fe 100%);
+  --mode-cloud-border-grad: linear-gradient(
+    90deg,
+    #7c3aed 0%,
+    #a855f7 25%,
+    #c084fc 50%,
+    #8b5cf6 75%,
+    #7c3aed 100%
+  );
+  --mode-cloud-border: rgba(109, 40, 217, 0.45);
+  --mode-cloud-fg: #4c1d95;
+  --mode-cloud-surface: rgba(139, 92, 246, 0.14);
+  --mode-cloud-track: rgba(139, 92, 246, 0.32);
+  --mode-cloud-thumb: #ffffff;
 }
 
 :root[data-theme="professional"] .welcome-orb,
@@ -173,6 +233,36 @@ html[data-theme="light"] {
   --modal-popover-bg: #ffffff;
   --modal-icon-btn-bg: rgba(0, 0, 0, 0.04);
   --modal-highlight-border: rgba(0, 153, 204, 0.85);
+
+  /* Private / Cloud mode (legacy light alias) */
+  --mode-private-grad: linear-gradient(115deg, #d1fae5 0%, #6ee7b7 40%, #5eead4 70%, #a7f3d0 100%);
+  --mode-private-border-grad: linear-gradient(
+    90deg,
+    #10b981 0%,
+    #34d399 25%,
+    #2dd4bf 50%,
+    #059669 75%,
+    #10b981 100%
+  );
+  --mode-private-border: rgba(5, 150, 105, 0.5);
+  --mode-private-fg: #064e3b;
+  --mode-private-surface: rgba(16, 185, 129, 0.16);
+  --mode-private-track: rgba(16, 185, 129, 0.35);
+  --mode-private-thumb: #ffffff;
+  --mode-cloud-grad: linear-gradient(115deg, #ede9fe 0%, #c4b5fd 40%, #e9d5ff 70%, #ddd6fe 100%);
+  --mode-cloud-border-grad: linear-gradient(
+    90deg,
+    #7c3aed 0%,
+    #a855f7 25%,
+    #c084fc 50%,
+    #8b5cf6 75%,
+    #7c3aed 100%
+  );
+  --mode-cloud-border: rgba(109, 40, 217, 0.45);
+  --mode-cloud-fg: #4c1d95;
+  --mode-cloud-surface: rgba(139, 92, 246, 0.14);
+  --mode-cloud-track: rgba(139, 92, 246, 0.32);
+  --mode-cloud-thumb: #ffffff;
 }
 
 /* ── Base Layer ── */
