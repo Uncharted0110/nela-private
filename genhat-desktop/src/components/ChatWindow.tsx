@@ -16,6 +16,8 @@ import SlashCommandMenu from "./SlashCommandMenu";
 import { SlashHighlightedText } from "./SlashHighlightedText";
 import GenerationProgressLabel from "./GenerationProgressLabel";
 import type { GenerationProgressMode } from "../app/generationProgress";
+import { useCloudStore } from "../stores/cloudStore";
+import "./ModeBanner.css";
 
 function chatModeToProgressMode(mode: string): GenerationProgressMode {
   if (mode === "vision") return "vision";
@@ -300,6 +302,9 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
   onToggleThinking,
 }) => {
   const { advanced } = useAdvancedMode();
+  const preferredMode = useCloudStore((s) => s.preferredMode);
+  const modeChatBorderClass =
+    preferredMode !== "local" ? "mode-chat-border--cloud" : "mode-chat-border--private";
   const [inputObj, setInputObj] = useState("");
   const [showAttachMenu, setShowAttachMenu] = useState(false);
   const [showModeMenu, setShowModeMenu] = useState(false);
@@ -843,7 +848,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
             </div>
           )}
 
-          <div className="input-wrapper glass-strong flex flex-col gap-2 rounded-2xl px-2 py-2 transition-colors duration-150 focus-within:border-neon">
+          <div className={`input-wrapper glass-strong flex flex-col gap-2 rounded-2xl px-2 py-2 transition-colors duration-150 focus-within:border-neon ${modeChatBorderClass}`}>
             {renderVisionAttachment()}
             {renderDirectDocumentAttachments()}
             <div className="flex items-center gap-2">
@@ -1196,7 +1201,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
           </div>
         )}
 
-          <div className="input-wrapper glass-strong flex flex-col gap-2 rounded-2xl px-2 py-2 max-w-3xl mx-auto transition-all duration-200 shadow-[0_4px_24px_rgba(0,0,0,0.3)] focus-within:border-neon focus-within:shadow-[0_0_24px_rgba(0,212,255,0.15),0_4px_24px_rgba(0,0,0,0.3)]">
+          <div className={`input-wrapper glass-strong flex flex-col gap-2 rounded-2xl px-2 py-2 max-w-3xl mx-auto transition-all duration-200 shadow-[0_4px_24px_rgba(0,0,0,0.3)] focus-within:border-neon focus-within:shadow-[0_0_24px_rgba(0,212,255,0.15),0_4px_24px_rgba(0,0,0,0.3)] ${modeChatBorderClass}`}>
             {renderVisionAttachment()}
             {renderDirectDocumentAttachments()}
             <div className="flex items-center gap-2">

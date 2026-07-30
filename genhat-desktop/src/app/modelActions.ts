@@ -21,6 +21,7 @@ import { useModelStore } from "../stores/modelStore";
 import { useUIStore } from "../stores/uiStore";
 import { useDownloadStore } from "../stores/downloadStore";
 import { useChatModeStore } from "../stores/chatModeStore";
+import { useCloudStore } from "../stores/cloudStore";
 
 export async function refreshModels(): Promise<RegisteredModel[]> {
   const modelStore = useModelStore.getState();
@@ -243,8 +244,15 @@ export async function ensureDownloadedAndSwitch(modelId: string): Promise<void> 
 export async function handleIntelligenceModeSelect(mode: IntelligenceMode): Promise<void> {
   const modelStore = useModelStore.getState();
   const uiStore = useUIStore.getState();
-  
-  if (mode === "deep") {
+  const { preferredMode } = useCloudStore.getState();
+
+  // In Cloud (or prefer-cloud auto) mode, intelligence tiers map 1:1 to cloud
+  // quality tiers, so switching tiers must NOT prompt a local model download or
+  // the local deep-load warning. Only the private/local path touches on-device
+  // models.
+  const cloudMode = preferredMode !== "local";
+
+  if (!cloudMode && mode === "deep") {
     const ok = await uiStore.confirmAction(
       "Deep mode",
       COPY.intelligenceDeepLoadWarning,
@@ -254,11 +262,17 @@ export async function handleIntelligenceModeSelect(mode: IntelligenceMode): Prom
     if (!ok) return;
   }
 
-  const modelId = localModelIdForMode(mode, modelStore.intelligenceMapping);
   writeIntelligenceMode(mode);
   modelStore.setIntelligenceMode(mode);
   modelStore.setUseSpecificModelPicker(false);
   writeSpecificModelPicker(false);
+
+  if (cloudMode) {
+    // Tier is set; cloud routing at send time uses cloudQualityModeForIntelligence.
+    return;
+  }
+
+  const modelId = localModelIdForMode(mode, modelStore.intelligenceMapping);
   await ensureDownloadedAndSwitch(modelId);
 }
 
@@ -292,6 +306,9 @@ export async function handleModelChangeFromPicker(path: string): Promise<void> {
 }
 
 export function handleChooseSpecificModel(): void {
+  const { preferredMode } = useCloudStore.getState();
+  // Cloud mode uses OpenRouter quality tiers only — no local model picker.
+  if (preferredMode !== "local") return;
   const modelStore = useModelStore.getState();
   modelStore.setUseSpecificModelPicker(true);
   writeSpecificModelPicker(true);
@@ -299,8 +316,10 @@ export function handleChooseSpecificModel(): void {
 
 export async function handleBackToIntelligenceTiers(): Promise<void> {
   const modelStore = useModelStore.getState();
+  const { preferredMode } = useCloudStore.getState();
   modelStore.setUseSpecificModelPicker(false);
   writeSpecificModelPicker(false);
+  if (preferredMode !== "local") return;
   await ensureDownloadedAndSwitch(
     localModelIdForMode(modelStore.intelligenceMode, modelStore.intelligenceMapping)
   );
@@ -445,6 +464,14 @@ export function getActiveRuntimeParamTarget(): {
 
 export function intelligenceDisplayMode(): IntelligenceMode | "custom" {
   const modelStore = useModelStore.getState();
+  const { preferredMode } = useCloudStore.getState();
+
+  // Cloud / prefer-cloud: Fast·Smart·Deep are quality tiers for OpenRouter.
+  // Always show the stored intelligence mode — do NOT derive from the local GGUF.
+  if (preferredMode !== "local") {
+    return modelStore.intelligenceMode;
+  }
+
   if (modelStore.useSpecificModelPicker) return "custom";
   const matched = resolveModeForModelId(modelStore.selectedModel, modelStore.intelligenceMapping);
   return matched ?? "custom";

@@ -34,6 +34,7 @@ import { useChatModeStore, setVisionUnlisten } from "../../stores/chatModeStore"
 import { useModelStore } from "../../stores/modelStore";
 import { useUIStore } from "../../stores/uiStore";
 import { useDownloadStore } from "../../stores/downloadStore";
+import { useCloudStore } from "../../stores/cloudStore";
 import { useTour } from "../useTour";
 
 export function useAppLifecycle() {
@@ -55,6 +56,7 @@ export function useAppLifecycle() {
   const intelligenceMapping = useModelStore(s => s.intelligenceMapping);
   const useSpecificModelPicker = useModelStore(s => s.useSpecificModelPicker);
   const intelligenceMode = useModelStore(s => s.intelligenceMode);
+  const preferredMode = useCloudStore(s => s.preferredMode);
   const chatMode = useChatModeStore(s => s.chatMode);
   const modeSwitchNotice = useUIStore(s => s.modeSwitchNotice);
   const settingsOpen = useUIStore(s => s.settingsOpen);
@@ -691,6 +693,9 @@ export function useAppLifecycle() {
 
   // Intelligence mode sync
   useEffect(() => {
+    // In Cloud mode, Fast/Smart/Deep are OpenRouter quality tiers and must not be
+    // overwritten by local GGUF mapping from the currently-selected local model id.
+    if (preferredMode !== "local") return;
     if (!selectedModel || useSpecificModelPicker) return;
     const matched = resolveModeForModelId(selectedModel, intelligenceMapping);
     if (matched && matched !== intelligenceMode) {
@@ -698,7 +703,7 @@ export function useAppLifecycle() {
       modelStore.setIntelligenceMode(matched);
       writeIntelligenceMode(matched);
     }
-  }, [selectedModel, intelligenceMapping, useSpecificModelPicker, intelligenceMode]);
+  }, [preferredMode, selectedModel, intelligenceMapping, useSpecificModelPicker, intelligenceMode]);
 
   // Clean up TTS and general timers on unmount
   useEffect(() => {

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from "react";
-import { X, Download, Loader2, Trash2, Sparkles, Save, CheckCircle, SlidersHorizontal, Cpu } from "lucide-react";
+import { X, Download, Loader2, Trash2, Sparkles, Save, CheckCircle, SlidersHorizontal, Cpu, Scissors } from "lucide-react";
 import type { RegisteredModel, RagModelPreferences } from "../types";
 import { KITTEN_TTS_VOICES } from "../types";
 import { Api, type CompatibilityRating } from "../api";
@@ -7,6 +7,10 @@ import InstallModelModal from "./InstallModelModal";
 import { DropdownSelect } from "./DropdownSelect";
 import { useAdvancedMode } from "../hooks/useAdvancedMode";
 import { useTheme, type ThemeName } from "../hooks/useTheme";
+import { handleManualContextCompaction } from "../app/sessionSendActions";
+import { useSessionStore } from "../stores/sessionStore";
+import { useChatModeStore } from "../stores/chatModeStore";
+import { useUIStore } from "../stores/uiStore";
 import {
   DEFAULT_INTELLIGENCE_MAPPING,
   INTELLIGENCE_MODE_OPTIONS,
@@ -332,6 +336,19 @@ const ModelsSettingsModal: React.FC<ModelsSettingsModalProps> = ({
 }) => {
   const { advanced, setAdvanced } = useAdvancedMode();
   const { theme, setTheme } = useTheme();
+  const setHfModalOpen = useUIStore((s) => s.setHfModalOpen);
+  const setHfModalPreset = useUIStore((s) => s.setHfModalPreset);
+  const sessions = useSessionStore((s) => s.sessions);
+  const activeSessionId = useSessionStore((s) => s.activeSessionId);
+  const contextUsageBySession = useSessionStore((s) => s.contextUsageBySession);
+  const contextCompacting = useSessionStore((s) => s.contextCompacting);
+  const chatMode = useChatModeStore((s) => s.chatMode);
+  const activeSession = sessions.find((s) => s.id === activeSessionId) ?? null;
+  const contextUsage = activeSession ? contextUsageBySession[activeSession.id] ?? null : null;
+  const canCompactContext =
+    !!activeSession &&
+    !activeSession.loading &&
+    (chatMode === "text" || chatMode === "mindmap");
   const [ragPrefs, setRagPrefs] = useState<RagModelPreferences>({
     embed_model_id: null,
     llm_model_id: null,
@@ -679,6 +696,55 @@ const ModelsSettingsModal: React.FC<ModelsSettingsModalProps> = ({
                   </button>
                 ))}
               </div>
+            </div>
+            <div className="flex items-center justify-between gap-3 py-1">
+              <div>
+                <div className="text-[0.85rem] font-semibold text-txt">Compact context</div>
+                <div className="text-[0.78rem] text-txt-muted">
+                  {contextUsage
+                    ? `Free space in the active chat (projected usage ${contextUsage.projectedPercent.toFixed(1)}%).`
+                    : "Compress older messages in the active chat to free context space."}
+                  {advanced
+                    ? " Model parameters are in the panel on the right when Advanced mode is on."
+                    : ""}
+                </div>
+              </div>
+              <button
+                type="button"
+                className="inline-flex items-center gap-1.5 py-1.5 px-3 text-[0.78rem] font-medium rounded-lg border border-glass-border bg-glass-bg text-txt-secondary hover:border-neon hover:text-neon disabled:opacity-50 disabled:cursor-not-allowed"
+                onClick={() => void handleManualContextCompaction()}
+                disabled={!canCompactContext || contextCompacting}
+                title={
+                  contextUsage
+                    ? `Compact conversation context (projected usage ${contextUsage.projectedPercent.toFixed(1)}%)`
+                    : "Compact conversation context"
+                }
+              >
+                {contextCompacting ? <Loader2 size={14} className="animate-spin" /> : <Scissors size={14} />}
+                {contextCompacting ? "Compacting..." : "Compact Context"}
+              </button>
+            </div>
+            <div className="flex items-center justify-between gap-3 py-1">
+              <div>
+                <div className="text-[0.85rem] font-semibold text-txt">Hugging Face</div>
+                <div className="text-[0.78rem] text-txt-muted">
+                  Search and import models from Hugging Face into NELA.
+                </div>
+              </div>
+              <button
+                type="button"
+                className="inline-flex items-center gap-1.5 py-1.5 px-3 text-[0.78rem] font-medium rounded-lg border border-glass-border bg-glass-bg text-txt-secondary hover:border-neon hover:text-neon"
+                onClick={() => {
+                  setHfModalPreset({ folder: "LLM", profile: "llm" });
+                  setHfModalOpen(true);
+                  onClose();
+                }}
+                title="Search Hugging Face"
+                data-tour="settings-hf"
+              >
+                <span aria-hidden="true">🤗</span>
+                Browse models
+              </button>
             </div>
           </div>
 

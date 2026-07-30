@@ -1,7 +1,9 @@
 import type { ElementType, ReactNode } from "react";
-import type { ChatContextUsage, WorkspaceRecord } from "../types";
-import PrivacyIndicator from "./PrivacyIndicator";
+import type { WorkspaceRecord } from "../types";
+import { COPY } from "../app/copy";
+import { useCloudStore } from "../stores/cloudStore";
 import WorkspaceSelector from "./WorkspaceSelector";
+import "./ModeBanner.css";
 
 interface AppMainTopBarProps {
   currentModeConfig: {
@@ -21,10 +23,8 @@ interface AppMainTopBarProps {
     modelId: string;
     message: string;
   };
-  contextUsage: ChatContextUsage | null;
   modeControls: ReactNode;
   networkActive?: boolean;
-  webEnabled?: boolean;
 }
 
 export default function AppMainTopBar({
@@ -39,14 +39,27 @@ export default function AppMainTopBar({
   modelLoadingStatus,
   modeControls,
   networkActive = false,
-  webEnabled = false,
 }: AppMainTopBarProps) {
   const CurrentModeIcon = currentModeConfig.icon;
+  const preferredMode = useCloudStore((s) => s.preferredMode);
+  const isCloud = preferredMode !== "local";
+  const modeLabel = isCloud ? COPY.modeCloudLabel : COPY.modePrivateLabel;
+  const modeSub = isCloud ? COPY.modeCloudSub : COPY.modePrivateSub;
 
   return (
-    <header className="min-h-14 py-2 flex items-center justify-between px-6 border-b border-glass-border bg-void-800/80 backdrop-blur-xl shrink-0 z-20">
+    <header className="app-main-topbar min-h-14 py-2 flex items-center justify-between px-6 border-b border-glass-border bg-void-800/80 backdrop-blur-xl shrink-0 z-40">
       <div className="flex flex-col items-start gap-1.5">
-        <PrivacyIndicator networkActive={networkActive} webEnabled={webEnabled} />
+        <div
+          className="inline-flex items-center gap-1.5 text-[0.78rem] font-medium text-txt-secondary"
+          title={isCloud ? COPY.modeCloudTooltip : COPY.modePrivateTooltip}
+        >
+          <span className="font-semibold text-txt">{modeLabel}</span>
+          <span>· {modeSub}</span>
+          {networkActive && (
+            <span className="ml-1 text-warning">{COPY.modeDownloading}</span>
+          )}
+        </div>
+
         <div className="flex items-center gap-2.5">
           <CurrentModeIcon size={18} strokeWidth={1.8} className="text-neon" />
           <h1 className="text-[0.95rem] font-semibold m-0 text-txt">{currentModeConfig.label}</h1>
@@ -71,8 +84,6 @@ export default function AppMainTopBar({
             <span>{modelLoadingStatus.message || "Loading model..."}</span>
           </div>
         )}
-
-        
       </div>
 
       {modeControls}
