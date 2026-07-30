@@ -362,6 +362,8 @@ fn main() {
             // RAG commands
             app_lib::commands::rag::ingest_document,
             app_lib::commands::rag::ingest_folder,
+            app_lib::commands::rag::list_fs_entries,
+            app_lib::commands::rag::list_fs_roots,
             app_lib::commands::rag::query_rag,
             app_lib::commands::rag::list_rag_documents,
             app_lib::commands::rag::delete_rag_document,

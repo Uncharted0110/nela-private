@@ -196,8 +196,6 @@ pub struct CloudChatGeneration {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct CloudChatClientMeta {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub app_version: Option<String>,

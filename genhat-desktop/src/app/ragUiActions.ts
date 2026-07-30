@@ -1,6 +1,8 @@
 import { open } from "@tauri-apps/plugin-dialog";
 import { Api } from "../api";
 import type { IngestionStatus } from "../types";
+import type { RagSourceSelection } from "../stores/ragSourcePickerStore";
+import { openRagSourcePicker } from "../stores/ragSourcePickerStore";
 import { useChatModeStore } from "../stores/chatModeStore";
 import { useUIStore } from "../stores/uiStore";
 import { loadRagDocs } from "./workspaceBridge";
@@ -68,63 +70,83 @@ export async function attachDirectDocuments(): Promise<void> {
   }
 }
 
+function getBaseName(p: string): string {
+  return p.split(/[\\/]/).pop() || p;
+}
+
+async function ingestSelectedSources(selection: RagSourceSelection): Promise<void> {
+  const chatModeStore = useChatModeStore.getState();
+  const uiStore = useUIStore.getState();
+
+  const filePaths = selection.filePaths ?? [];
+  const folderPaths = selection.folderPaths ?? [];
+  if (filePaths.length === 0 && folderPaths.length === 0) return;
+
+  // Add placeholder entries to the side panel immediately so users can
+  // see what is being indexed while ingestion is still running.
+  const allTargets: Array<{ path: string; isFolder: boolean }> = [
+    ...filePaths.map((p) => ({ path: p, isFolder: false })),
+    ...folderPaths.map((p) => ({ path: p, isFolder: true })),
+  ];
+
+  const placeholders: IngestionStatus[] = allTargets.map((t, i) => ({
+    doc_id: -(i + 1), // negative IDs to avoid clashing with real docs
+    title: getBaseName(t.path),
+    file_path: t.path,
+    total_chunks: 0,
+    embedded_chunks: 0,
+    enriched_chunks: 0,
+    phase: "ingesting",
+  }));
+
+  chatModeStore.setRagDocs((prev) => [...placeholders, ...prev]);
+  chatModeStore.setRagIngesting(true);
+
+  try {
+    const results = await Promise.allSettled(
+      allTargets.map((t) => {
+        return t.isFolder
+          ? Api.ingestFolder(t.path).then(async () => {
+              await loadRagDocs();
+            })
+          : Api.ingestDocument(t.path).then(async () => {
+              await loadRagDocs();
+            });
+      }),
+    );
+
+    await loadRagDocs();
+
+    const failures = results.filter((r) => r.status === "rejected");
+    if (failures.length > 0) {
+      const msgs = failures
+        .map((r) => (r as PromiseRejectedResult).reason)
+        .join("\n");
+      alert(`${failures.length} source(s) failed to ingest:\n${msgs}`);
+    }
+  } catch (e) {
+    console.error(e);
+    uiStore.showError(`Ingest failed: ${e instanceof Error ? e.message : String(e)}`);
+    await loadRagDocs();
+  } finally {
+    chatModeStore.setRagIngesting(false);
+    await loadRagDocs();
+  }
+}
+
 export async function ingestFile(): Promise<void> {
   const chatModeStore = useChatModeStore.getState();
   const uiStore = useUIStore.getState();
   
   try {
-    const selected = await open({
-      multiple: true,
-      filters: [
-        {
-          name: "Documents",
-          extensions: DOCUMENT_PICKER_EXTENSIONS,
-        },
-      ],
-    });
-    if (!selected) return;
-    const files = Array.isArray(selected) ? selected : [selected];
-    if (files.length === 0) return;
-
-    // Add placeholder entries to the side panel immediately so users can
-    // click to view the file while ingestion is still running.
-    const placeholders: IngestionStatus[] = files.map((f, i) => ({
-      doc_id: -(i + 1), // negative IDs to avoid clashing with real docs
-      title: f.split(/[\\/]/).pop() || f,
-      file_path: f,
-      total_chunks: 0,
-      embedded_chunks: 0,
-      enriched_chunks: 0,
-      phase: "ingesting",
-    }));
-    chatModeStore.setRagDocs((prev) => [...placeholders, ...prev]);
-
-    chatModeStore.setRagIngesting(true);
-
-    // Ingest all files in parallel so the UI doesn't hang waiting on each one.
-    // As each file finishes, refresh the doc list to replace its placeholder.
-    const results = await Promise.allSettled(
-      files.map((f) =>
-        Api.ingestDocument(f).then(async (res) => {
-          await loadRagDocs(); // refresh side panel as each file completes
-          return res;
-        })
-      )
-    );
-
-    await loadRagDocs();
-    chatModeStore.setRagIngesting(false);
-
-    const failures = results.filter((r) => r.status === "rejected");
-    if (failures.length > 0) {
-      const msgs = failures.map((r) => (r as PromiseRejectedResult).reason).join("\n");
-      alert(`${failures.length} file(s) failed to ingest:\n${msgs}`);
-    }
+    const selection = await openRagSourcePicker({ allowedExtensions: DOCUMENT_PICKER_EXTENSIONS });
+    if (!selection) return; // user cancelled
+    await ingestSelectedSources(selection);
   } catch (e) {
     console.error(e);
     chatModeStore.setRagIngesting(false);
     await loadRagDocs();
-    uiStore.showError(`Ingest failed: ${e}`);
+    uiStore.showError(`Ingest failed: ${e instanceof Error ? e.message : String(e)}`);
   }
 }
 
@@ -133,13 +155,9 @@ export async function ingestDir(): Promise<void> {
   const uiStore = useUIStore.getState();
   
   try {
-    const selected = await open({ directory: true });
-    if (selected && typeof selected === "string") {
-      chatModeStore.setRagIngesting(true);
-      await Api.ingestFolder(selected);
-      await loadRagDocs();
-      chatModeStore.setRagIngesting(false);
-    }
+    const selection = await openRagSourcePicker({ allowedExtensions: DOCUMENT_PICKER_EXTENSIONS });
+    if (!selection) return;
+    await ingestSelectedSources(selection);
   } catch (e) {
     console.error(e);
     chatModeStore.setRagIngesting(false);

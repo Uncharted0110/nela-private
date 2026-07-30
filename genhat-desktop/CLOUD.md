@@ -2,18 +2,18 @@
 
 Run the API and desktop against **localhost** (local Postgres). No Neon required for this phase.
 
-## 1. API (`NELA-Webpage`)
+## 1. API (`nela-backend`)
 
 ```bash
-cd NELA-Webpage
+cd nela-backend
 # Ensure .env has:
-#   DATABASE_URL=postgresql://...@localhost:5432/nela
+#   DATABASE_URL=postgresql://...   # Neon (or local Postgres)
 #   OPENROUTER_MANAGEMENT_KEY=...   # preferred; mints completion keys on boot
 #   CLOUD_ENTITLEMENT_OVERRIDE=pro  # unlock Smart/Deep for local testing
 #   TOKEN_ENCRYPTION_KEY_BASE64=... # optional locally (plain: storage if unset)
 
 npm run db:push          # first time / schema changes
-npm run dev:api          # http://localhost:3001
+npm run dev              # http://localhost:3001
 ```
 
 On boot, `ensureDefaultPools` mints free/paid `ProviderKey` rows via the Management API.
