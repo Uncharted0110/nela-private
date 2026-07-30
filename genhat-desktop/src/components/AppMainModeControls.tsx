@@ -1,7 +1,5 @@
-import { Globe, Loader2, Scissors, SlidersHorizontal } from "lucide-react";
 import { useEffect, useState } from "react";
 import type {
-  ChatContextUsage,
   ChatMode,
   ModelFile,
   RegisteredModel,
@@ -13,7 +11,9 @@ import { COPY } from "../app/copy";
 import GlassDropdown from "./GlassDropdown";
 import ModelSelector from "./ModelSelector";
 import IntelligenceModeSelector from "./IntelligenceModeSelector";
+import ModeBanner from "./ModeBanner";
 import { useAdvancedMode } from "../hooks/useAdvancedMode";
+import { useCloudStore } from "../stores/cloudStore";
 import "./IntelligenceModeSelector.css";
 import {
   inferStyle,
@@ -46,15 +46,7 @@ interface AppMainModeControlsProps {
   onSelectVisionModel: (modelId: string) => void;
   onAddVisionModel: () => void;
   activeRuntimeParamTarget: RuntimeParamsTarget | null;
-  paramsDockOpen: boolean;
-  onToggleParamsDock: () => void;
   onApplyRuntimeParams: (nextParams: Record<string, string>) => Promise<void>;
-  webEnabled?: boolean;
-  onToggleWebEnabled?: (enabled: boolean) => void;
-  contextUsage: ChatContextUsage | null;
-  onCompactContext: () => void;
-  canCompactContext: boolean;
-  isCompactingContext: boolean;
   modelSwitching?: boolean;
   modelSwitchingLabel?: string;
   intelligenceMode: IntelligenceMode | "custom";
@@ -83,15 +75,7 @@ export default function AppMainModeControls({
   onSelectVisionModel,
   onAddVisionModel,
   activeRuntimeParamTarget,
-  paramsDockOpen,
-  onToggleParamsDock,
   onApplyRuntimeParams,
-  webEnabled = false,
-  onToggleWebEnabled,
-  contextUsage,
-  onCompactContext,
-  canCompactContext,
-  isCompactingContext,
   modelSwitching = false,
   modelSwitchingLabel = "",
   intelligenceMode,
@@ -101,6 +85,8 @@ export default function AppMainModeControls({
   onBackToIntelligenceTiers,
 }: AppMainModeControlsProps) {
   const { advanced } = useAdvancedMode();
+  const preferredMode = useCloudStore((s) => s.preferredMode);
+  const cloudMode = preferredMode !== "local";
   const disabledStyle = !!activeRuntimeParamTarget && activeRuntimeParamTarget.backend !== "LlamaServer";
   const inferredStyle = activeRuntimeParamTarget ? inferStyle(activeRuntimeParamTarget.params) : "balanced";
   const [styleValue, setStyleValue] = useState<ResponseStyle>(inferredStyle);
@@ -109,9 +95,21 @@ export default function AppMainModeControls({
     setStyleValue(inferredStyle);
   }, [inferredStyle]);
 
-  const canToggleWeb = chatMode === "text" && typeof onToggleWebEnabled === "function";
-
   const renderLlmPicker = () => {
+    // Cloud mode: Fast/Smart/Deep stay fully selectable as OpenRouter quality tiers.
+    // No local model switch UI, downloads, or "Choose a specific model".
+    if (cloudMode) {
+      return (
+        <IntelligenceModeSelector
+          mode={intelligenceMode}
+          switching={false}
+          onSelectMode={onSelectIntelligenceMode}
+          onChooseSpecificModel={onChooseSpecificModel}
+          hideSpecificModel
+        />
+      );
+    }
+
     if (useSpecificModelPicker) {
       return (
         <div className="intelligence-picker-row">
@@ -198,81 +196,35 @@ export default function AppMainModeControls({
         />
       )}
 
-      {activeRuntimeParamTarget && (
-        advanced ? (
-          <button
-            type="button"
-            className={`glass-btn inline-flex items-center gap-1.5 py-1.5 px-3 text-[0.78rem] font-medium rounded-lg cursor-pointer transition-all duration-200 border backdrop-blur-md ${paramsDockOpen ? "bg-neon-subtle text-neon border-neon/30 shadow-[0_0_12px_rgba(0,212,255,0.12)]" : "bg-glass-bg text-txt-secondary border-glass-border hover:border-neon hover:text-neon hover:shadow-[0_0_12px_rgba(0,212,255,0.08)]"}`}
-            onClick={onToggleParamsDock}
-            title="Model parameters"
-            aria-label="Model parameters"
-          >
-            <SlidersHorizontal size={14} />
-            Parameters
-          </button>
-        ) : (
-          <div className="min-w-[180px]">
-            <GlassDropdown
-              value={styleValue}
-              options={RESPONSE_STYLE_OPTIONS.map((o) => ({
-                value: o.key,
-                label: o.label,
-                disabled: disabledStyle,
-              }))}
-              onChange={(value) => {
-                const style = value as ResponseStyle;
-                setStyleValue(style);
-                void (async () => {
-                  try {
-                    await onApplyRuntimeParams(RESPONSE_STYLE_PRESETS[style]);
-                  } catch {
-                    setStyleValue(inferredStyle);
-                  }
-                })();
-              }}
-              disabled={disabledStyle}
-              placeholder="Response style"
-              buttonClassName="glass-btn inline-flex items-center gap-1.5 py-1.5 px-3 text-[0.78rem] font-medium rounded-lg cursor-pointer transition-all duration-200 border backdrop-blur-md bg-glass-bg text-txt-secondary border-glass-border hover:border-neon hover:text-neon hover:shadow-[0_0_12px_rgba(0,212,255,0.08)]"
-            />
-          </div>
-        )
+      {/* Response style stays for simple (non-advanced) local mode only — full params live in Settings. */}
+      {!cloudMode && !advanced && activeRuntimeParamTarget && (
+        <div className="min-w-[180px]">
+          <GlassDropdown
+            value={styleValue}
+            options={RESPONSE_STYLE_OPTIONS.map((o) => ({
+              value: o.key,
+              label: o.label,
+              disabled: disabledStyle,
+            }))}
+            onChange={(value) => {
+              const style = value as ResponseStyle;
+              setStyleValue(style);
+              void (async () => {
+                try {
+                  await onApplyRuntimeParams(RESPONSE_STYLE_PRESETS[style]);
+                } catch {
+                  setStyleValue(inferredStyle);
+                }
+              })();
+            }}
+            disabled={disabledStyle}
+            placeholder="Response style"
+            buttonClassName="glass-btn inline-flex items-center gap-1.5 py-1.5 px-3 text-[0.78rem] font-medium rounded-lg cursor-pointer transition-all duration-200 border backdrop-blur-md bg-glass-bg text-txt-secondary border-glass-border hover:border-neon hover:text-neon hover:shadow-[0_0_12px_rgba(0,212,255,0.08)]"
+          />
+        </div>
       )}
 
-      {chatMode === "text" && (
-        <button
-          type="button"
-          className={`glass-btn inline-flex items-center justify-center w-10 h-10 rounded-lg border transition-colors duration-150 ${
-            webEnabled
-              ? "bg-neon-subtle text-neon border-neon/30"
-              : "bg-glass-bg text-txt-muted border-glass-border hover:text-txt"
-          } ${canToggleWeb ? "" : "opacity-50 cursor-not-allowed"}`}
-          onClick={() => {
-            if (!canToggleWeb) return;
-            onToggleWebEnabled?.(!webEnabled);
-          }}
-          title={webEnabled ? "Web search is on" : "Web search is off"}
-          aria-label={webEnabled ? "Turn off web search" : "Turn on web search"}
-          disabled={!canToggleWeb}
-        >
-          <Globe size={16} strokeWidth={1.9} />
-        </button>
-      )}
-
-      {(chatMode === "text" || chatMode === "mindmap") && (
-        <button
-          className="glass-btn inline-flex items-center gap-1.5 py-1.5 px-3 text-[0.78rem] font-medium rounded-lg cursor-pointer transition-all duration-200 border border-glass-border bg-glass-bg text-txt-secondary hover:border-neon hover:text-neon disabled:opacity-50 disabled:cursor-not-allowed"
-          onClick={onCompactContext}
-          disabled={!canCompactContext || isCompactingContext}
-          title={
-            contextUsage
-              ? `Compact conversation context (projected usage ${contextUsage.projectedPercent.toFixed(1)}%)`
-              : "Compact conversation context"
-          }
-        >
-          {isCompactingContext ? <Loader2 size={14} className="animate-spin" /> : <Scissors size={14} />}
-          {isCompactingContext ? "Compacting..." : "Compact Context"}
-        </button>
-      )}
+      {(chatMode === "text" || chatMode === "mindmap") && <ModeBanner />}
     </div>
   );
 }

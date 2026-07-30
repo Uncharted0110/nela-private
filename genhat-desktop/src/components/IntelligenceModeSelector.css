@@ -65,7 +65,7 @@
   border-radius: 12px;
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
   padding: 4px;
-  z-index: 100;
+  z-index: 200;
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
 }

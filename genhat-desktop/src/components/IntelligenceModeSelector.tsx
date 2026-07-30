@@ -18,6 +18,8 @@ interface IntelligenceModeSelectorProps {
   switchingLabel?: string;
   onSelectMode: (mode: IntelligenceMode) => void;
   onChooseSpecificModel: () => void;
+  /** When true, hide "Choose a specific model" (used in Cloud mode). */
+  hideSpecificModel?: boolean;
 }
 
 const IntelligenceModeSelector: React.FC<IntelligenceModeSelectorProps> = ({
@@ -26,6 +28,7 @@ const IntelligenceModeSelector: React.FC<IntelligenceModeSelectorProps> = ({
   switchingLabel = "",
   onSelectMode,
   onChooseSpecificModel,
+  hideSpecificModel = false,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -73,10 +76,21 @@ const IntelligenceModeSelector: React.FC<IntelligenceModeSelectorProps> = ({
 
       {isOpen && !switching && (
         <div className="intelligence-dropdown">
-          <div className="intelligence-dropdown-header">Intelligence</div>
+          <div className="intelligence-dropdown-header">
+            {hideSpecificModel ? "Cloud quality" : "Intelligence"}
+          </div>
           {INTELLIGENCE_MODE_OPTIONS.map((option) => {
             const Icon = MODE_ICONS[option.key];
             const active = mode === option.key;
+            const hint = hideSpecificModel
+              ? option.key === "fast"
+                ? "Quick cloud answers — OpenRouter picks the model."
+                : option.key === "smart"
+                  ? "Balanced cloud reasoning — OpenRouter picks the model."
+                  : option.key === "deep"
+                    ? "Highest cloud quality — OpenRouter picks the model."
+                    : "OpenRouter chooses the best cloud model automatically."
+              : option.hint;
             return (
               <button
                 key={option.key}
@@ -90,22 +104,26 @@ const IntelligenceModeSelector: React.FC<IntelligenceModeSelectorProps> = ({
                 <Icon size={15} />
                 <span className="intelligence-option-copy">
                   <span className="intelligence-option-label">{option.label}</span>
-                  <span className="intelligence-option-hint">{option.hint}</span>
+                  <span className="intelligence-option-hint">{hint}</span>
                 </span>
               </button>
             );
           })}
-          <div className="intelligence-dropdown-divider" />
-          <button
-            type="button"
-            className="intelligence-specific-link"
-            onClick={() => {
-              onChooseSpecificModel();
-              setIsOpen(false);
-            }}
-          >
-            {COPY.intelligenceChooseModel}
-          </button>
+          {!hideSpecificModel && (
+            <>
+              <div className="intelligence-dropdown-divider" />
+              <button
+                type="button"
+                className="intelligence-specific-link"
+                onClick={() => {
+                  onChooseSpecificModel();
+                  setIsOpen(false);
+                }}
+              >
+                {COPY.intelligenceChooseModel}
+              </button>
+            </>
+          )}
         </div>
       )}
     </div>
