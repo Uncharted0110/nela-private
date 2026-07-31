@@ -1,7 +1,8 @@
 /**
- * Presentation JSON plan prompts — split for OpenRouter prompt caching.
+ * Presentation prompts — local JSON+GBNF, cloud JSON (free/fast), cloud HTML (capable).
  */
 
+/** Local / constrained schema (used with GBNF on device). */
 export const PRESENTATION_SCHEMA_STATIC = `You generate ONLY a JSON presentation plan. No markdown, no code fences, no commentary.
 
 Schema:
@@ -25,31 +26,88 @@ Content rules:
 - Use ≥4 different layouts. Avoid Q&A / References / Final Thoughts unless asked.
 - Theme must match the topic.`;
 
+/**
+ * Cloud structured JSON for free/fast models — reliable content, desktop renders HTML.
+ * Weaker models truncate freeform HTML mid-CSS and produce blank black pages.
+ */
+export const PRESENTATION_CLOUD_JSON_STATIC = `You generate ONLY a JSON presentation plan. No markdown, no code fences, no commentary.
+
+Schema:
+{"slides":[{"title":"string","layout":"TITLE"|"SECTION"|"BULLET"|"TWO_COLUMN"|"IMAGE_LEFT"|"STAT"|"QUOTE"|"CARDS"|"COMPARISON"|"CENTERED","bullets":["string"],"notes":"string","left_title":"string","right_title":"string","left":["string"],"right":["string"]}],"theme":"midnight"|"corporate"|"sunset"|"minimal"|"academic"|"cyber"|"ocean"|"forest"|"lavender"|"neon"|"rose"|"slate","output_name":"string"}
+
+Content rules:
+- Answer the USER'S REQUEST exactly. Never pivot to worksheets, crafts, card projects, or unrelated products.
+- Pack each slide with concrete facts (names, dates, places, figures). Bullets should be 15–40 words when possible — not one-word stubs.
+- First slide TITLE; later slides use varied layouts. Prefer 6–10 slides unless the user asked for a count.
+- Theme should fit the tone (somber history → midnight/rose; business → corporate).
+- Set output_name to a short filename-friendly title.`;
+
+/**
+ * Cloud freeform HTML for capable models (Smart/Deep on paid tiers).
+ */
+export const PRESENTATION_CLOUD_HTML_STATIC = `You generate a complete, self-contained HTML slide presentation. Output ONLY the HTML document — no markdown fences, no JSON, no commentary before or after.
+
+CRITICAL OUTPUT RULES:
+- Start with <!DOCTYPE html> and include <html>, <head>, and <body>. Never omit <body>.
+- Do NOT return JSON (no {"slides":...}). HTML only.
+- WRITE ORDER (mandatory to avoid blank decks): put the full <body> with ALL slide markup and text FIRST, then a compact <style>, then <script>. Never write a long stylesheet before slide content.
+- Keep CSS under ~80 lines. Prefer simple layouts over elaborate gradients.
+- Build a multi-slide deck with arrow-key / button navigation and a slide counter.
+- Mark each slide with class="slide". First slide must include class="slide active" so something is visible immediately.
+- Complete creative freedom on colors/fonts — but content first, polish second.
+- Content must be RICH and specific. Prefer 6–10 slides unless the user asked for a count.
+- Stay on the USER'S TOPIC. Ignore off-topic web results (worksheets, crafts, product listings).
+- Set <title> to a short accurate deck title.`;
+
 export type PresentationSystemParts = {
   cacheable: string;
   dynamic: string;
 };
 
+export type CloudPresentationMode = "html" | "json" | "local";
+
 export function buildPresentationSystemParts(options: {
   slideCountInstruction: string;
   sourceDocumentRules: string;
+  /** @deprecated Prefer cloudMode */
+  cloudFreeform?: boolean;
+  cloudMode?: CloudPresentationMode;
 }): PresentationSystemParts {
+  const mode: CloudPresentationMode =
+    options.cloudMode ??
+    (options.cloudFreeform ? "html" : "local");
+
   const dynamic = [
     `- ${options.slideCountInstruction}`,
     options.sourceDocumentRules.trim(),
+    mode !== "local"
+      ? "- Honor the user's topic exactly. Web research is optional supporting context — never let it replace the requested subject."
+      : "",
   ]
     .filter(Boolean)
     .join("\n");
 
-  return { cacheable: PRESENTATION_SCHEMA_STATIC, dynamic };
+  const cacheable =
+    mode === "html"
+      ? PRESENTATION_CLOUD_HTML_STATIC
+      : mode === "json"
+        ? PRESENTATION_CLOUD_JSON_STATIC
+        : PRESENTATION_SCHEMA_STATIC;
+
+  return { cacheable, dynamic };
 }
 
 export function buildPresentationSystemPrompt(options: {
   slideCountInstruction: string;
   sourceDocumentRules: string;
+  cloudFreeform?: boolean;
+  cloudMode?: CloudPresentationMode;
 }): string {
   const parts = buildPresentationSystemParts(options);
   return parts.dynamic
     ? `${parts.cacheable}\n\n${parts.dynamic}`
     : parts.cacheable;
 }
+
+/** @deprecated Prefer PRESENTATION_CLOUD_HTML_STATIC / PRESENTATION_CLOUD_JSON_STATIC */
+export const PRESENTATION_CLOUD_SCHEMA_STATIC = PRESENTATION_CLOUD_JSON_STATIC;

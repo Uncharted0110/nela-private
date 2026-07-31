@@ -7,7 +7,7 @@ use tauri::{AppHandle, Emitter, Manager};
 fn app_data_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
     app.path()
         .app_data_dir()
-        .map_err(|e| format!("app_data_dir error: {e}"))
+        .map_err(|_| "Something went wrong on this device. Please try again.".to_string())
 }
 
 /// Start a cloud chat stream.

@@ -125,6 +125,11 @@ function isEmptyOrPlaceholder(slide: Record<string, unknown>): boolean {
 export interface NormalizePresentationOptions {
   /** Desired slide count (informational / passed through for backend). */
   targetSlideCount?: number;
+  /**
+   * Cloud freeform: keep almost all model slides; only drop truly empty ones
+   * and normalize field names — do not rewrite content or force outlines.
+   */
+  lightRepair?: boolean;
 }
 
 /**
@@ -141,11 +146,12 @@ export function normalizePresentationPlan(
     Math.min(20, options?.targetSlideCount ?? 6)
   );
   const repaired = { ...plan };
+  const light = Boolean(options?.lightRepair);
 
   const slidesRaw = Array.isArray(repaired.slides) ? repaired.slides : [];
   let slides = slidesRaw
     .map((slide, i) => normalizeSlide(slide, i, topic))
-    .filter((s) => !isEmptyOrPlaceholder(s));
+    .filter((s) => (light ? !isUtterlyEmpty(s) : !isEmptyOrPlaceholder(s)));
 
   // Deduplicate accidental repeated TITLE slides (keep first).
   let sawTitle = false;
@@ -159,7 +165,6 @@ export function normalizePresentationPlan(
   });
 
   if (slides.length === 0) {
-    // Absolute last resort: one honest title slide — no fake body paragraphs.
     slides = [
       {
         title: topic,
@@ -170,14 +175,38 @@ export function normalizePresentationPlan(
         ],
       },
     ];
-  } else if (readString(slides[0].layout) !== "TITLE") {
+  } else if (!light && readString(slides[0].layout) !== "TITLE") {
     slides[0] = { ...slides[0], layout: "TITLE" };
+  } else if (light && readString(slides[0].layout) !== "TITLE") {
+    // Soft preference only: keep model layout if it has real content.
+    const first = slides[0]!;
+    const bullets = Array.isArray(first.bullets) ? first.bullets : [];
+    if (bullets.length === 0 && !readString(first.notes)) {
+      slides[0] = { ...first, layout: "TITLE" };
+    }
   }
 
+  // Prefer model theme when present; do not overwrite here.
   repaired.slides = slides;
   repaired._prompt = userPrompt;
   repaired._target_slides = target;
   return repaired;
+}
+
+/** Only drop slides with no title and no body at all. */
+function isUtterlyEmpty(slide: Record<string, unknown>): boolean {
+  const title = readString(slide.title);
+  const bullets = Array.isArray(slide.bullets)
+    ? slide.bullets.map((b) => readString(b)).filter(Boolean)
+    : [];
+  const notes = readString(slide.notes);
+  const left = Array.isArray(slide.left)
+    ? slide.left.map((b) => readString(b)).filter(Boolean)
+    : [];
+  const right = Array.isArray(slide.right)
+    ? slide.right.map((b) => readString(b)).filter(Boolean)
+    : [];
+  return !title && bullets.length === 0 && !notes && left.length === 0 && right.length === 0;
 }
 
 /** @deprecated Kept for any external imports; prefer not fabricating outlines. */

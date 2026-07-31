@@ -28,18 +28,25 @@ fn read_store(app_data_dir: &Path) -> Result<StoredCloudTokens, String> {
     if !path.exists() {
         return Ok(StoredCloudTokens::default());
     }
-    let raw = std::fs::read_to_string(&path)
-        .map_err(|e| format!("Failed to read cloud tokens: {e}"))?;
-    serde_json::from_str(&raw).map_err(|e| format!("Failed to parse cloud tokens: {e}"))
+    let raw = std::fs::read_to_string(&path).map_err(|_| {
+        "Something went wrong reading your sign-in info. Please try again.".to_string()
+    })?;
+    serde_json::from_str(&raw).map_err(|_| {
+        "Something went wrong reading your sign-in info. Please try again.".to_string()
+    })
 }
 
 fn write_store(app_data_dir: &Path, store: &StoredCloudTokens) -> Result<(), String> {
-    std::fs::create_dir_all(app_data_dir)
-        .map_err(|e| format!("Failed to create app data dir: {e}"))?;
+    std::fs::create_dir_all(app_data_dir).map_err(|_| {
+        "Something went wrong saving your sign-in. Please try again.".to_string()
+    })?;
     let path = token_path(app_data_dir);
-    let raw = serde_json::to_string_pretty(store)
-        .map_err(|e| format!("Failed to serialize cloud tokens: {e}"))?;
-    std::fs::write(&path, raw).map_err(|e| format!("Failed to write cloud tokens: {e}"))?;
+    let raw = serde_json::to_string_pretty(store).map_err(|_| {
+        "Something went wrong saving your sign-in. Please try again.".to_string()
+    })?;
+    std::fs::write(&path, raw).map_err(|_| {
+        "Something went wrong saving your sign-in. Please try again.".to_string()
+    })?;
 
     // Restrictive permissions on Unix; Windows ACLs are left to the OS user profile.
     #[cfg(unix)]
@@ -89,7 +96,9 @@ pub fn clear_tokens(app_data_dir: &Path) -> Result<(), String> {
     set_access_token(None);
     let path = token_path(app_data_dir);
     if path.exists() {
-        std::fs::remove_file(&path).map_err(|e| format!("Failed to remove cloud tokens: {e}"))?;
+        std::fs::remove_file(&path).map_err(|_| {
+            "Something went wrong signing you out. Please try again.".to_string()
+        })?;
     }
     Ok(())
 }

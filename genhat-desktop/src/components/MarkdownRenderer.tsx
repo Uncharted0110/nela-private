@@ -12,6 +12,11 @@ import { Api } from "../api";
 
 interface MarkdownRendererProps {
   content: string;
+  /**
+   * When true, skip expensive rehype plugins (highlight / katex / raw HTML) so
+   * each streamed token paints quickly. Final messages use the full pipeline.
+   */
+  streaming?: boolean;
 }
 
 /** Recursively extract plain text from React nodes (handles rehype-highlight spans). */
@@ -190,7 +195,21 @@ function preprocessMarkdown(md: string): string {
   );
 }
 
-const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content }) => {
+const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
+  content,
+  streaming = false,
+}) => {
+  // While tokens arrive, prefer plain text so incomplete markdown / heavy rehype
+  // work cannot stall paints (rehype-raw especially can "eat" unfinished tags).
+  if (streaming) {
+    return (
+      <div className="markdown-body whitespace-pre-wrap break-words">
+        {content}
+        <span className="inline-block w-1.5 h-4 ml-0.5 align-text-bottom bg-neon/70 animate-pulse" />
+      </div>
+    );
+  }
+
   const processed = preprocessMarkdown(content);
   return (
     <div className="markdown-body">

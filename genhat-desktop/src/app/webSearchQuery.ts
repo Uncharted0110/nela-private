@@ -39,7 +39,7 @@ export function webContextCharLimit(contextWindowTokens: number): number {
   return 12000;
 }
 
-/** Strict grounding instructions prepended to web context for artifacts. */
+/** Strict grounding for spreadsheets / numeric artifacts. */
 export function webArtifactGroundingPreamble(): string {
   return (
     "VERIFIED WEB SOURCES (source of truth for this artifact):\n" +
@@ -47,5 +47,17 @@ export function webArtifactGroundingPreamble(): string {
     "- Do NOT invent, estimate, or guess numbers, names, dates, or rankings.\n" +
     "- If sources conflict or omit data, leave cells blank or note \"unverified\" — do not fabricate.\n" +
     "- For tables/lists: copy values exactly as written in the source text.\n\n"
+  );
+}
+
+/** Presentation grounding: user topic wins; web is supporting research only. */
+export function webPresentationGroundingPreamble(): string {
+  return (
+    "WEB RESEARCH (supporting context only — not the assignment):\n" +
+    "- The USER REQUEST is the subject of the deck. Do not switch topics.\n" +
+    "- Use these excerpts for accurate dates, names, places, and figures when they match that subject.\n" +
+    "- IGNORE classroom worksheets, craft/card projects, Teachers Pay Teachers listings, " +
+    "shopping pages, lesson-plan products, or anything that is not about the user's requested subject.\n" +
+    "- If web results are off-topic, discard them and rely on accurate general knowledge of the subject.\n\n"
   );
 }

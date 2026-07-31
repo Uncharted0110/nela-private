@@ -1,6 +1,7 @@
 //! HTTP client for NELA Cloud API.
 //!
 //! Attaches Bearer access tokens and auto-refreshes on HTTP 401.
+//! User-facing errors stay non-technical; details stay in logs only.
 
 use crate::cloud::profile_cache;
 use crate::cloud::token_store;
@@ -26,8 +27,7 @@ fn refresh_lock() -> Arc<Mutex<()>> {
         .clone()
 }
 
-fn api_url(path: &str) -> String {
-    let base = crate::cloud::api_base_url();
+fn api_url_for(base: &str, path: &str) -> String {
     format!(
         "{}/{}",
         base.trim_end_matches('/'),
@@ -41,21 +41,83 @@ fn http_client() -> Result<reqwest::Client, String> {
         .tcp_nodelay(true)
         .pool_max_idle_per_host(2)
         .build()
-        .map_err(|e| format!("Failed to build HTTP client: {e}"))
+        .map_err(|_| "Couldn't connect right now. Please try again.".to_string())
+}
+
+fn is_transport_error(err: &reqwest::Error) -> bool {
+    err.is_connect() || err.is_timeout() || err.is_request()
+}
+
+fn friendly_transport_error() -> String {
+    "We couldn't reach NELA Cloud. Check your internet connection and try again.".to_string()
+}
+
+fn friendly_http_error(status: StatusCode) -> String {
+    match status.as_u16() {
+        401 | 403 => "Please sign in again to continue.".to_string(),
+        404 => "We couldn't find what you were looking for. Please try again.".to_string(),
+        408 | 504 => "That took too long. Please try again.".to_string(),
+        429 => "Too many requests. Please wait a moment and try again.".to_string(),
+        400..=499 => "Something went wrong with that request. Please try again.".to_string(),
+        500..=599 => "NELA Cloud is having trouble right now. Please try again in a moment.".to_string(),
+        _ => "Something went wrong. Please try again.".to_string(),
+    }
+}
+
+fn friendly_api_body_message(body: &str, status: StatusCode) -> String {
+    let lower = body.to_lowercase();
+    if let Ok(value) = serde_json::from_str::<Value>(body) {
+        if let Some(code) = value.get("code").and_then(|v| v.as_str()) {
+            match code {
+                "INVALID_CREDENTIALS" | "AUTH_INVALID" => {
+                    return "That email or password doesn't look right. Please try again.".to_string();
+                }
+                "EMAIL_ALREADY_EXISTS" | "USER_EXISTS" => {
+                    return "An account with that email already exists. Try signing in instead."
+                        .to_string();
+                }
+                "DEVICE_CODE_EXPIRED" | "DEVICE_CODE_INVALID" => {
+                    return "That sign-in code expired. Please start again.".to_string();
+                }
+                "REFRESH_TOKEN_INVALID" | "REFRESH_TOKEN_REUSED" => {
+                    return session_expired_message();
+                }
+                "QUOTA_EXCEEDED" | "ENTITLEMENT_REQUIRED" | "PLAN_REQUIRED" => {
+                    return "Your plan doesn't cover this yet. Check your Cloud settings.".to_string();
+                }
+                _ => {}
+            }
+        }
+        if let Some(message) = value.get("message").and_then(|v| v.as_str()) {
+            let m = message.to_lowercase();
+            if m.contains("password") || m.contains("credential") || m.contains("invalid email") {
+                return "That email or password doesn't look right. Please try again.".to_string();
+            }
+            if m.contains("already") && m.contains("email") {
+                return "An account with that email already exists. Try signing in instead."
+                    .to_string();
+            }
+            if m.contains("expired") {
+                return "That sign-in code expired. Please start again.".to_string();
+            }
+        }
+    }
+    if lower.contains("refresh") && (lower.contains("invalid") || lower.contains("reuse")) {
+        return session_expired_message();
+    }
+    friendly_http_error(status)
 }
 
 async fn read_error_body(resp: reqwest::Response) -> String {
     let status = resp.status();
     let body = resp.text().await.unwrap_or_default();
-    if body.is_empty() {
-        format!("Cloud API error ({status})")
-    } else {
-        format!("Cloud API error ({status}): {body}")
-    }
+    log::warn!("Cloud API error ({status}): {body}");
+    friendly_api_body_message(&body, status)
 }
 
 fn is_refresh_fatal(err: &str) -> bool {
-    err.contains("REFRESH_TOKEN_INVALID")
+    err.contains("sign in again")
+        || err.contains("REFRESH_TOKEN_INVALID")
         || err.contains("REFRESH_TOKEN_REUSED")
         || err.contains("Invalid refresh token")
         || err.contains("Refresh token reuse")
@@ -67,7 +129,41 @@ fn clear_session(app_data_dir: &Path) {
 }
 
 fn session_expired_message() -> String {
-    "NELA Cloud session expired. Sign in again from Profile.".to_string()
+    "Your NELA Cloud session expired. Please sign in again.".to_string()
+}
+
+/// POST/GET helper: resolve base URL, send, and retry once on localhost/production fallback.
+async fn send_cloud(
+    method: reqwest::Method,
+    path: &str,
+    build: impl Fn(reqwest::RequestBuilder) -> reqwest::RequestBuilder,
+) -> Result<reqwest::Response, String> {
+    let client = http_client()?;
+    let primary = crate::cloud::resolve_api_base_url().await;
+    let url = api_url_for(&primary, path);
+    let req = build(client.request(method.clone(), &url));
+
+    match req.send().await {
+        Ok(resp) => Ok(resp),
+        Err(e) if is_transport_error(&e) => {
+            log::warn!("Cloud request to {primary} failed: {e}");
+            if let Some(alt) = crate::cloud::fallback_api_base_url(&primary).await {
+                log::info!("Retrying cloud request against {alt}");
+                let alt_url = api_url_for(&alt, path);
+                let client = http_client()?;
+                build(client.request(method, &alt_url))
+                    .send()
+                    .await
+                    .map_err(|_| friendly_transport_error())
+            } else {
+                Err(friendly_transport_error())
+            }
+        }
+        Err(e) => {
+            log::warn!("Cloud request failed: {e}");
+            Err(friendly_transport_error())
+        }
+    }
 }
 
 /// Ensure we have a usable access token, refreshing from the stored refresh token if needed.
@@ -100,19 +196,16 @@ pub async fn refresh_access_token(
         Some(r) if !r.is_empty() => r,
         _ => {
             clear_session(app_data_dir);
-            return Err("Not signed in to NELA Cloud".to_string());
+            return Err("You're not signed in to NELA Cloud yet.".to_string());
         }
     };
 
-    let client = http_client()?;
-    let resp = client
-        .post(api_url("/v1/auth/refresh"))
-        .json(&RefreshRequest {
-            refresh_token: refresh,
+    let resp = send_cloud(reqwest::Method::POST, "/v1/auth/refresh", |req| {
+        req.json(&RefreshRequest {
+            refresh_token: refresh.clone(),
         })
-        .send()
-        .await
-        .map_err(|e| format!("Token refresh failed: {e}"))?;
+    })
+    .await?;
 
     if !resp.status().is_success() {
         let err = read_error_body(resp).await;
@@ -126,7 +219,7 @@ pub async fn refresh_access_token(
     let body: RefreshTokenResponse = resp
         .json()
         .await
-        .map_err(|e| format!("Invalid refresh response: {e}"))?;
+        .map_err(|_| "Something went wrong while renewing your session. Please try again.".to_string())?;
 
     token_store::save_tokens(app_data_dir, &body.access_token, &body.refresh_token)?;
     Ok(body.access_token)
@@ -151,13 +244,10 @@ where
 }
 
 pub async fn device_start() -> Result<DeviceStartResponse, String> {
-    let client = http_client()?;
-    let resp = client
-        .post(api_url("/v1/auth/device/start"))
-        .json(&serde_json::json!({}))
-        .send()
-        .await
-        .map_err(|e| format!("Device auth start failed: {e}"))?;
+    let resp = send_cloud(reqwest::Method::POST, "/v1/auth/device/start", |req| {
+        req.json(&serde_json::json!({}))
+    })
+    .await?;
 
     if !resp.status().is_success() {
         return Err(read_error_body(resp).await);
@@ -165,19 +255,16 @@ pub async fn device_start() -> Result<DeviceStartResponse, String> {
 
     resp.json()
         .await
-        .map_err(|e| format!("Invalid device start response: {e}"))
+        .map_err(|_| "We couldn't start sign-in. Please try again.".to_string())
 }
 
 pub async fn device_poll(device_code: &str) -> Result<DevicePollResponse, String> {
-    let client = http_client()?;
-    let resp = client
-        .post(api_url("/v1/auth/device/poll"))
-        .json(&DevicePollRequest {
+    let resp = send_cloud(reqwest::Method::POST, "/v1/auth/device/poll", |req| {
+        req.json(&DevicePollRequest {
             device_code: device_code.to_string(),
         })
-        .send()
-        .await
-        .map_err(|e| format!("Device auth poll failed: {e}"))?;
+    })
+    .await?;
 
     if !resp.status().is_success() {
         return Err(read_error_body(resp).await);
@@ -185,7 +272,7 @@ pub async fn device_poll(device_code: &str) -> Result<DevicePollResponse, String
 
     resp.json()
         .await
-        .map_err(|e| format!("Invalid device poll response: {e}"))
+        .map_err(|_| "We couldn't finish checking sign-in. Please try again.".to_string())
 }
 
 pub async fn email_login(
@@ -193,17 +280,14 @@ pub async fn email_login(
     password: &str,
     device_name: &str,
 ) -> Result<AuthTokenResponse, String> {
-    let client = http_client()?;
-    let resp = client
-        .post(api_url("/v1/auth/email/login"))
-        .json(&serde_json::json!({
+    let resp = send_cloud(reqwest::Method::POST, "/v1/auth/email/login", |req| {
+        req.json(&serde_json::json!({
             "email": email,
             "password": password,
             "deviceName": device_name,
         }))
-        .send()
-        .await
-        .map_err(|e| format!("Email login failed: {e}"))?;
+    })
+    .await?;
 
     if !resp.status().is_success() {
         return Err(read_error_body(resp).await);
@@ -211,7 +295,7 @@ pub async fn email_login(
 
     resp.json()
         .await
-        .map_err(|e| format!("Invalid email login response: {e}"))
+        .map_err(|_| "We couldn't sign you in. Please try again.".to_string())
 }
 
 pub async fn email_register(
@@ -220,7 +304,6 @@ pub async fn email_register(
     name: Option<&str>,
     device_name: &str,
 ) -> Result<AuthTokenResponse, String> {
-    let client = http_client()?;
     let mut body = serde_json::json!({
         "email": email,
         "password": password,
@@ -232,12 +315,10 @@ pub async fn email_register(
         }
     }
 
-    let resp = client
-        .post(api_url("/v1/auth/email/register"))
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| format!("Email register failed: {e}"))?;
+    let resp = send_cloud(reqwest::Method::POST, "/v1/auth/email/register", |req| {
+        req.json(&body)
+    })
+    .await?;
 
     if !resp.status().is_success() {
         return Err(read_error_body(resp).await);
@@ -245,36 +326,28 @@ pub async fn email_register(
 
     resp.json()
         .await
-        .map_err(|e| format!("Invalid email register response: {e}"))
+        .map_err(|_| "We couldn't create your account. Please try again.".to_string())
 }
 
 pub async fn logout(app_data_dir: &Path) -> Result<(), String> {
     let refresh = token_store::get_refresh_token(app_data_dir).ok().flatten();
     if refresh.is_some() || token_store::get_access_token().is_some() {
-        let client = http_client()?;
-        let _ = client
-            .post(api_url("/v1/auth/logout"))
-            .json(&LogoutRequest {
-                refresh_token: refresh,
+        let _ = send_cloud(reqwest::Method::POST, "/v1/auth/logout", |req| {
+            req.json(&LogoutRequest {
+                refresh_token: refresh.clone(),
             })
-            .send()
-            .await;
+        })
+        .await;
     }
     Ok(())
 }
 
 pub async fn get_me(app_data_dir: &Path) -> Result<UserProfileDto, String> {
-    let client = http_client()?;
-    let resp = authorized_request(app_data_dir, |token| {
-        let client = client.clone();
-        async move {
-            client
-                .get(api_url("/v1/me"))
-                .bearer_auth(token)
-                .send()
-                .await
-                .map_err(|e| format!("Get profile failed: {e}"))
-        }
+    let resp = authorized_request(app_data_dir, |token| async move {
+        send_cloud(reqwest::Method::GET, "/v1/me", move |req| {
+            req.bearer_auth(token.clone())
+        })
+        .await
     })
     .await?;
 
@@ -284,21 +357,15 @@ pub async fn get_me(app_data_dir: &Path) -> Result<UserProfileDto, String> {
 
     resp.json()
         .await
-        .map_err(|e| format!("Invalid profile response: {e}"))
+        .map_err(|_| "We couldn't load your profile. Please try again.".to_string())
 }
 
 pub async fn get_entitlement(app_data_dir: &Path) -> Result<EntitlementResponse, String> {
-    let client = http_client()?;
-    let resp = authorized_request(app_data_dir, |token| {
-        let client = client.clone();
-        async move {
-            client
-                .get(api_url("/v1/me/entitlement"))
-                .bearer_auth(token)
-                .send()
-                .await
-                .map_err(|e| format!("Get entitlement failed: {e}"))
-        }
+    let resp = authorized_request(app_data_dir, |token| async move {
+        send_cloud(reqwest::Method::GET, "/v1/me/entitlement", move |req| {
+            req.bearer_auth(token.clone())
+        })
+        .await
     })
     .await?;
 
@@ -308,26 +375,26 @@ pub async fn get_entitlement(app_data_dir: &Path) -> Result<EntitlementResponse,
 
     resp.json()
         .await
-        .map_err(|e| format!("Invalid entitlement response: {e}"))
+        .map_err(|_| "We couldn't load your plan details. Please try again.".to_string())
 }
 
 pub async fn create_checkout(
     app_data_dir: &Path,
     plan: &str,
 ) -> Result<CheckoutResponse, String> {
-    let client = http_client()?;
     let plan = plan.to_string();
     let resp = authorized_request(app_data_dir, |token| {
-        let client = client.clone();
         let plan = plan.clone();
         async move {
-            client
-                .post(api_url("/v1/billing/razorpay/checkout"))
-                .bearer_auth(token)
-                .json(&CheckoutRequest { plan })
-                .send()
-                .await
-                .map_err(|e| format!("Checkout request failed: {e}"))
+            send_cloud(
+                reqwest::Method::POST,
+                "/v1/billing/razorpay/checkout",
+                move |req| {
+                    req.bearer_auth(token.clone())
+                        .json(&CheckoutRequest { plan: plan.clone() })
+                },
+            )
+            .await
         }
     })
     .await?;
@@ -338,24 +405,22 @@ pub async fn create_checkout(
 
     resp.json()
         .await
-        .map_err(|e| format!("Invalid checkout response: {e}"))
+        .map_err(|_| "We couldn't open checkout. Please try again.".to_string())
 }
 
 pub async fn create_billing_manage(
     app_data_dir: &Path,
 ) -> Result<BillingManageResponse, String> {
-    let client = http_client()?;
-    let resp = authorized_request(app_data_dir, |token| {
-        let client = client.clone();
-        async move {
-            client
-                .post(api_url("/v1/billing/razorpay/manage"))
-                .bearer_auth(token)
-                .json(&serde_json::json!({}))
-                .send()
-                .await
-                .map_err(|e| format!("Billing manage request failed: {e}"))
-        }
+    let resp = authorized_request(app_data_dir, |token| async move {
+        send_cloud(
+            reqwest::Method::POST,
+            "/v1/billing/razorpay/manage",
+            move |req| {
+                req.bearer_auth(token.clone())
+                    .json(&serde_json::json!({}))
+            },
+        )
+        .await
     })
     .await?;
 
@@ -365,7 +430,7 @@ pub async fn create_billing_manage(
 
     resp.json()
         .await
-        .map_err(|e| format!("Invalid billing manage response: {e}"))
+        .map_err(|_| "We couldn't open billing settings. Please try again.".to_string())
 }
 
 /// Non-streaming chat completion — returns raw OpenAI-style JSON string
@@ -375,21 +440,18 @@ pub async fn chat_complete(
     mut request: CloudChatRequest,
 ) -> Result<String, String> {
     request.stream = false;
-    let client = http_client()?;
     let body = serde_json::to_value(&request)
-        .map_err(|e| format!("Failed to serialize chat request: {e}"))?;
+        .map_err(|_| "Something went wrong preparing your message. Please try again.".to_string())?;
 
     let resp = authorized_request(app_data_dir, |token| {
-        let client = client.clone();
         let body = body.clone();
         async move {
-            client
-                .post(api_url("/v1/ai/chat/completions"))
-                .bearer_auth(token)
-                .json(&body)
-                .send()
-                .await
-                .map_err(|e| format!("Cloud chat request failed: {e}"))
+            send_cloud(
+                reqwest::Method::POST,
+                "/v1/ai/chat/completions",
+                move |req| req.bearer_auth(token.clone()).json(&body),
+            )
+            .await
         }
     })
     .await?;
@@ -401,9 +463,10 @@ pub async fn chat_complete(
     let value: Value = resp
         .json()
         .await
-        .map_err(|e| format!("Invalid chat response: {e}"))?;
+        .map_err(|_| "We got an unexpected reply from NELA Cloud. Please try again.".to_string())?;
 
-    serde_json::to_string(&value).map_err(|e| format!("Failed to serialize chat response: {e}"))
+    serde_json::to_string(&value)
+        .map_err(|_| "We got an unexpected reply from NELA Cloud. Please try again.".to_string())
 }
 
 /// Streaming chat — emits `cloud-chat-stream` events:
@@ -416,23 +479,23 @@ pub async fn chat_stream(
     mut request: CloudChatRequest,
 ) -> Result<(), String> {
     request.stream = true;
-    let client = http_client()?;
     let body = serde_json::to_value(&request)
-        .map_err(|e| format!("Failed to serialize chat request: {e}"))?;
+        .map_err(|_| "Something went wrong preparing your message. Please try again.".to_string())?;
 
     let resp = authorized_request(app_data_dir, |token| {
-        let client = client.clone();
         let body = body.clone();
         async move {
-            client
-                .post(api_url("/v1/ai/chat/completions"))
-                .bearer_auth(token)
-                .header(reqwest::header::ACCEPT, "text/event-stream")
-                .header(reqwest::header::CACHE_CONTROL, "no-cache")
-                .json(&body)
-                .send()
-                .await
-                .map_err(|e| format!("Cloud chat stream request failed: {e}"))
+            send_cloud(
+                reqwest::Method::POST,
+                "/v1/ai/chat/completions",
+                move |req| {
+                    req.bearer_auth(token.clone())
+                        .header(reqwest::header::ACCEPT, "text/event-stream")
+                        .header(reqwest::header::CACHE_CONTROL, "no-cache")
+                        .json(&body)
+                },
+            )
+            .await
         }
     })
     .await?;
@@ -455,7 +518,9 @@ pub async fn chat_stream(
         let mut emitted_done = false;
 
         while let Some(item) = stream.next().await {
-            let chunk = item.map_err(|e| format!("Cloud stream interrupted: {e}"))?;
+            let chunk = item.map_err(|_| {
+                "The connection dropped while NELA was answering. Please try again.".to_string()
+            })?;
             buffer.push_str(&String::from_utf8_lossy(&chunk));
 
             while let Some(pos) = buffer.find('\n') {
@@ -500,10 +565,9 @@ pub async fn chat_stream(
     }
 
     // Non-SSE JSON body fallback
-    let value: Value = resp
-        .json()
-        .await
-        .map_err(|e| format!("Invalid chat stream response: {e}"))?;
+    let value: Value = resp.json().await.map_err(|_| {
+        "We got an unexpected reply from NELA Cloud. Please try again.".to_string()
+    })?;
     if let Some(text) = extract_assistant_content(&value) {
         let _ = app.emit(
             "cloud-chat-stream",
@@ -597,13 +661,14 @@ impl ToolCallAccumulator {
 }
 
 fn extract_assistant_content(value: &Value) -> Option<String> {
-    if let Some(content) = value.get("content").and_then(|v| v.as_str()) {
-        return Some(content.to_string());
+    if let Some(content) = value.get("content") {
+        if let Some(text) = content_to_plain(content) {
+            return Some(text);
+        }
     }
     value
         .pointer("/choices/0/message/content")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
+        .and_then(content_to_plain)
 }
 
 fn extract_message_tool_calls(value: &Value) -> Option<Value> {
@@ -614,12 +679,33 @@ fn extract_message_tool_calls(value: &Value) -> Option<Value> {
 }
 
 fn extract_stream_delta(value: &Value) -> Option<String> {
-    if let Some(content) = value.get("content").and_then(|v| v.as_str()) {
-        return Some(content.to_string());
+    if let Some(content) = value.get("content") {
+        if let Some(text) = content_to_plain(content) {
+            return Some(text);
+        }
     }
     value
         .pointer("/choices/0/delta/content")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
+        .and_then(content_to_plain)
 }
 
+/// OpenRouter / OpenAI deltas may send `content` as a string or as text parts.
+fn content_to_plain(content: &Value) -> Option<String> {
+    if let Some(text) = content.as_str() {
+        return Some(text.to_string());
+    }
+    let arr = content.as_array()?;
+    let mut out = String::new();
+    for part in arr {
+        if let Some(text) = part.get("text").and_then(|v| v.as_str()) {
+            out.push_str(text);
+        } else if let Some(text) = part.as_str() {
+            out.push_str(text);
+        }
+    }
+    if out.is_empty() {
+        None
+    } else {
+        Some(out)
+    }
+}

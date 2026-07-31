@@ -6,6 +6,8 @@ import { normalizePresentationPlan } from "../artifactPlanNormalize";
 import { fitArtifactPlanPrompt } from "../artifactContextBudget";
 import { buildPresentationFallbackPlan } from "../presentationDocumentPlan";
 import { streamChatByMode, willRouteToCloud } from "./cloudOrLocalStream";
+import { useCloudStore } from "../../stores/cloudStore";
+import { useChatModeStore } from "../../stores/chatModeStore";
 import {
   buildSpreadsheetDataContext,
   buildSpreadsheetFallbackPlan,
@@ -38,8 +40,14 @@ import {
   mapHtmlRendererTheme,
 } from "../htmlArtifactPrompt";
 import { buildPresentationSystemParts } from "../presentationPlanPrompt";
+import { resolveCloudPresentationMode } from "../cloudPresentationMode";
+import {
+  parsePresentationHtmlArtifactOutput,
+  looksLikePresentationJsonPlan,
+} from "../artifactHtmlOutput";
 import {
   webArtifactGroundingPreamble,
+  webPresentationGroundingPreamble,
   webContextCharLimit,
   webSearchOptionsForArtifact,
 } from "../webSearchQuery";
@@ -55,8 +63,12 @@ import {
   MAX_ARTIFACT_SOURCE_CHARS,
 } from "../ambientFileContent";
 import { DISCOVERY_NOTICE_PREFIX } from "../contextCompaction";
-import { extractSlideCount, inferPresentationTheme } from "./presentationTheme";
+import {
+  extractSlideCount,
+  inferPresentationTheme,
+} from "./presentationTheme";
 import { repairNestedKeys } from "./repairNestedKeys";
+import type { WebSearchResult } from "../../types";
 import type { SendHandlerContext } from "./types";
 
 export async function handleArtifactGeneration(
@@ -88,16 +100,28 @@ export async function handleArtifactGeneration(
     ]
   }));
 
-  const updateArtifactMsg = (stage: PipelineStageKind, path: string | null = null, contentOverride?: string) => {
+  let artifactWebSearchResult: WebSearchResult | null = null;
+
+  const updateArtifactMsg = (
+    stage: PipelineStageKind,
+    path: string | null = null,
+    contentOverride?: string
+  ) => {
     ctx.updateSession(sid, (prev) => {
       const updated = [...prev.messages];
-      const idx = updated.map((m, i) => ({ m, i })).reverse().find(({ m }) => m.role === "assistant" && m.artifactStage !== undefined)?.i;
+      const idx = updated
+        .map((m, i) => ({ m, i }))
+        .reverse()
+        .find(({ m }) => m.role === "assistant" && m.artifactStage !== undefined)?.i;
       if (idx !== undefined && updated[idx]) {
         updated[idx] = {
           ...updated[idx],
           artifactStage: stage,
           ...(path !== null ? { artifactPath: path } : {}),
           ...(contentOverride !== undefined ? { content: contentOverride } : {}),
+          ...(artifactWebSearchResult
+            ? { webSearchResult: artifactWebSearchResult }
+            : {}),
         };
       }
       return {
@@ -109,10 +133,12 @@ export async function handleArtifactGeneration(
   };
 
   try {
+    const preferredMode = useCloudStore.getState().preferredMode;
+    const cloudConfirmed = preferredMode === "cloud";
     const containsFileContextEarly = false; // refined later after ambient load
     const routeCloud = willRouteToCloud({
       containsFileContext: containsFileContextEarly,
-      userConfirmedCloudContext: false,
+      userConfirmedCloudContext: cloudConfirmed,
     });
     // GBNF is local-only; cloud uses free-form JSON + response_format.
     const grammar = routeCloud ? undefined : await Api.getSchemaGrammar(schemaId);
@@ -279,23 +305,42 @@ export async function handleArtifactGeneration(
           schemaId,
           contextWindowTokens
         );
+        useChatModeStore
+          .getState()
+          .setLiveToolStatus("Choosing web search queries…");
         const queries = await formulateArtifactWebQueries(text, {
           modelId: ctx.selectedModel || undefined,
           maxQueries: 3,
         });
-        let merged = null as import("../../types").WebSearchResult | null;
+        let merged = null as WebSearchResult | null;
         // Cap total hits across queries so context stays within budget.
-        const perQuery = Math.max(1, Math.ceil(maxResults / Math.max(queries.length, 1)));
+        const perQuery = Math.max(
+          1,
+          Math.ceil(maxResults / Math.max(queries.length, 1))
+        );
         for (const searchQuery of queries) {
           if (!searchQuery.trim()) continue;
           try {
-            const result = await Api.webSearch(searchQuery, perQuery, fetchContent);
+            useChatModeStore
+              .getState()
+              .setLiveToolStatus(`Searching the web: ${searchQuery.slice(0, 80)}`);
+            const result = await Api.webSearch(
+              searchQuery,
+              perQuery,
+              fetchContent
+            );
             merged = mergeWebSearchResults(merged, result);
+            if (merged) {
+              artifactWebSearchResult = merged;
+              // Attach sources to the artifact bubble as soon as we have hits.
+              updateArtifactMsg("CrunchingMetrics");
+            }
           } catch (err) {
             console.warn("Web search query failed:", searchQuery, err);
           }
         }
         if (merged) {
+          artifactWebSearchResult = merged;
           if (
             schemaId === "spreadsheet_synthesis" &&
             merged.extracted_tables &&
@@ -320,13 +365,24 @@ export async function handleArtifactGeneration(
                 ? merged.formatted_context.slice(0, webLimit) +
                   "\n\n[...web excerpts truncated for context limit]\n--- End of web sources ---\n"
                 : merged.formatted_context;
-            supplementalContext +=
-              webArtifactGroundingPreamble() + `${trimmedWeb}\n\n`;
+            const grounding =
+              schemaId === "presentation_synthesis"
+                ? webPresentationGroundingPreamble()
+                : webArtifactGroundingPreamble();
+            supplementalContext += grounding + `${trimmedWeb}\n\n`;
           }
           webHitsForImages = merged.results ?? [];
+          useChatModeStore
+            .getState()
+            .setLiveToolStatus(
+              `Found ${merged.results?.length ?? 0} web sources`
+            );
+        } else {
+          useChatModeStore.getState().setLiveToolStatus(null);
         }
       } catch (err) {
         console.warn("Web grounding for artifact generation failed:", err);
+        useChatModeStore.getState().setLiveToolStatus(null);
       }
     }
 
@@ -433,15 +489,40 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
         : "";
 
     const slidePlan = extractSlideCount(text);
-    const slideCountInstruction = slidePlan.explicit
-      ? `Produce EXACTLY ${slidePlan.count} slides, as the user explicitly requested.`
-      : `Produce a complete multi-slide deck of about ${slidePlan.count} slides (add or remove a few only if the topic clearly needs it).`;
     const themeHint = inferPresentationTheme(text);
     const htmlThemeHint = inferHtmlTheme(text);
     const htmlArchetype =
       schemaId === "html_synthesis" ? inferHtmlPageStructure(text) : "landing";
     const htmlHasSourceData =
       schemaId === "html_synthesis" && spreadsheetData !== null;
+
+    const containsFileContext = Boolean(ambientFileContent?.trim());
+    const useCloud = willRouteToCloud({
+      containsFileContext,
+      userConfirmedCloudContext: cloudConfirmed,
+    });
+    // Free/fast models can't finish freeform HTML decks (truncate mid-CSS → blank page).
+    // Use structured JSON → NELA renderer for those; HTML freeform only when capable.
+    const cloudPresentationMode =
+      schemaId === "presentation_synthesis" && useCloud
+        ? resolveCloudPresentationMode({ useCloud: true })
+        : schemaId === "presentation_synthesis"
+          ? "local"
+          : null;
+    const cloudPresentationFreeform = cloudPresentationMode === "html";
+    const cloudPresentationJson = cloudPresentationMode === "json";
+
+    const slideCountInstruction = cloudPresentationFreeform
+      ? slidePlan.explicit
+        ? `Produce EXACTLY ${slidePlan.count} slides, as the user explicitly requested. Each slide must carry substantial real content (not sparse titles).`
+        : `Produce a rich multi-slide deck of about ${Math.max(slidePlan.count, 6)}–10 slides with substantial content on each slide (paragraphs + specifics), unless the topic clearly needs fewer.`
+      : cloudPresentationJson
+        ? slidePlan.explicit
+          ? `Produce EXACTLY ${slidePlan.count} slides, as the user explicitly requested. Each bullet must be concrete (15–40 words when possible).`
+          : `Produce about ${Math.max(slidePlan.count, 6)}–10 content-rich slides with concrete facts (names, dates, places).`
+        : slidePlan.explicit
+          ? `Produce EXACTLY ${slidePlan.count} slides, as the user explicitly requested.`
+          : `Produce a complete multi-slide deck of about ${slidePlan.count} slides (add or remove a few only if the topic clearly needs it).`;
 
     const systemParts =
       schemaId === "html_synthesis"
@@ -455,6 +536,7 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
         ? buildPresentationSystemParts({
             slideCountInstruction,
             sourceDocumentRules,
+            cloudMode: cloudPresentationMode ?? "local",
           })
         : null;
 
@@ -465,7 +547,11 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
           : systemParts.cacheable
         : "You generate ONLY a JSON plan. Return valid JSON only.";
 
-    const themeSuffix = ` Theme: "${themeHint}".`;
+    // Local / cloud-JSON decks use the theme-aware renderer.
+    // Cloud HTML freeform invents its own design.
+    const themeSuffix = cloudPresentationFreeform
+      ? ""
+      : ` Theme: "${themeHint}".`;
     const rowCountSuffix =
       schemaId === "spreadsheet_synthesis" &&
       rowPlan.explicit &&
@@ -474,11 +560,21 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
         : "";
     const planRequest =
       schemaId === "presentation_synthesis"
-        ? hasSourceDocument
-          ? `Using the ATTACHED SOURCE DOCUMENT, create a ${slidePlan.count}-slide deck. User request: "${text}". Use only real details from the source — no placeholders.${themeSuffix}`
-          : `Create a ${slidePlan.count}-slide deck about: "${text}".` +
-            ` Define the topic early; include concrete examples and named concepts on later slides.` +
-            ` Do not repeat the topic phrase as filler.${themeSuffix}`
+        ? cloudPresentationFreeform
+          ? hasSourceDocument
+            ? `Write a complete HTML presentation deck for: "${text}". Use only real details from the ATTACHED SOURCE DOCUMENT. Output ONLY the HTML document. Put ALL slide body content BEFORE CSS.`
+            : `Write a complete HTML presentation deck about: "${text}". ` +
+              `Stay on this exact subject — do not pivot to worksheets, crafts, or unrelated products. ` +
+              `Put ALL slide body content BEFORE CSS. Output ONLY the HTML document.`
+          : hasSourceDocument
+            ? `Using the ATTACHED SOURCE DOCUMENT, create a ${slidePlan.count}-slide deck. User request: "${text}". Use only real details from the source — no placeholders.${themeSuffix}`
+            : `Create a ${slidePlan.count}-slide JSON deck about: "${text}".` +
+              ` Stay on this exact subject — do not pivot to worksheets, crafts, or unrelated products.` +
+              ` Define the topic early; include concrete examples and named concepts on later slides.` +
+              ` Do not repeat the topic phrase as filler.${themeSuffix}` +
+              (cloudPresentationJson
+                ? ` Reply with ONLY a single JSON object starting with { and ending with }. No HTML, no markdown fences, no commentary.`
+                : "")
         : schemaId === "html_synthesis"
         ? htmlPlanRequest(text, htmlArchetype, { hasSourceData: htmlHasSourceData })
         : `Generate a plan for the user request: "${text}".${rowCountSuffix}`;
@@ -495,32 +591,56 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
     // max_tokens + long prompts frequently crash llama-server (proxy 500).
     const desiredPlanMaxTokens =
       schemaId === "presentation_synthesis"
-        ? Math.min(
-            contextWindowTokens <= 4096 ? 1800 : contextWindowTokens <= 8192 ? 3200 : 8192,
-            700 +
-              slidePlan.count * (hasSourceDocument ? 280 : 420) +
-              (hasSourceDocument ? 600 : 0)
-          )
+        ? cloudPresentationFreeform
+          ? Math.min(16000, Math.max(10000, 2000 + slidePlan.count * 900))
+          : cloudPresentationJson
+            ? Math.min(
+                8192,
+                900 + slidePlan.count * 380 + (hasSourceDocument ? 600 : 0)
+              )
+            : Math.min(
+                contextWindowTokens <= 4096
+                  ? 1800
+                  : contextWindowTokens <= 8192
+                    ? 3200
+                    : 8192,
+                700 +
+                  slidePlan.count * (hasSourceDocument ? 280 : 420) +
+                  (hasSourceDocument ? 600 : 0)
+              )
         : schemaId === "html_synthesis"
         ? HTML_PLAN_MAX_TOKENS
         : schemaId === "spreadsheet_synthesis"
         ? spreadsheetPlanMaxTokens(hasSourceData, ambientFileContent, rowPlan.count)
         : 500;
 
+    // Cloud presentation must not be crushed by local model context sizes.
+    const promptContextWindowTokens =
+      cloudPresentationFreeform || cloudPresentationJson
+        ? Math.max(contextWindowTokens, 128_000)
+        : contextWindowTokens;
+
     const fitted = fitArtifactPlanPrompt({
-      contextWindowTokens,
+      contextWindowTokens: promptContextWindowTokens,
       systemPrompt,
       dataContext: dataContextBody,
       planRequest: planRequestText,
       desiredMaxOutputTokens: desiredPlanMaxTokens,
     });
 
-    const planMaxTokens = fitted.maxOutputTokens;
+    const planMaxTokens =
+      cloudPresentationFreeform || cloudPresentationJson
+        ? Math.max(fitted.maxOutputTokens, desiredPlanMaxTokens)
+        : fitted.maxOutputTokens;
     const planTemperature =
       schemaId === "html_synthesis"
         ? 0.4
         : schemaId === "presentation_synthesis"
-          ? 0.35
+          ? cloudPresentationFreeform
+            ? 0.55
+            : cloudPresentationJson
+              ? 0.4
+              : 0.35
           : 0.1;
 
     let planJson = "";
@@ -559,15 +679,18 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
       }
 
       if (schemaId === "presentation_synthesis") {
+        // Cloud HTML freeform never enters this path.
         planObj.theme = themeHint;
         planObj = normalizePresentationPlan(planObj, text, {
           targetSlideCount: slidePlan.count,
+          lightRepair: cloudPresentationJson,
         });
         if (!planObj.output_name) {
           const slides = Array.isArray(planObj.slides) ? planObj.slides : [];
           const titleSlide =
-            slides.find((s: { layout?: string; title?: string }) => s?.layout === "TITLE") ??
-            slides[0];
+            slides.find(
+              (s: { layout?: string; title?: string }) => s?.layout === "TITLE"
+            ) ?? slides[0];
           const deckTitle = (titleSlide?.title ?? "").toString().trim();
           const slug = deckTitle
             .replace(/[\\/:*?"<>|]+/g, " ")
@@ -594,6 +717,7 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
       }
 
       ctx.updateSession(sid, { loading: false });
+      useChatModeStore.getState().setLiveToolStatus(null);
       const filename = result.path.split(/[/\\]/).pop();
       updateArtifactMsg(
         "LivePreview",
@@ -635,12 +759,6 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
       return false;
     };
 
-    const containsFileContext = Boolean(ambientFileContent?.trim());
-    const useCloud = willRouteToCloud({
-      containsFileContext,
-      userConfirmedCloudContext: false,
-    });
-
     const planMessages =
       useCloud && systemParts
         ? [
@@ -655,20 +773,40 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
             { role: "user" as const, content: fitted.userPrompt },
           ];
 
+    if (options?.webEnabled && artifactWebSearchResult) {
+      useChatModeStore
+        .getState()
+        .setLiveToolStatus(
+          cloudPresentationFreeform
+            ? "Writing presentation HTML…"
+            : schemaId === "presentation_synthesis"
+              ? "Writing presentation plan…"
+              : "Writing artifact plan…"
+        );
+    } else if (!options?.webEnabled) {
+      useChatModeStore.getState().setLiveToolStatus(null);
+    }
+
     streamChatByMode({
       messages: planMessages,
       intent: "artifact_plan",
       containsFileContext,
+      userConfirmedCloudContext: cloudConfirmed,
       contextSource: containsFileContext ? "artifact_source_document" : undefined,
       modelId: ctx.selectedModel || undefined,
       signal: ctrl.signal,
       disableThinking: true,
-      response_format: useCloud ? { type: "json_object" } : undefined,
+      disableLocalFallback: cloudConfirmed,
+      // Freeform HTML must not use json_object; cloud JSON / other schemas should.
+      response_format:
+        useCloud && !cloudPresentationFreeform
+          ? { type: "json_object" }
+          : undefined,
       generationOptions: {
         ...generationOptions,
         maxTokens: planMaxTokens,
         temperature: planTemperature,
-        // grammar is local-only; cloud path relies on JSON repair parsers
+        // grammar is local-only; cloud path relies on JSON/HTML repair parsers
         grammar: useCloud ? undefined : grammar,
       },
       onChunk: (chunk) => {
@@ -677,8 +815,50 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
       onThinking: () => {},
       onFinish: () => {
         void (async () => {
+          useChatModeStore.getState().setLiveToolStatus(null);
           updateArtifactMsg("WritingCode");
           try {
+            if (cloudPresentationFreeform) {
+              try {
+                const parsed = parsePresentationHtmlArtifactOutput(planJson, text);
+                const result = await Api.generateHtml({
+                  title: parsed.title,
+                  archetype: "landing",
+                  sections: [],
+                  html: parsed.html,
+                  output_name: parsed.output_name,
+                });
+                ctx.updateSession(sid, { loading: false });
+                useChatModeStore.getState().setLiveToolStatus(null);
+                const filename = result.path.split(/[/\\]/).pop();
+                updateArtifactMsg(
+                  "LivePreview",
+                  result.path,
+                  `Generated artifact successfully: **${filename}**\nPath: \`${result.path}\``
+                );
+                return;
+              } catch (htmlErr) {
+                const msg =
+                  htmlErr instanceof Error ? htmlErr.message : String(htmlErr);
+                // Model often still returns a JSON slide plan — render via template as fallback.
+                if (
+                  msg === "MODEL_RETURNED_JSON_SLIDE_PLAN" ||
+                  looksLikePresentationJsonPlan(planJson)
+                ) {
+                  console.warn(
+                    "Cloud PPT returned JSON slides instead of HTML; using structured renderer fallback"
+                  );
+                  const planObj = parseArtifactPlanJson(planJson, {
+                    userPrompt: text,
+                    schemaId,
+                  });
+                  await executePlanObj(planObj);
+                  return;
+                }
+                throw htmlErr;
+              }
+            }
+
             // LLM plan JSON — shape varies by schemaId
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             let planObj: any;
@@ -715,6 +895,42 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
                   schemaId,
                 });
               } catch (jsonErr) {
+                // Free models often ignore JSON mode and emit HTML (or truncate it).
+                if (
+                  cloudPresentationJson &&
+                  /<!DOCTYPE\s+html|<html[\s>]|<body[\s>]|<div[\s>]/i.test(
+                    planJson
+                  )
+                ) {
+                  try {
+                    const parsedHtml = parsePresentationHtmlArtifactOutput(
+                      planJson,
+                      text
+                    );
+                    const result = await Api.generateHtml({
+                      title: parsedHtml.title,
+                      archetype: "landing",
+                      sections: [],
+                      html: parsedHtml.html,
+                      output_name: parsedHtml.output_name,
+                    });
+                    ctx.updateSession(sid, { loading: false });
+                    useChatModeStore.getState().setLiveToolStatus(null);
+                    const filename = result.path.split(/[/\\]/).pop();
+                    updateArtifactMsg(
+                      "LivePreview",
+                      result.path,
+                      `Generated artifact successfully: **${filename}**\nPath: \`${result.path}\``
+                    );
+                    return;
+                  } catch (htmlSalvageErr) {
+                    console.warn(
+                      "Cloud PPT JSON parse failed; HTML salvage also failed:",
+                      htmlSalvageErr
+                    );
+                  }
+                }
+
                 const docFallback = buildPresentationFallbackPlan({
                   userPrompt: text,
                   ambientContent: ambientFileContent,
@@ -729,7 +945,12 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
                   planObj = docFallback;
                 } else {
                   console.warn("Failed to parse artifact plan JSON:", jsonErr);
-                  throw jsonErr;
+                  const preview = planJson.trim().slice(0, 180).replace(/\s+/g, " ");
+                  throw new Error(
+                    preview
+                      ? `Model did not return valid slide JSON (got: "${preview}${planJson.trim().length > 180 ? "…" : ""}"). Try again.`
+                      : "Model returned an empty presentation plan. Try again."
+                  );
                 }
               }
             }
@@ -742,9 +963,14 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
               console.error("Document fallback also failed:", fallbackErr);
             }
             console.error("Artifact generation execution failed:", execErr);
+            useChatModeStore.getState().setLiveToolStatus(null);
             ctx.updateSession(sid, { loading: false });
             const msg = execErr instanceof Error ? execErr.message : String(execErr);
-            updateArtifactMsg("Error", null, `Failed to compile/execute artifact plan: ${msg}`);
+            updateArtifactMsg(
+              "Error",
+              null,
+              `Couldn't finish the presentation: ${msg}`
+            );
           }
         })();
       },
@@ -756,6 +982,7 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
           } catch (fallbackErr) {
             console.error("Document fallback after LLM error failed:", fallbackErr);
           }
+          useChatModeStore.getState().setLiveToolStatus(null);
           ctx.updateSession(sid, { loading: false });
           updateArtifactMsg("Error", null, `Failed to generate artifact plan: ${err}`);
         })();
@@ -764,6 +991,7 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
 
   } catch (err: unknown) {
     console.error("Artifact setup failed:", err);
+    useChatModeStore.getState().setLiveToolStatus(null);
     ctx.updateSession(sid, {
       loading: false,
     });

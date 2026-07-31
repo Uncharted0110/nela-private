@@ -1,5 +1,7 @@
 import { Api } from "../../api";
 import type { ChatMessage } from "../../types";
+import { friendlyError } from "../friendlyError";
+import { createStreamChunkFlusher } from "../streamUiBatch";
 import {
   CONTEXT_COMPACTION_KEEP_RECENT,
   CONTEXT_COMPACTION_THRESHOLD,
@@ -65,27 +67,31 @@ export async function handleSendRag(
         console.warn("Failed to analyze RAG context window usage:", err);
       }
 
-      let fullAnswer = "";
-      let fullThinking = "";
-      let firstTokenTimeMs: number | null = null;
+    let fullAnswer = "";
+    let fullThinking = "";
+    let firstTokenTimeMs: number | null = null;
+    const chunkFlusher = createStreamChunkFlusher((batched) => {
+      ctx.updateSession(sid, (prev) => ({
+        streamingContent: prev.streamingContent + batched,
+      }));
+    });
 
-      await Api.streamChat(
-        ragMessages,
-        (chunk) => {
-          if (firstTokenTimeMs === null) {
-            firstTokenTimeMs = Date.now();
-          }
-          fullAnswer += chunk;
-          ctx.updateSession(sid, (prev) => ({
-            streamingContent: prev.streamingContent + chunk,
-          }));
-        },
-        (thinkingChunk) => {
-          fullThinking += thinkingChunk;
-          ctx.setStreamingThinking(fullThinking);
-        },
-        () => {
-          if (ctx.generalIntervalRef.current) clearInterval(ctx.generalIntervalRef.current);
+    await Api.streamChat(
+      ragMessages,
+      (chunk) => {
+        if (firstTokenTimeMs === null) {
+          firstTokenTimeMs = Date.now();
+        }
+        fullAnswer += chunk;
+        chunkFlusher.push(chunk);
+      },
+      (thinkingChunk) => {
+        fullThinking += thinkingChunk;
+        ctx.setStreamingThinking(fullThinking);
+      },
+      () => {
+        chunkFlusher.flushNow();
+        if (ctx.generalIntervalRef.current) clearInterval(ctx.generalIntervalRef.current);
           const totalTime = Math.floor((Date.now() - ragStartTime) / 100) / 10;
           const timeToFirstToken =
             firstTokenTimeMs
@@ -136,12 +142,14 @@ export async function handleSendRag(
           });
         },
         (err) => {
+          chunkFlusher.flushNow();
           console.error("RAG stream error:", err);
           ctx.updateSession(sid, (prev) => ({
             messages: [
               ...prev.messages,
-              { role: "assistant" as const, content: `RAG query error: ${err}` },
+              { role: "assistant" as const, content: friendlyError(String(err)) },
             ],
+            streamingContent: "",
             loading: false,
           }));
         },

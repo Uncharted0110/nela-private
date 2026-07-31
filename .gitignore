@@ -18,6 +18,9 @@ The-Bare/**/__pycache__/
 
 genhat-desktop/node_modules/
 genhat-desktop/src-tauri/node_modules/
+genhat-desktop/.agents/
+genhat-desktop/.neon
+genhat-desktop/skills-lock.json
 The-Bare/TTS-inference/--collect-data
 The-Bare/TTS-inference/--hidden-import
 .DS_Store

@@ -1293,7 +1293,7 @@ const ModelsSettingsModal: React.FC<ModelsSettingsModalProps> = ({
                       </div>
                     )}
 
-                    {paramError && <div className="settings-error">Failed to save: {paramError}</div>}
+                    {paramError && <div className="settings-error">Couldn't save those settings. Please try again.</div>}
 
                     <div className="settings-param-actions">
                       <button

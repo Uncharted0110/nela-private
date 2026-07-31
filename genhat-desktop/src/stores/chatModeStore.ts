@@ -41,6 +41,8 @@ interface ChatModeState {
   webEnabled: boolean;
   fileIndexerEnabled: boolean;
   webDepth: "snippets" | "full";
+  /** Live status while a tool runs (e.g. web search) — shown above the streaming bubble. */
+  liveToolStatus: string | null;
   imagePath: string | null;
   imagePreview: string | null;
   directDocumentPaths: string[];
@@ -64,6 +66,7 @@ interface ChatModeActions {
   setWebEnabled: (enabled: boolean) => void;
   setFileIndexerEnabled: (enabled: boolean) => void;
   setWebDepth: (depth: "snippets" | "full") => void;
+  setLiveToolStatus: (status: string | null) => void;
   setImagePath: (path: string | null) => void;
   setImagePreview: (preview: string | null) => void;
   setDirectDocumentPaths: (paths: string[]) => void;
@@ -90,9 +93,18 @@ export const useChatModeStore = create<ChatModeState & ChatModeActions>((set) =>
   ragDocs: [],
   ragIngesting: false,
   enrichmentStatus: null,
-  webEnabled: false,
+  // Match persisted preferred mode so Cloud sessions start with web search on.
+  webEnabled: (() => {
+    try {
+      const raw = localStorage.getItem("nela.cloud.preferredMode");
+      return raw === "cloud" || raw === "auto";
+    } catch {
+      return false;
+    }
+  })(),
   fileIndexerEnabled: false,
   webDepth: "snippets",
+  liveToolStatus: null,
   imagePath: null,
   imagePreview: null,
   directDocumentPaths: [],
@@ -126,6 +138,8 @@ export const useChatModeStore = create<ChatModeState & ChatModeActions>((set) =>
   setFileIndexerEnabled: (fileIndexerEnabled) => set({ fileIndexerEnabled }),
   
   setWebDepth: (webDepth) => set({ webDepth }),
+
+  setLiveToolStatus: (liveToolStatus) => set({ liveToolStatus }),
   
   setImagePath: (imagePath) => set({ imagePath }),
   

@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useRef, memo } from "react";
-import { openUrl } from "@tauri-apps/plugin-opener";
 import { MessageSquare, Eye, Volume2, Mic, FileText, Share2, Workflow, X, Wrench } from "lucide-react";
 import MarkdownRenderer from "./MarkdownRenderer";
 import AudioPlayer from "./AudioPlayer";
@@ -17,7 +16,10 @@ import { SlashHighlightedText } from "./SlashHighlightedText";
 import GenerationProgressLabel from "./GenerationProgressLabel";
 import type { GenerationProgressMode } from "../app/generationProgress";
 import { useCloudStore } from "../stores/cloudStore";
+import { useChatModeStore } from "../stores/chatModeStore";
+import WebSearchDisclosure from "./WebSearchDisclosure";
 import "./ModeBanner.css";
+import "./WebSearchDisclosure.css";
 
 function chatModeToProgressMode(mode: string): GenerationProgressMode {
   if (mode === "vision") return "vision";
@@ -36,8 +38,11 @@ const MODE_ICON_MAP: Record<ChatMode, React.ElementType> = {
   playground: Workflow,
 };
 
-/** Copy button for a full assistant response */
-const CopyMsgButton: React.FC<{ text: string }> = ({ text }) => {
+/** Copy button for a chat message (prompt or response) */
+const CopyMsgButton: React.FC<{ text: string; label?: string }> = ({
+  text,
+  label = "Copy",
+}) => {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = async () => {
@@ -56,7 +61,12 @@ const CopyMsgButton: React.FC<{ text: string }> = ({ text }) => {
   };
 
   return (
-    <button className="p-1.5 glass border border-glass-border text-txt-muted cursor-pointer rounded-lg transition-colors duration-150 hover:text-neon hover:border-glass-border" onClick={handleCopy} title="Copy response" aria-label="Copy response">
+    <button
+      className="p-1.5 glass border border-glass-border text-txt-muted cursor-pointer rounded-lg transition-colors duration-150 hover:text-neon hover:border-glass-border"
+      onClick={handleCopy}
+      title={label}
+      aria-label={label}
+    >
       {copied ? (
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
           <path d="M20 6L9 17L4 12" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
@@ -307,6 +317,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
 }) => {
   const { advanced } = useAdvancedMode();
   const preferredMode = useCloudStore((s) => s.preferredMode);
+  const liveToolStatus = useChatModeStore((s) => s.liveToolStatus);
   const modeChatBorderClass =
     preferredMode !== "local" ? "mode-chat-border--cloud" : "mode-chat-border--private";
   const [inputObj, setInputObj] = useState("");
@@ -331,7 +342,10 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
   }, [messages.length]);
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth" });
+    // During token streaming, smooth scroll queues fight each other and push the
+    // live bubble out of view — use instant stick-to-bottom instead.
+    const behavior: ScrollBehavior = streamingContent ? "auto" : "smooth";
+    endRef.current?.scrollIntoView({ behavior, block: "end" });
   }, [messages, streamingContent]);
 
   // Close attach menu on outside click
@@ -365,6 +379,19 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
     textareaRef,
     enabled: chatMode === "text",
   });
+
+  useEffect(() => {
+    const ta = textareaRef.current;
+    const mirror = highlightMirrorRef.current;
+    if (!ta) return;
+    ta.style.height = "auto";
+    const next = Math.min(Math.max(ta.scrollHeight, 40), 200);
+    ta.style.height = `${next}px`;
+    ta.style.overflowY = ta.scrollHeight > 200 ? "auto" : "hidden";
+    if (mirror) {
+      mirror.style.height = `${next}px`;
+    }
+  }, [inputObj]);
 
   const handleSend = () => {
     if (!inputObj.trim() || isLoading) return;
@@ -404,7 +431,9 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
         <textarea
           ref={textareaRef}
           value={inputObj}
-          onChange={(e) => slash.handleChange(e.target.value)}
+          onChange={(e) => {
+            slash.handleChange(e.target.value);
+          }}
           onKeyDown={handleKeyDown}
           onClick={slash.syncCursor}
           onSelect={slash.syncCursor}
@@ -419,7 +448,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
           }}
           placeholder={placeholder}
           rows={1}
-          className="slash-input-textarea w-full border-none outline-none text-[0.92rem] py-2 px-1 min-h-[40px] max-h-[200px] resize-none leading-relaxed font-inherit placeholder:text-txt-muted"
+          className="slash-input-textarea w-full border-none outline-none text-[0.92rem] py-2 px-1 min-h-[40px] max-h-[200px] resize-none leading-relaxed font-inherit placeholder:text-txt-muted overflow-hidden"
           data-tour="chat-input"
         />
       </div>
@@ -433,49 +462,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
   const CurrentModeIcon = MODE_ICON_MAP[currentMode] ?? MessageSquare;
   const renderInlineWebSources = (result?: WebSearchResult | null) => {
     if (!result || result.results.length === 0) return null;
-    return (
-      <div className="mt-3 pt-2.5 border-t border-glass-border">
-        <div className="text-[0.78rem] text-txt-muted mb-2">Web sources</div>
-        <ul className="space-y-2 max-h-64 overflow-y-auto">
-          {result.results.map((hit, i) => (
-            <li key={`${hit.url}-${i}`} className="flex gap-2.5 text-[0.78rem] leading-snug">
-              {hit.image_url && (
-                <button
-                  type="button"
-                  onClick={() => { void openUrl(hit.url); }}
-                  className="shrink-0 rounded-md overflow-hidden border border-glass-border bg-void-700/40 hover:border-neon/30 transition-colors"
-                  title={hit.title || hit.url}
-                >
-                  <img
-                    src={hit.image_url}
-                    alt=""
-                    className="h-14 w-14 object-cover"
-                    loading="lazy"
-                    referrerPolicy="no-referrer"
-                    onError={(e) => {
-                      (e.currentTarget.parentElement as HTMLElement | null)?.remove();
-                    }}
-                  />
-                </button>
-              )}
-              <div className="min-w-0 flex-1">
-                <button
-                  type="button"
-                  onClick={() => { void openUrl(hit.url); }}
-                  className="text-neon hover:underline font-medium block truncate text-left w-full"
-                  title={hit.url}
-                >
-                  {hit.title || hit.url}
-                </button>
-                {hit.snippet && (
-                  <p className="text-txt-muted mt-0.5 line-clamp-2">{hit.snippet}</p>
-                )}
-              </div>
-            </li>
-          ))}
-        </ul>
-      </div>
-    );
+    return <WebSearchDisclosure result={result} />;
   };
 
   const canToggleThinking = Boolean(onToggleThinking);
@@ -1044,6 +1031,11 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
                           <SlashHighlightedText text={msg.content} variant="bubble" />
                         ) : null}
                       </div>
+                      {msg.content?.trim() ? (
+                        <div className="flex items-center gap-1 mt-1.5 mr-0.5">
+                          <CopyMsgButton text={msg.content} label="Copy prompt" />
+                        </div>
+                      ) : null}
                     </div>
                     <div className="w-8 h-8 rounded-xl bg-neon-subtle text-neon flex items-center justify-center shrink-0 border border-neon/15">
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -1063,8 +1055,8 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
                     <div className="flex-1 min-w-0">
                       <div className="text-[0.9rem] leading-relaxed text-txt glass rounded-2xl rounded-tl-sm py-3 px-4">
                         {advanced && msg.thinking && <ThinkingBox thinking={msg.thinking} />}
-                        <MarkdownRenderer content={msg.content} />
                         {renderInlineWebSources(msg.webSearchResult)}
+                        <MarkdownRenderer content={msg.content} />
                         {mediaAssets[idx] && <MediaGallery assets={mediaAssets[idx]} />}
                         {(msg.artifactPath || msg.artifactStage) && (
                           <div className="mt-3">
@@ -1094,7 +1086,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
                           </div>
                         )}
                         <div className="flex items-center gap-1 mt-2 pt-1.5">
-                          <CopyMsgButton text={msg.content} />
+                          <CopyMsgButton text={msg.content} label="Copy response" />
                           {/* Read response aloud button */}
                           <SpeakButton text={msg.content} compact />
                         {advanced && msg.generateTime !== undefined && (
@@ -1127,7 +1119,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
         })}
 
         {isLoading && !messages.some(m => m.artifactStage && m.artifactStage !== "LivePreview" && m.artifactStage !== "Error") && (
-          <div className="animate-msg-fade flex gap-3 mb-5 max-w-3xl mx-auto">
+          <div className="flex gap-3 mb-5 max-w-3xl mx-auto">
             <img
               src="/logo-dark.png"
               alt="NELA"
@@ -1135,6 +1127,12 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
               draggable={false}
             />
             <div className="flex-1 min-w-0 text-[0.9rem] leading-relaxed text-txt glass rounded-2xl rounded-tl-sm py-3 px-4">
+              {liveToolStatus && (
+                <div className="web-search-live" role="status">
+                  <span className="web-search-live__pulse" aria-hidden />
+                  <span>{liveToolStatus}</span>
+                </div>
+              )}
               {advanced && streamingThinking && (
                 <div className="mb-3 p-3 rounded-lg bg-black/20 border border-white/5 text-xs text-txt-muted leading-relaxed opacity-70">
                   <div className="flex items-center gap-2 mb-2">
@@ -1144,13 +1142,15 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
                 </div>
               )}
               {streamingContent ? (
-                <MarkdownRenderer content={streamingContent} />
+                <MarkdownRenderer content={streamingContent} streaming />
               ) : !advanced || !streamingThinking ? (
-                <GenerationProgressLabel
-                  active
-                  mode={chatModeToProgressMode(chatMode)}
-                  elapsedSec={generalElapsedTime}
-                />
+                !liveToolStatus ? (
+                  <GenerationProgressLabel
+                    active
+                    mode={chatModeToProgressMode(chatMode)}
+                    elapsedSec={generalElapsedTime}
+                  />
+                ) : null
               ) : null}
             </div>
           </div>
@@ -1161,17 +1161,6 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
           <div className="flex items-center gap-2 py-1.5 px-3 rounded-full bg-neon-subtle border border-neon/20 max-w-3xl mx-auto text-sm text-txt-secondary">
             <div className="tts-timer-pulse" />
             <span>Generating speech... <span className="text-neon font-semibold tabular-nums">{ttsElapsedTime.toFixed(1)}s</span></span>
-          </div>
-        )}
-
-        {/* Response Time Timer - Chat/Vision/RAG Modes */}
-        {chatMode !== "audio" && generalGenerating && (
-          <div className="max-w-3xl mx-auto w-full px-2 py-2 rounded-xl border border-neon/20 nela-artifact-progress-card">
-            <GenerationProgressLabel
-              active
-              mode={chatModeToProgressMode(chatMode)}
-              elapsedSec={generalElapsedTime}
-            />
           </div>
         )}
 

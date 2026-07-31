@@ -59,8 +59,14 @@ export function escapeControlCharsInJsonStrings(json: string): string {
 /** Remove thinking tags, fences, and prose before the JSON object. */
 export function stripArtifactModelOutput(raw: string): string {
   let text = raw.trim();
-  text = text.replace(/```json\s*/gi, "");
-  text = text.replace(/```\s*/g, "");
+  // Prefer fenced JSON when present.
+  const jsonFence = text.match(/```(?:json)?\s*(\{[\s\S]*?\}|\[[\s\S]*?\])\s*```/i);
+  if (jsonFence?.[1]) {
+    text = jsonFence[1].trim();
+  } else {
+    text = text.replace(/```json\s*/gi, "");
+    text = text.replace(/```\s*/g, "");
+  }
   // Strip thinking / reasoning blocks (various model formats).
   text = text.replace(/[\s\S]*?<\/think>/gi, "");
   text = text.replace(/[\s\S]*?<\/redacted_thinking>/gi, "");
@@ -69,21 +75,32 @@ export function stripArtifactModelOutput(raw: string): string {
   text = text.replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, "");
   text = text.replace(/<redacted[^>]*>[\s\S]*?<\/redacted[^>]*>/gi, "");
 
-  const start = text.indexOf("{");
+  const startObj = text.indexOf("{");
+  const startArr = text.indexOf("[");
+  let start = -1;
+  if (startObj >= 0 && (startArr < 0 || startObj < startArr)) start = startObj;
+  else if (startArr >= 0) start = startArr;
   if (start > 0) {
     text = text.slice(start);
   }
   return text.trim();
 }
 
-/** Extract the outermost `{ ... }` object respecting JSON string boundaries. */
+/** Extract the outermost `{ ... }` or `[ ... ]` respecting JSON string boundaries. */
 export function extractBalancedJsonObject(raw: string): string | null {
   const text = stripArtifactModelOutput(raw);
 
-  const start = text.indexOf("{");
+  const startObj = text.indexOf("{");
+  const startArr = text.indexOf("[");
+  let start = -1;
+  if (startObj >= 0 && (startArr < 0 || startObj < startArr)) {
+    start = startObj;
+  } else if (startArr >= 0) {
+    start = startArr;
+  }
   if (start < 0) return null;
 
-  let depth = 0;
+  const stack: string[] = [];
   let inString = false;
   let escaped = false;
 
@@ -106,10 +123,14 @@ export function extractBalancedJsonObject(raw: string): string | null {
       continue;
     }
 
-    if (c === "{") depth++;
-    if (c === "}") {
-      depth--;
-      if (depth === 0) return text.slice(start, i + 1);
+    if (c === "{") stack.push("}");
+    else if (c === "[") stack.push("]");
+    else if (c === "}" || c === "]") {
+      if (stack.length === 0 || stack[stack.length - 1] !== c) {
+        return null;
+      }
+      stack.pop();
+      if (stack.length === 0) return text.slice(start, i + 1);
     }
   }
 
@@ -161,6 +182,10 @@ function tryParseObject(text: string): Record<string, unknown> | null {
     const parsed = JSON.parse(text);
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
       return parsed as Record<string, unknown>;
+    }
+    // Some models return a bare slides array.
+    if (Array.isArray(parsed) && parsed.length > 0) {
+      return { slides: parsed };
     }
   } catch {
     // ignore

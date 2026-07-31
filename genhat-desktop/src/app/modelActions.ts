@@ -124,7 +124,7 @@ export async function handleDownloadModel(modelId: string): Promise<void> {
     await Api.downloadModel(modelId);
   } catch (e) {
     console.error("Failed to download model", e);
-    uiStore.showError(`Failed to download model: ${String(e)}`);
+    uiStore.showError("Couldn't download that model. Please try again.");
   }
 }
 
@@ -137,7 +137,7 @@ export async function handleCancelDownload(modelId: string): Promise<void> {
     downloadStore.clearDownload(modelId);
   } catch (e) {
     console.error("Failed to cancel download", e);
-    uiStore.showError(`Failed to cancel download: ${String(e)}`);
+    uiStore.showError("Couldn't cancel the download. Please try again.");
   }
 }
 
@@ -148,7 +148,7 @@ export async function handleUninstall(modelId: string): Promise<void> {
     setTimeout(refreshModels, 1000);
   } catch (e) {
     console.error("Failed to uninstall model", e);
-    uiStore.showError(`Failed to uninstall model: ${String(e)}`);
+    uiStore.showError("Couldn't remove that model. Please try again.");
   }
 }
 
@@ -185,8 +185,7 @@ export async function handleModelChange(path: string): Promise<void> {
     }
   } catch (err) {
     console.error(err);
-    const msg = err instanceof Error ? err.message : String(err);
-    uiStore.showError(`Failed to switch model: ${msg}`);
+    uiStore.showError("Couldn't switch models. Please try again.");
   } finally {
     modelStore.setModelSwitching({ active: false, targetLabel: "" });
   }

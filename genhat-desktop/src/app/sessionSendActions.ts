@@ -147,7 +147,7 @@ export async function handleManualContextCompaction(): Promise<void> {
     }
   } catch (err) {
     console.error("Manual context compaction failed:", err);
-    uiStore.showError(`Failed to compact context: ${String(err)}`);
+    uiStore.showError("Couldn't clean up the conversation. Please try again.");
   } finally {
     sessionStore.setContextCompacting(false);
   }
