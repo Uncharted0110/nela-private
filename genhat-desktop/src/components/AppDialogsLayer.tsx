@@ -18,6 +18,7 @@ import StartupModal from "./StartupModal";
 import ToursModal from "./ToursModal";
 import ProfileModal from "./ProfileModal";
 import CloudSettingsModal from "./CloudSettingsModal";
+import RagSourcePickerModal from "./RagSourcePickerModal";
 interface AppDialogsLayerProps {
   showStartupModal: boolean;
   onContinueWorkspace: () => void;
@@ -123,6 +124,8 @@ export default function AppDialogsLayer({
         isOpen={cloudSettingsOpen}
         onClose={() => setCloudSettingsOpen(false)}
       />
+
+      <RagSourcePickerModal />
     </>
   );
 }

@@ -150,6 +150,15 @@ export interface IngestionStatus {
   phase: string;
 }
 
+/// Directory/file entry returned by the custom RAG source selector.
+export interface FsEntry {
+  path: string;
+  name: string;
+  is_dir: boolean;
+  size: number;
+  mtime: number;
+}
+
 export interface SourceChunk {
   chunk_id: number;
   doc_title: string;

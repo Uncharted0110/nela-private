@@ -9,6 +9,18 @@ use std::sync::Arc;
 use std::sync::RwLock;
 use tauri::State;
 
+/// A single filesystem entry for the custom RAG source selector UI.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct FsEntryDto {
+    pub path: String,
+    pub name: String,
+    pub is_dir: bool,
+    /// Bytes; 0 for directories.
+    pub size: u64,
+    /// Unix epoch seconds (mtime); 0 if unknown.
+    pub mtime: i64,
+}
+
 async fn resolve_runnable_chat_port(
     pm: &crate::process::ProcessManager,
     preferred_model_id: Option<&str>,
@@ -293,6 +305,168 @@ pub async fn ingest_folder(
 ) -> Result<Vec<IngestionStatus>, String> {
     let pipeline = state.active_pipeline()?;
     pipeline.ingest_folder(&PathBuf::from(path)).await
+}
+
+/// List directory entries for the custom RAG source selector UI.
+///
+/// - Always returns directories (so the UI can expand them).
+/// - For files, filters by `allowed_extensions` (case-insensitive, without leading dots).
+/// - Limits output to `max_entries` to avoid loading huge folders.
+#[tauri::command]
+pub async fn list_fs_entries(
+    path: String,
+    allowed_extensions: Vec<String>,
+    max_entries: usize,
+) -> Result<Vec<FsEntryDto>, String> {
+    let allowed: HashSet<String> = allowed_extensions
+        .into_iter()
+        .map(|e| e.trim().trim_start_matches('.').to_lowercase())
+        .collect();
+    let max_entries = max_entries.max(1);
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let dir = PathBuf::from(&path);
+        if !dir.is_dir() {
+            return Err(format!("Path is not a directory: {path}"));
+        }
+
+        let mut entries: Vec<FsEntryDto> = Vec::new();
+        let mut rd = std::fs::read_dir(&dir)
+            .map_err(|e| format!("Failed to read directory {path}: {e}"))?;
+
+        while let Some(item) = rd.next() {
+            let item = item.map_err(|e| format!("Failed to read directory entry: {e}"))?;
+            let meta = item
+                .metadata()
+                .map_err(|e| format!("Failed to stat entry in {path}: {e}"))?;
+            let child_path = item.path();
+            let name = item.file_name().to_string_lossy().to_string();
+            // Skip hidden / system noise in the in-app browser.
+            if name.starts_with('.') || name.starts_with('$') {
+                continue;
+            }
+
+            let mtime = meta
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0);
+
+            let is_dir = meta.is_dir();
+            if is_dir {
+                entries.push(FsEntryDto {
+                    path: child_path.to_string_lossy().to_string(),
+                    name,
+                    is_dir: true,
+                    size: 0,
+                    mtime,
+                });
+            } else {
+                let ext = child_path
+                    .extension()
+                    .and_then(|s| s.to_str())
+                    .map(|s| s.to_lowercase());
+                if let Some(ext) = ext {
+                    if allowed.contains(&ext) {
+                        entries.push(FsEntryDto {
+                            path: child_path.to_string_lossy().to_string(),
+                            name,
+                            is_dir: false,
+                            size: meta.len(),
+                            mtime,
+                        });
+                    }
+                }
+            }
+
+            if entries.len() >= max_entries {
+                break;
+            }
+        }
+
+        // directories first, then name
+        entries.sort_by(|a, b| {
+            if a.is_dir != b.is_dir {
+                return b.is_dir.cmp(&a.is_dir);
+            }
+            a.name.cmp(&b.name)
+        });
+
+        Ok(entries)
+    })
+    .await
+    .map_err(|e| format!("list_fs_entries join error: {e}"))?
+}
+
+/// Top-level roots for the in-app filesystem browser (no OS file dialog).
+///
+/// Returns Home / Documents / Desktop / Downloads when present, plus
+/// existing drive letters on Windows (or `/` on Unix).
+#[tauri::command]
+pub async fn list_fs_roots() -> Result<Vec<FsEntryDto>, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let mut roots: Vec<FsEntryDto> = Vec::new();
+        let mut seen = HashSet::new();
+
+        let push_if_dir = |roots: &mut Vec<FsEntryDto>, seen: &mut HashSet<String>, path: PathBuf, name: &str| {
+            if !path.is_dir() {
+                return;
+            }
+            let key = path.to_string_lossy().to_string();
+            let norm = key.replace('\\', "/").to_lowercase();
+            if seen.insert(norm) {
+                let mtime = std::fs::metadata(&path)
+                    .ok()
+                    .and_then(|m| m.modified().ok())
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs() as i64)
+                    .unwrap_or(0);
+                roots.push(FsEntryDto {
+                    path: key,
+                    name: name.to_string(),
+                    is_dir: true,
+                    size: 0,
+                    mtime,
+                });
+            }
+        };
+
+        let home = std::env::var_os("USERPROFILE")
+            .or_else(|| std::env::var_os("HOME"))
+            .map(PathBuf::from);
+
+        if let Some(ref home) = home {
+            push_if_dir(&mut roots, &mut seen, home.clone(), "Home");
+            push_if_dir(&mut roots, &mut seen, home.join("Documents"), "Documents");
+            push_if_dir(&mut roots, &mut seen, home.join("Desktop"), "Desktop");
+            push_if_dir(&mut roots, &mut seen, home.join("Downloads"), "Downloads");
+        }
+
+        #[cfg(windows)]
+        {
+            for letter in b'A'..=b'Z' {
+                let drive = format!("{}:\\", letter as char);
+                let path = PathBuf::from(&drive);
+                if path.is_dir() {
+                    push_if_dir(&mut roots, &mut seen, path, &drive);
+                }
+            }
+        }
+
+        #[cfg(not(windows))]
+        {
+            push_if_dir(&mut roots, &mut seen, PathBuf::from("/"), "/");
+        }
+
+        if roots.is_empty() {
+            return Err("No browsable filesystem roots found".to_string());
+        }
+
+        Ok(roots)
+    })
+    .await
+    .map_err(|e| format!("list_fs_roots join error: {e}"))?
 }
 
 /// Query the RAG knowledge base.

@@ -10,6 +10,19 @@ By default the desktop app talks to **production**:
 If production is unreachable, it falls back to `http://localhost:3001` / `http://localhost:3000`.
 
 ## Local development
+## 1. API (`nela-backend`)
+
+```bash
+cd nela-backend
+# Ensure .env has:
+#   DATABASE_URL=postgresql://...   # Neon (or local Postgres)
+#   OPENROUTER_MANAGEMENT_KEY=...   # preferred; mints completion keys on boot
+#   CLOUD_ENTITLEMENT_OVERRIDE=pro  # unlock Smart/Deep for local testing
+#   TOKEN_ENCRYPTION_KEY_BASE64=... # optional locally (plain: storage if unset)
+
+npm run db:push          # first time / schema changes
+npm run dev              # http://localhost:3001
+```
 
 Override the defaults with a `.env` in `genhat-desktop`:
 

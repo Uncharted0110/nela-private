@@ -471,6 +471,20 @@ export const Api = {
     return invoke<IngestionStatus[]>("ingest_folder", { path });
   },
 
+  /** List filesystem entries for the custom RAG source selector UI. */
+  async listFsEntries(dirPath: string, allowedExtensions: string[]): Promise<import("./types").FsEntry[]> {
+    return invoke<import("./types").FsEntry[]>("list_fs_entries", {
+      path: dirPath,
+      allowedExtensions,
+      maxEntries: 1000,
+    });
+  },
+
+  /** Top-level roots for the in-app filesystem browser (no OS dialog). */
+  async listFsRoots(): Promise<import("./types").FsEntry[]> {
+    return invoke<import("./types").FsEntry[]>("list_fs_roots");
+  },
+
   /** Query the RAG pipeline (non-streaming). */
   async queryRag(query: string, topK?: number): Promise<RagResult> {
     return invoke<RagResult>("query_rag", { query, topK });
