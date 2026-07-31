@@ -29,19 +29,31 @@ First app launch reads those files, materializes `config.json`, and auto-starts 
 ## Before building the installer
 
 ```powershell
-# 1) Build sidecar
+# 1) Build FileIndexer sidecar (separate FileIndexer repo) and stage it
 cd C:\Users\assas\CODEBASES\FileIndexer
 cargo build --release --bin fileindexer_sidecar
 Copy-Item .\target\release\fileindexer_sidecar.exe `
   C:\Users\assas\CODEBASES\nela-private\genhat-desktop\src-tauri\resources\fileindexer_sidecar.exe -Force
 
-# 2) Ensure model is under resources (junction or copy)
+# 2) Stage MiniLM ONNX under:
 #    src-tauri\resources\models\fileindexer\models--Qdrant--all-MiniLM-L6-v2-onnx\
 
-# 3) Bundle
+# 3) Bundle (also rebuilds MCP excel/presentation/html sidecars via prepare:sidecars:release)
 cd C:\Users\assas\CODEBASES\nela-private\genhat-desktop
 npx tauri build
 ```
+
+MCP artifact sidecars (`mcp-server-excel`, `mcp-server-presentation`, `mcp-server-html`) are rebuilt on every
+`npx tauri dev` / `npx tauri build` through `scripts/prepare-sidecars.mjs` (wired in `beforeDevCommand` /
+`beforeBuildCommand`). Force manually with:
+
+```bash
+npm run prepare:sidecars          # debug
+npm run prepare:sidecars:release  # release
+```
+
+FileIndexer resources are Windows-only (`tauri.windows.conf.json`) so Linux/macOS `tauri dev` no longer
+requires `resources/models/fileindexer`.
 
 Installer output: `src-tauri/target/release/bundle/nsis/`.
 

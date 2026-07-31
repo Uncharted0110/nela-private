@@ -401,8 +401,9 @@ pub async fn list_fs_entries(
 
 /// Top-level roots for the in-app filesystem browser (no OS file dialog).
 ///
-/// Returns Home / Documents / Desktop / Downloads when present, plus
-/// existing drive letters on Windows (or `/` on Unix).
+/// Returns Home / Documents / Desktop / Downloads when present.
+/// Intentionally omits OS roots (`/` / drive letters) so pickers default to
+/// the user's own files rather than system locations.
 #[tauri::command]
 pub async fn list_fs_roots() -> Result<Vec<FsEntryDto>, String> {
     tauri::async_runtime::spawn_blocking(|| {
@@ -443,24 +444,8 @@ pub async fn list_fs_roots() -> Result<Vec<FsEntryDto>, String> {
             push_if_dir(&mut roots, &mut seen, home.join("Downloads"), "Downloads");
         }
 
-        #[cfg(windows)]
-        {
-            for letter in b'A'..=b'Z' {
-                let drive = format!("{}:\\", letter as char);
-                let path = PathBuf::from(&drive);
-                if path.is_dir() {
-                    push_if_dir(&mut roots, &mut seen, path, &drive);
-                }
-            }
-        }
-
-        #[cfg(not(windows))]
-        {
-            push_if_dir(&mut roots, &mut seen, PathBuf::from("/"), "/");
-        }
-
         if roots.is_empty() {
-            return Err("No browsable filesystem roots found".to_string());
+            return Err("No browsable user folders found (is HOME / USERPROFILE set?)".to_string());
         }
 
         Ok(roots)

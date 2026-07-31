@@ -7,7 +7,8 @@
       "bin/espeak-ng-win/espeak-ng-data/*": "bin/espeak-ng-win/espeak-ng-data/",
       "bin/espeak-ng-win/espeak-ng-data/lang/gmw/*": "bin/espeak-ng-win/espeak-ng-data/lang/gmw/",
       "bin/espeak-ng-win/espeak-ng-data/voices/!v/*": "bin/espeak-ng-win/espeak-ng-data/voices/!v/",
-      "bin/espeak-ng-win/espeak-ng-data/voices/mb/*": "bin/espeak-ng-win/espeak-ng-data/voices/mb/"
+      "bin/espeak-ng-win/espeak-ng-data/voices/mb/*": "bin/espeak-ng-win/espeak-ng-data/voices/mb/",
+      "resources/fileindexer_sidecar.exe": "fileindexer_sidecar.exe"
     }
   }
 }

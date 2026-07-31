@@ -1,0 +1,3 @@
+#!/bin/sh
+echo "FileIndexer sidecar not staged for this platform." >&2
+exit 1

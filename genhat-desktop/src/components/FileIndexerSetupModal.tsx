@@ -57,7 +57,7 @@ export default function FileIndexerSetupModal() {
   const goConfirmDefault = () => {
     setError(null);
     if (defaultRoots.length === 0) {
-      setError("No system drives found.");
+      setError("Could not resolve your home folder.");
       return;
     }
     setMode("default");
@@ -137,7 +137,7 @@ export default function FileIndexerSetupModal() {
               <HardDrive size={18} />
               <div>
                 <strong>Default</strong>
-                <span>Index the entire system (all fixed drives).</span>
+                <span>Index your home folder only (not system files).</span>
               </div>
             </label>
             <label className={`fi-mode ${mode === "custom" ? "active" : ""}`}>
@@ -150,7 +150,7 @@ export default function FileIndexerSetupModal() {
               <FolderSearch size={18} />
               <div>
                 <strong>Custom</strong>
-                <span>Pick specific folders from the system hierarchy.</span>
+                <span>Pick specific folders inside your home directory.</span>
               </div>
             </label>
 

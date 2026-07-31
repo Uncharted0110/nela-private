@@ -112,6 +112,20 @@ export default function RagSourcePickerModal() {
     () => roots.filter((r) => isDriveRoot(r.name, r.path)),
     [roots],
   );
+  const homeRoot = useMemo(
+    () => roots.find((r) => r.name === "Home")?.path ?? null,
+    [roots],
+  );
+
+  const isInsideHome = useCallback(
+    (dirPath: string) => {
+      if (!homeRoot) return true;
+      const home = normalizeForCompare(homeRoot).replace(/\/+$/, "");
+      const dest = normalizeForCompare(dirPath).replace(/\/+$/, "");
+      return dest === home || dest.startsWith(`${home}/`);
+    },
+    [homeRoot],
+  );
 
   const hasSelection = foldersOnly
     ? selectedFolders.size > 0
@@ -149,6 +163,10 @@ export default function RagSourcePickerModal() {
   const navigateTo = useCallback(
     async (dirPath: string, opts?: { pushHistory?: boolean }) => {
       if (!dirPath) return;
+      if (foldersOnly && homeRoot && !isInsideHome(dirPath)) {
+        setError("Only folders inside your home directory can be selected.");
+        return;
+      }
       const push = opts?.pushHistory !== false;
       if (push && currentPath && normalizeForCompare(currentPath) !== normalizeForCompare(dirPath)) {
         setHistory((prev) => [...prev, currentPath]);
@@ -156,7 +174,7 @@ export default function RagSourcePickerModal() {
       }
       await loadDir(dirPath);
     },
-    [currentPath, loadDir],
+    [currentPath, foldersOnly, homeRoot, isInsideHome, loadDir],
   );
 
   useEffect(() => {
@@ -177,6 +195,7 @@ export default function RagSourcePickerModal() {
       .then(async (r) => {
         setRoots(r);
         const start =
+          (foldersOnly ? r.find((x) => x.name === "Home") : null) ??
           r.find((x) => x.name === "Documents") ??
           r.find((x) => x.name === "Home") ??
           r[0];
@@ -188,7 +207,7 @@ export default function RagSourcePickerModal() {
         setError(e instanceof Error ? e.message : String(e));
         setLoading(false);
       });
-  }, [isOpen, loadDir]);
+  }, [isOpen, loadDir, foldersOnly]);
 
   const goBack = async () => {
     if (history.length === 0) return;
@@ -210,6 +229,7 @@ export default function RagSourcePickerModal() {
     if (!currentPath) return;
     const parent = parentDir(currentPath);
     if (!parent || normalizeForCompare(parent) === normalizeForCompare(currentPath)) return;
+    if (foldersOnly && homeRoot && !isInsideHome(parent)) return;
     await navigateTo(parent);
   };
 
@@ -270,6 +290,70 @@ export default function RagSourcePickerModal() {
     return entries.filter((e) => e.name.toLowerCase().includes(q));
   }, [entries, query]);
 
+  const visibleSelectable = useMemo(() => {
+    return filteredEntries.filter((entry) => {
+      if (foldersOnly && !entry.is_dir) return false;
+      if (isCoveredBySelectedFolder(entry.path)) return false;
+      return true;
+    });
+  }, [filteredEntries, foldersOnly, isCoveredBySelectedFolder]);
+
+  const allVisibleSelected =
+    visibleSelectable.length > 0 &&
+    visibleSelectable.every((entry) =>
+      entry.is_dir ? selectedFolders.has(entry.path) : selectedFiles.has(entry.path),
+    );
+
+  const toggleSelectAllVisible = () => {
+    if (allVisibleSelected) {
+      setSelectedFolders((prev) => {
+        const next = new Set(prev);
+        for (const entry of visibleSelectable) {
+          if (entry.is_dir) next.delete(entry.path);
+        }
+        return next;
+      });
+      if (!foldersOnly) {
+        setSelectedFiles((prev) => {
+          const next = new Set(prev);
+          for (const entry of visibleSelectable) {
+            if (!entry.is_dir) next.delete(entry.path);
+          }
+          return next;
+        });
+      }
+      return;
+    }
+
+    const foldersToAdd = visibleSelectable.filter((e) => e.is_dir).map((e) => e.path);
+    const filesToAdd = foldersOnly
+      ? []
+      : visibleSelectable.filter((e) => !e.is_dir).map((e) => e.path);
+
+    setSelectedFolders((prev) => {
+      const next = new Set(prev);
+      for (const folderPath of foldersToAdd) {
+        next.add(folderPath);
+        for (const f of Array.from(next)) {
+          if (isStrictDescendant(f, folderPath)) next.delete(f);
+        }
+      }
+      return next;
+    });
+    setSelectedFiles((prev) => {
+      const next = new Set(prev);
+      for (const folderPath of foldersToAdd) {
+        for (const file of Array.from(next)) {
+          if (isStrictDescendant(file, folderPath)) next.delete(file);
+        }
+      }
+      for (const filePath of filesToAdd) {
+        next.add(filePath);
+      }
+      return next;
+    });
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -325,7 +409,7 @@ export default function RagSourcePickerModal() {
         <div className="rsp-body">
           <aside className="rsp-sidebar">
             <div className="rsp-side-section">
-              <div className="rsp-side-label">System</div>
+              <div className="rsp-side-label">Places</div>
               {systemRoots.map((r) => (
                 <button
                   key={r.path}
@@ -341,7 +425,7 @@ export default function RagSourcePickerModal() {
               ))}
             </div>
 
-            {volumeRoots.length > 0 && (
+            {!foldersOnly && volumeRoots.length > 0 && (
               <div className="rsp-side-section">
                 <div className="rsp-side-label">Volumes</div>
                 {volumeRoots.map((r) => (
@@ -438,6 +522,14 @@ export default function RagSourcePickerModal() {
             <span className="rsp-hint">Selecting a folder disables its children</span>
           </div>
           <div className="rsp-actions">
+            <button
+              type="button"
+              className="rsp-btn ghost"
+              disabled={visibleSelectable.length === 0 || loading}
+              onClick={toggleSelectAllVisible}
+            >
+              {allVisibleSelected ? "Deselect all" : "Select all"}
+            </button>
             <button type="button" className="rsp-btn ghost" onClick={() => resolveRagSourcePicker(null)}>
               Cancel
             </button>

@@ -242,23 +242,25 @@ fn model_size_mb(cache_dir: &Path) -> u64 {
     total / (1024 * 1024)
 }
 
-fn default_system_roots() -> Vec<String> {
-    let mut roots = Vec::new();
-    #[cfg(windows)]
-    {
-        for letter in b'A'..=b'Z' {
-            let drive = format!("{}:\\", letter as char);
-            let path = PathBuf::from(&drive);
-            if path.is_dir() {
-                roots.push(drive);
-            }
-        }
-    }
-    #[cfg(not(windows))]
-    {
-        roots.push("/".into());
-    }
-    roots
+fn user_home_dir() -> Option<PathBuf> {
+    std::env::var_os("USERPROFILE")
+        .or_else(|| std::env::var_os("HOME"))
+        .map(PathBuf::from)
+        .filter(|p| p.is_dir())
+}
+
+/// Default FileIndexer roots: the signed-in user's home directory only.
+/// Never indexes OS roots (`/` / drive letters) — those can contain sensitive system data.
+fn default_user_roots() -> Vec<String> {
+    user_home_dir()
+        .map(|home| vec![home.to_string_lossy().to_string()])
+        .unwrap_or_default()
+}
+
+fn path_is_under_or_equal(path: &Path, ancestor: &Path) -> bool {
+    let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let ancestor = ancestor.canonicalize().unwrap_or_else(|_| ancestor.to_path_buf());
+    path == ancestor || path.starts_with(&ancestor)
 }
 
 fn resolve_sidecar_binary() -> Result<PathBuf, String> {
@@ -544,7 +546,7 @@ pub fn fileindexer_get_setup(
         "config": cfg,
         "model": model,
         "status": status,
-        "defaultRoots": default_system_roots(),
+        "defaultRoots": default_user_roots(),
     }))
 }
 
@@ -558,9 +560,18 @@ pub fn fileindexer_complete_setup(
     if roots.is_empty() {
         return Err("Select at least one folder to index".into());
     }
+    let home = user_home_dir().ok_or_else(|| {
+        "Could not resolve your home folder. Set HOME (or USERPROFILE on Windows).".to_string()
+    })?;
     for r in &roots {
-        if !PathBuf::from(r).is_dir() {
+        let path = PathBuf::from(r);
+        if !path.is_dir() {
             return Err(format!("Not a valid folder: {r}"));
+        }
+        if !path_is_under_or_equal(&path, &home) {
+            return Err(format!(
+                "Only folders inside your home directory can be indexed (refused: {r})"
+            ));
         }
     }
     let data_dir = state
