@@ -37,6 +37,7 @@ pub mod grammar;
 pub mod mcp;
 pub mod intent;
 pub mod indexer;
+pub mod fileindexer;
 pub mod security;
 pub mod telemetry;
 pub mod html;

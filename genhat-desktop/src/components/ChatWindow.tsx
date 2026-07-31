@@ -121,6 +121,8 @@ interface ChatWindowProps {
   onToggleRagEnabled?: (enabled: boolean) => void;
   webEnabled?: boolean;
   onToggleWebEnabled?: (enabled: boolean) => void;
+  fileIndexerEnabled?: boolean;
+  onToggleFileIndexerEnabled?: (enabled: boolean) => void;
   webDepth?: "snippets" | "full";
   onWebDepthChange?: (depth: "snippets" | "full") => void;
   onIngestFile?: () => void;
@@ -277,6 +279,8 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
   onToggleRagEnabled,
   webEnabled = false,
   onToggleWebEnabled,
+  fileIndexerEnabled = false,
+  onToggleFileIndexerEnabled,
   webDepth = "snippets",
   onWebDepthChange,
   onIngestFile,
@@ -477,6 +481,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
   const canToggleThinking = Boolean(onToggleThinking);
   const canToggleRag = chatMode === "text" && Boolean(onToggleRagEnabled);
   const canToggleWeb = chatMode === "text" && Boolean(onToggleWebEnabled);
+  const canToggleFileIndexer = chatMode === "text" && Boolean(onToggleFileIndexerEnabled);
 
   const renderToolsMenu = () => {
     return (
@@ -569,6 +574,34 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
               </div>
             )}
           </div>
+
+          <button
+            className={`w-full flex items-center justify-between gap-2 py-2 px-2.5 rounded-lg text-sm transition-all duration-150 ${
+              fileIndexerEnabled
+                ? "bg-neon-subtle text-neon"
+                : "text-txt-secondary hover:bg-glass-hover hover:text-txt"
+            } ${canToggleFileIndexer ? "" : "opacity-50 cursor-not-allowed"}`}
+            onClick={() => {
+              if (!canToggleFileIndexer) return;
+              onToggleFileIndexerEnabled?.(!fileIndexerEnabled);
+            }}
+            title={canToggleFileIndexer ? COPY.toolSearchFilesHint : "Available when chatting"}
+            disabled={!canToggleFileIndexer}
+            aria-label={COPY.toolSearchFiles}
+          >
+            <span className="text-[0.78rem] font-medium">{COPY.toolSearchFiles}</span>
+            <span
+              className={`relative inline-flex h-4 w-8 rounded-full transition-colors ${
+                fileIndexerEnabled ? "bg-neon" : "bg-void-700"
+              }`}
+            >
+              <span
+                className={`absolute top-0.5 h-3 w-3 rounded-full bg-white transition-transform ${
+                  fileIndexerEnabled ? "translate-x-4" : "translate-x-0.5"
+                }`}
+              />
+            </span>
+          </button>
 
           {advanced && (
             <button

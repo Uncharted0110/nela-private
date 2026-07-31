@@ -34,6 +34,7 @@ export interface SendHandlerContext {
   chatMode: ChatMode;
   ragEnabled: boolean;
   webEnabled: boolean;
+  fileIndexerEnabled: boolean;
   webDepth: "snippets" | "full";
   imagePath: string | null;
   directDocumentPaths: string[];

@@ -9,6 +9,8 @@ export const COPY = {
   toolSearchDocsHint: "Look through documents you've added to answer your question.",
   toolSearchWeb: "Search the web",
   toolSearchWebHint: "Allow looking things up online for this question.",
+  toolSearchFiles: "Search my files",
+  toolSearchFilesHint: "Search from the chat bar; matching files open in the File search results panel.",
   toolShowReasoning: "Show reasoning", // advanced-only; see Task 12
   toolShowReasoningHint: "Show the assistant's step-by-step thinking.",
 

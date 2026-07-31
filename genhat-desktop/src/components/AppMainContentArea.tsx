@@ -25,6 +25,8 @@ interface AppMainContentAreaProps {
   onToggleRagEnabled: (enabled: boolean) => void;
   webEnabled?: boolean;
   onToggleWebEnabled?: (enabled: boolean) => void;
+  fileIndexerEnabled?: boolean;
+  onToggleFileIndexerEnabled?: (enabled: boolean) => void;
   webDepth?: "snippets" | "full";
   onWebDepthChange?: (depth: "snippets" | "full") => void;
   activeSession: ChatSession | null;
@@ -85,6 +87,8 @@ export default function AppMainContentArea({
   onToggleRagEnabled,
   webEnabled,
   onToggleWebEnabled,
+  fileIndexerEnabled,
+  onToggleFileIndexerEnabled,
   webDepth,
   onWebDepthChange,
   activeSession,
@@ -174,6 +178,8 @@ export default function AppMainContentArea({
             onToggleRagEnabled={onToggleRagEnabled}
             webEnabled={webEnabled}
             onToggleWebEnabled={onToggleWebEnabled}
+            fileIndexerEnabled={fileIndexerEnabled}
+            onToggleFileIndexerEnabled={onToggleFileIndexerEnabled}
             webDepth={webDepth}
             onWebDepthChange={onWebDepthChange}
             showRagControls={chatMode === "text" || chatMode === "mindmap"}

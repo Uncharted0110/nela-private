@@ -39,6 +39,7 @@ import { useModelStore } from "../stores/modelStore";
 import { useUIStore } from "../stores/uiStore";
 import { useDownloadStore } from "../stores/downloadStore";
 import { useCloudStore } from "../stores/cloudStore";
+import { useFileIndexerStore } from "../stores/fileIndexerStore";
 import ChatTabBar from "./ChatTabBar";
 import AppMainTopBar from "./AppMainTopBar";
 import AppMainModeControls from "./AppMainModeControls";
@@ -79,6 +80,8 @@ export default function AppMainContent({ networkActive: networkActiveProp }: App
   const enrichmentStatus = useChatModeStore(s => s.enrichmentStatus);
   const webEnabled = useChatModeStore(s => s.webEnabled);
   const setWebEnabled = useChatModeStore(s => s.setWebEnabled);
+  const fileIndexerEnabled = useChatModeStore(s => s.fileIndexerEnabled);
+  const setFileIndexerEnabled = useChatModeStore(s => s.setFileIndexerEnabled);
   const webDepth = useChatModeStore(s => s.webDepth);
   const setWebDepth = useChatModeStore(s => s.setWebDepth);
   const imagePath = useChatModeStore(s => s.imagePath);
@@ -166,6 +169,19 @@ export default function AppMainContent({ networkActive: networkActiveProp }: App
     setWebEnabled(enabled);
   };
 
+  const handleFileIndexerToggle = (enabled: boolean) => {
+    setFileIndexerEnabled(enabled);
+    const { status, openSetup, closeChat } = useFileIndexerStore.getState();
+    if (enabled) {
+      // Keep querying in the main chat bar; popup only opens when results arrive.
+      if (!status.setupDone) {
+        openSetup();
+      }
+    } else {
+      closeChat();
+    }
+  };
+
   const handleWebDepthChange = (depth: "snippets" | "full") => {
     setWebDepth(depth);
   };
@@ -246,6 +262,8 @@ export default function AppMainContent({ networkActive: networkActiveProp }: App
         onToggleRagEnabled={handleRagToggle}
         webEnabled={webEnabled}
         onToggleWebEnabled={handleWebToggle}
+        fileIndexerEnabled={fileIndexerEnabled}
+        onToggleFileIndexerEnabled={handleFileIndexerToggle}
         webDepth={webDepth}
         onWebDepthChange={handleWebDepthChange}
         activeSession={activeSession}

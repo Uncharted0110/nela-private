@@ -879,12 +879,12 @@ const ModelsSettingsModal: React.FC<ModelsSettingsModalProps> = ({
                       {LOCAL_INTELLIGENCE_TIERS.map((key) => {
                         const option = INTELLIGENCE_MODE_OPTIONS.find((o) => o.key === key)!;
                         return (
-                        <label key={option.key} className="settings-intelligence-row">
+                        <label key={key} className="settings-intelligence-row">
                           <span className="settings-intelligence-label">{option.label}</span>
                           <DropdownSelect
-                            value={intelligenceMapping[option.key]}
+                            value={intelligenceMapping[key]}
                             options={chatModelOptions}
-                            onChange={(value) => updateIntelligenceMapping(option.key, value)}
+                            onChange={(value) => updateIntelligenceMapping(key, value)}
                             disabled={chatModelOptions.length === 0}
                           />
                         </label>

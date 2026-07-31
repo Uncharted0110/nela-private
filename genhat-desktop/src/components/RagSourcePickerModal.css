@@ -1,7 +1,7 @@
 .rsp-overlay {
   position: fixed;
   inset: 0;
-  z-index: 250;
+  z-index: 13000;
   background: var(--modal-overlay-bg, rgba(0, 0, 0, 0.7));
   backdrop-filter: blur(8px);
   display: flex;

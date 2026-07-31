@@ -1257,6 +1257,32 @@ export const Api = {
     return invoke<string | null>("get_ambient_file_content", { path });
   },
 
+  async fileindexerGetSetup(): Promise<Record<string, unknown>> {
+    return invoke<Record<string, unknown>>("fileindexer_get_setup");
+  },
+
+  async fileindexerCompleteSetup(mode: string, roots: string[]): Promise<Record<string, unknown>> {
+    return invoke<Record<string, unknown>>("fileindexer_complete_setup", { mode, roots });
+  },
+
+  async fileindexerGetStatus(): Promise<Record<string, unknown>> {
+    return invoke<Record<string, unknown>>("fileindexer_get_status");
+  },
+
+  async fileindexerStart(): Promise<Record<string, unknown>> {
+    return invoke<Record<string, unknown>>("fileindexer_start");
+  },
+
+  async fileindexerStop(): Promise<Record<string, unknown>> {
+    return invoke<Record<string, unknown>>("fileindexer_stop");
+  },
+
+  async fileindexerSearch(
+    query: string,
+  ): Promise<Array<{ path: string; score: number; fields: string[] }>> {
+    return invoke("fileindexer_search", { query });
+  },
+
   /** Apply a unified diff patch to a file (revamp P5) */
   async applyDiffPatch(path: string, patch: string): Promise<string> {
     return invoke<string>("apply_diff_patch", { path, patch });

@@ -35,12 +35,28 @@ fn normalize_pdf_text(text: &str) -> String {
             '\u{2013}' | '\u{2014}' => out.push('-'),
             // Horizontal ellipsis → three dots
             '\u{2026}' => out.push_str("..."),
-            // Private-use area chars (U+F8xx) from symbol fonts → skip them
-            ch if ('\u{F800}'..='\u{F8FF}').contains(&ch) => {}
+            // Private-use area / dingbat leftovers from symbol fonts → skip
+            ch if ('\u{F000}'..='\u{F8FF}').contains(&ch) => {}
+            // Zero-width / BOM / form-feed keep page breaks via form feed only
+            '\u{FEFF}' | '\u{200B}' | '\u{200C}' | '\u{200D}' => {}
+            // Control chars except newline/tab/form-feed
+            ch if ch.is_control() && ch != '\n' && ch != '\r' && ch != '\t' && ch != '\u{000C}' => {}
             other => out.push(other),
         }
     }
     out
+}
+
+/// Run pdf-extract without letting panics or noisy glyph diagnostics take down the app.
+fn extract_pdf_text_safe(bytes: &[u8]) -> Result<String, String> {
+    let owned = bytes.to_vec();
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        pdf_extract::extract_text_from_mem(&owned)
+    })) {
+        Ok(Ok(text)) => Ok(text),
+        Ok(Err(e)) => Err(format!("PDF extraction error: {e}")),
+        Err(_) => Err("PDF extraction panicked on this file".into()),
+    }
 }
 
 /// Parse a PDF document, extracting text and optionally images/tables.
@@ -56,9 +72,9 @@ pub fn parse(path: &Path, media_dir: Option<&Path>) -> Result<ParsedDocument, St
         .unwrap_or("document.pdf")
         .to_string();
 
-    // ── 1. Text extraction (pdf-extract) ──
-    let raw_text = pdf_extract::extract_text_from_mem(&bytes)
-        .map_err(|e| format!("PDF extraction error: {e}"))?;
+    // ── 1. Text extraction (pdf-extract 0.12+ logs glyph issues via `log::warn`,
+    // not stdout — older 0.8 used println! and could corrupt Tauri IPC.) ──
+    let raw_text = extract_pdf_text_safe(&bytes)?;
 
     // Normalize ligatures and problematic Unicode codepoints
     let text = normalize_pdf_text(&raw_text);

@@ -19,6 +19,8 @@ import ToursModal from "./ToursModal";
 import ProfileModal from "./ProfileModal";
 import CloudSettingsModal from "./CloudSettingsModal";
 import RagSourcePickerModal from "./RagSourcePickerModal";
+import FileIndexerSetupModal from "./FileIndexerSetupModal";
+import FileIndexerChatModal from "./FileIndexerChatModal";
 interface AppDialogsLayerProps {
   showStartupModal: boolean;
   onContinueWorkspace: () => void;
@@ -69,6 +71,9 @@ export default function AppDialogsLayer({
   const downloads = useDownloadStore(s => s.downloads);
   return (
     <>
+      <FileIndexerSetupModal />
+      <FileIndexerChatModal />
+
       {showStartupModal && (
         <StartupModal
           onContinueWorkspace={onContinueWorkspace}

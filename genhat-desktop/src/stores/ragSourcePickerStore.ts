@@ -8,6 +8,7 @@ export type RagSourceSelection = {
 interface RagSourcePickerState {
   open: boolean;
   allowedExtensions: string[];
+  foldersOnly: boolean;
 }
 
 let ragPickerResolve: ((value: RagSourceSelection | null) => void) | null = null;
@@ -21,17 +22,20 @@ export const resolveRagSourcePicker = (value: RagSourceSelection | null) => {
 
 export const openRagSourcePicker = (opts: {
   allowedExtensions: string[];
+  foldersOnly?: boolean;
 }) =>
   new Promise<RagSourceSelection | null>((resolve) => {
     ragPickerResolve = resolve;
     useRagSourcePickerStore.setState({
       open: true,
       allowedExtensions: opts.allowedExtensions,
+      foldersOnly: !!opts.foldersOnly,
     });
   });
 
 export const useRagSourcePickerStore = create<RagSourcePickerState>(() => ({
   open: false,
   allowedExtensions: [],
+  foldersOnly: false,
 }));
 

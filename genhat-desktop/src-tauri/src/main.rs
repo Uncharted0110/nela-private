@@ -15,6 +15,7 @@ use app_lib::commands::download::DownloadState;
 use app_lib::governor::{Governor, GovernorState};
 use app_lib::intent::{IntentResolver, IntentResolverState};
 use app_lib::indexer::{AmbientIndexer, AmbientIndexerState};
+use app_lib::fileindexer::FileIndexerState;
 use app_lib::mcp::coordinator::{McpCoordinator, McpCoordinatorState};
 use app_lib::process::ProcessManager;
 use app_lib::rag::pipeline::RagPipeline;
@@ -271,6 +272,20 @@ fn main() {
             app.manage(IntentResolverState(intent_resolver));
             app.manage(AmbientIndexerState(indexer));
 
+            // FileIndexer sidecar host (folder config + background semantic index)
+            let fileindexer_dir = app_data_dir.join("fileindexer");
+            app.manage(FileIndexerState::new(fileindexer_dir));
+            {
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+                    match app_lib::fileindexer::try_autostart(&handle) {
+                        Ok(()) => log::info!("FileIndexer sidecar auto-start ok"),
+                        Err(e) => log::info!("FileIndexer sidecar not auto-started: {e}"),
+                    }
+                });
+            }
+
             // Pre-warm the cross-encoder so the first ambient search stays within budget.
             let router_for_warm = router.clone();
             tauri::async_runtime::spawn(async move {
@@ -449,6 +464,13 @@ fn main() {
             // Ambient FTS5 Indexer command (revamp P4)
             app_lib::commands::indexer::search_ambient_files,
             app_lib::commands::indexer::get_ambient_file_content,
+            // FileIndexer sidecar
+            app_lib::fileindexer::fileindexer_get_setup,
+            app_lib::fileindexer::fileindexer_complete_setup,
+            app_lib::fileindexer::fileindexer_get_status,
+            app_lib::fileindexer::fileindexer_start,
+            app_lib::fileindexer::fileindexer_stop,
+            app_lib::fileindexer::fileindexer_search,
         ])
         .build(tauri::generate_context!())
         .expect("error building tauri app")
@@ -458,6 +480,7 @@ fn main() {
                 if let Some(indexer) = app_handle.try_state::<AmbientIndexerState>() {
                     indexer.0.stop();
                 }
+                app_lib::fileindexer::stop_from_app(app_handle);
                 let pm = app_handle.state::<ProcessManagerState>();
                 let pm = pm.0.clone();
                 // Block on stopping all processes before exit

@@ -51,6 +51,7 @@ export async function handleSend(text: string): Promise<void> {
 
   const slash = parseSlashCommands(text);
   if (slash.web) chatModeStore.setWebEnabled(true);
+  if (slash.files) chatModeStore.setFileIndexerEnabled(true);
   if (slash.rag && advanced) chatModeStore.setRagEnabled(true);
 
   await executeHandleSend(text);

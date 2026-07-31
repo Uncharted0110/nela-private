@@ -88,6 +88,7 @@ function sidebarIcon(name: string) {
 export default function RagSourcePickerModal() {
   const isOpen = useRagSourcePickerStore((s) => s.open);
   const allowedExtensions = useRagSourcePickerStore((s) => s.allowedExtensions);
+  const foldersOnly = useRagSourcePickerStore((s) => s.foldersOnly);
 
   const [roots, setRoots] = useState<FsEntry[]>([]);
   const [currentPath, setCurrentPath] = useState<string>("");
@@ -112,7 +113,9 @@ export default function RagSourcePickerModal() {
     [roots],
   );
 
-  const hasSelection = selectedFolders.size + selectedFiles.size > 0;
+  const hasSelection = foldersOnly
+    ? selectedFolders.size > 0
+    : selectedFolders.size + selectedFiles.size > 0;
 
   const isCoveredBySelectedFolder = useCallback(
     (nodePath: string) => {
@@ -275,7 +278,7 @@ export default function RagSourcePickerModal() {
         <header className="rsp-header">
           <div className="rsp-title">
             <Folder size={16} />
-            <span>Select sources</span>
+            <span>{foldersOnly ? "Select folders to index" : "Select sources"}</span>
           </div>
           <button type="button" className="rsp-icon-btn" onClick={() => resolveRagSourcePicker(null)} aria-label="Close">
             <X size={16} />
@@ -374,7 +377,9 @@ export default function RagSourcePickerModal() {
               ) : filteredEntries.length === 0 ? (
                 <div className="rsp-empty">No matching files or folders</div>
               ) : (
-                filteredEntries.map((entry) => {
+                filteredEntries
+                  .filter((entry) => !foldersOnly || entry.is_dir)
+                  .map((entry) => {
                   const checked = entry.is_dir
                     ? selectedFolders.has(entry.path)
                     : selectedFiles.has(entry.path);
@@ -393,10 +398,10 @@ export default function RagSourcePickerModal() {
                         <input
                           type="checkbox"
                           checked={checked}
-                          disabled={disabled}
+                          disabled={disabled || (!entry.is_dir && foldersOnly)}
                           onChange={() => {
                             if (entry.is_dir) onToggleFolder(entry.path);
-                            else onToggleFile(entry.path);
+                            else if (!foldersOnly) onToggleFile(entry.path);
                           }}
                           onClick={(e) => e.stopPropagation()}
                         />
@@ -408,7 +413,7 @@ export default function RagSourcePickerModal() {
                         disabled={disabled && !entry.is_dir}
                         onClick={() => {
                           if (entry.is_dir) void navigateTo(entry.path);
-                          else if (!disabled) onToggleFile(entry.path);
+                          else if (!foldersOnly && !disabled) onToggleFile(entry.path);
                         }}
                       >
                         {entry.is_dir ? <Folder size={15} /> : <FileText size={15} />}
@@ -427,7 +432,9 @@ export default function RagSourcePickerModal() {
 
         <footer className="rsp-footer">
           <div className="rsp-selection-meta">
-            {selectedFolders.size} folders · {selectedFiles.size} files
+            {foldersOnly
+              ? `${selectedFolders.size} folders`
+              : `${selectedFolders.size} folders · ${selectedFiles.size} files`}
             <span className="rsp-hint">Selecting a folder disables its children</span>
           </div>
           <div className="rsp-actions">
@@ -438,9 +445,18 @@ export default function RagSourcePickerModal() {
               type="button"
               className="rsp-btn primary"
               disabled={!hasSelection}
-              onClick={() => setSummaryOpen(true)}
+              onClick={() => {
+                if (foldersOnly) {
+                  resolveRagSourcePicker({
+                    folderPaths: Array.from(selectedFolders),
+                    filePaths: [],
+                  });
+                  return;
+                }
+                setSummaryOpen(true);
+              }}
             >
-              Index selected
+              {foldersOnly ? "Use selected folders" : "Index selected"}
             </button>
           </div>
         </footer>

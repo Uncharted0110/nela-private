@@ -22,12 +22,21 @@ import { useWorkspaceStore } from "./stores/workspaceStore";
 import { useUIStore } from "./stores/uiStore";
 import { useDownloadStore } from "./stores/downloadStore";
 import { useChatModeStore } from "./stores/chatModeStore";
+import { useFileIndexerStore } from "./stores/fileIndexerStore";
+import { useEffect } from "react";
 import "./App.css";
 
 function App() {
   const { theme, setTheme } = useTheme();
   useAppLifecycle();
   const { startTour } = useTour();
+
+  const hydrateFileIndexer = useFileIndexerStore((s) => s.hydrate);
+  const fileIndexerSetupOpen = useFileIndexerStore((s) => s.setupOpen);
+
+  useEffect(() => {
+    void hydrateFileIndexer();
+  }, [hydrateFileIndexer]);
 
   const toggleTheme = () => setTheme(theme === "neon" ? "professional" : "neon");
 
@@ -90,7 +99,7 @@ function App() {
     });
   };
 
-  const showStartupModal = !activeWorkspace && !suppressStartupModal;
+  const showStartupModal = !activeWorkspace && !suppressStartupModal && !fileIndexerSetupOpen;
 
   return (
     <div className="relative w-full h-full overflow-hidden">

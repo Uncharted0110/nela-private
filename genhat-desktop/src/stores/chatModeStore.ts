@@ -39,6 +39,7 @@ interface ChatModeState {
   ragIngesting: boolean;
   enrichmentStatus: string | null;
   webEnabled: boolean;
+  fileIndexerEnabled: boolean;
   webDepth: "snippets" | "full";
   imagePath: string | null;
   imagePreview: string | null;
@@ -61,6 +62,7 @@ interface ChatModeActions {
   setRagIngesting: (ingesting: boolean) => void;
   setEnrichmentStatus: (status: string | null) => void;
   setWebEnabled: (enabled: boolean) => void;
+  setFileIndexerEnabled: (enabled: boolean) => void;
   setWebDepth: (depth: "snippets" | "full") => void;
   setImagePath: (path: string | null) => void;
   setImagePreview: (preview: string | null) => void;
@@ -89,6 +91,7 @@ export const useChatModeStore = create<ChatModeState & ChatModeActions>((set) =>
   ragIngesting: false,
   enrichmentStatus: null,
   webEnabled: false,
+  fileIndexerEnabled: false,
   webDepth: "snippets",
   imagePath: null,
   imagePreview: null,
@@ -119,6 +122,8 @@ export const useChatModeStore = create<ChatModeState & ChatModeActions>((set) =>
   setEnrichmentStatus: (enrichmentStatus) => set({ enrichmentStatus }),
   
   setWebEnabled: (webEnabled) => set({ webEnabled }),
+
+  setFileIndexerEnabled: (fileIndexerEnabled) => set({ fileIndexerEnabled }),
   
   setWebDepth: (webDepth) => set({ webDepth }),
   

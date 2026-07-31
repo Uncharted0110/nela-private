@@ -49,7 +49,7 @@ rusqlite = { version = "0.32", features = ["bundled", "blob"] }
 r2d2 = "0.8"
 r2d2_sqlite = "0.25"
 tantivy = "0.22"
-pdf-extract = "0.8"
+pdf-extract = "0.12"
 pdfium-render = { version = "0.8", features = ["image", "thread_safe"] }
 image = "0.25"
 docx-rs = "0.4"
