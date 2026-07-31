@@ -10,6 +10,8 @@ import {
 
 const MIN_HTML_CHARS = 400;
 const MIN_VISIBLE_TEXT_CHARS = 120;
+const MIN_PRESENTATION_HTML_CHARS = 800;
+const MIN_PRESENTATION_VISIBLE_CHARS = 250;
 
 export function slugifyArtifactName(text: string): string {
   const slug = text
@@ -23,8 +25,16 @@ export function slugifyArtifactName(text: string): string {
 function stripModelPreamble(raw: string): string {
   let text = raw.trim();
   text = text.replace(/[\s\S]*?<\/think>/gi, "");
-  text = text.replace(/^```(?:html)?\s*/i, "");
-  text = text.replace(/\s*```$/i, "");
+  // Prefer fenced HTML blocks when present (models often wrap output).
+  const fence =
+    text.match(/```(?:html|HTML)\s*([\s\S]*?)```/) ||
+    text.match(/```\s*(<!DOCTYPE[\s\S]*?|[\s\S]*?<html[\s\S]*?)```/i);
+  if (fence?.[1]) {
+    text = fence[1].trim();
+  } else {
+    text = text.replace(/^```(?:html)?\s*/i, "");
+    text = text.replace(/\s*```$/i, "");
+  }
   return text.trim();
 }
 
@@ -35,6 +45,27 @@ function visibleTextLength(html: string): number {
     .replace(/<[^>]+>/g, " ")
     .replace(/\s+/g, " ")
     .trim().length;
+}
+
+/** True when the model returned a structured slide plan instead of HTML. */
+export function looksLikePresentationJsonPlan(raw: string): boolean {
+  const cleaned = stripModelPreamble(raw).trim();
+  if (!cleaned.includes("slides")) return false;
+  // Fast path: starts like JSON
+  if (cleaned.startsWith("{") || cleaned.startsWith("[")) {
+    try {
+      const obj = JSON.parse(cleaned) as Record<string, unknown>;
+      return Array.isArray(obj.slides) && obj.slides.length > 0;
+    } catch {
+      // fall through to loose check
+    }
+  }
+  try {
+    const plan = parseArtifactPlanJson(raw);
+    return Array.isArray(plan.slides) && plan.slides.length > 0;
+  } catch {
+    return /"slides"\s*:\s*\[/.test(cleaned);
+  }
 }
 
 /** Pull the best HTML document string from model output (raw HTML or legacy JSON). */
@@ -59,8 +90,15 @@ export function extractRawHtmlFromModelOutput(raw: string): string {
 
   const doctypeIdx = cleaned.search(/<!DOCTYPE\s+html/i);
   const htmlIdx = cleaned.search(/<html[\s>]/i);
+  const bodyIdx = cleaned.search(/<body[\s>]/i);
   const start =
-    doctypeIdx >= 0 ? doctypeIdx : htmlIdx >= 0 ? htmlIdx : cleaned.indexOf("<");
+    doctypeIdx >= 0
+      ? doctypeIdx
+      : htmlIdx >= 0
+        ? htmlIdx
+        : bodyIdx >= 0
+          ? bodyIdx
+          : cleaned.search(/<(?:div|section|main|article|header)[\s>]/i);
 
   if (start < 0) {
     return cleaned;
@@ -73,6 +111,114 @@ export function extractRawHtmlFromModelOutput(raw: string): string {
   }
 
   return html.trim();
+}
+
+/** Minor repairs only — close obvious truncations; wrap fragments if needed. */
+export function lightRepairPresentationHtml(
+  html: string,
+  fallbackTitle = "Presentation"
+): string {
+  let out = html.trim();
+  if (!out) return out;
+
+  // Model returned a fragment (slides/divs) without a document shell.
+  const hasBody = /<body[\s>]/i.test(out);
+  const hasHtml = /<html[\s>]/i.test(out);
+  const hasFragment =
+    /<(?:div|section|main|article|header|style|script)[\s>]/i.test(out);
+
+  if (!hasBody && !hasHtml && hasFragment) {
+    const safeTitle = fallbackTitle
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+    out = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>${safeTitle}</title>
+</head>
+<body>
+${out}
+</body>
+</html>`;
+  } else if (hasHtml && !hasBody && hasFragment) {
+    // <html>…content… without <body> — wrap inner content lightly.
+    if (/<\/head>/i.test(out)) {
+      out = out.replace(/<\/head>/i, `</head>\n<body>`).replace(/<\/html>/i, `</body>\n</html>`);
+      if (!/<\/body>/i.test(out)) {
+        out = out.replace(/<\/html>/i, `</body>\n</html>`);
+      }
+    } else {
+      out = out.replace(
+        /<html([^>]*)>/i,
+        `<html$1><head><meta charset="UTF-8" /><title>${fallbackTitle.replace(/[<>&"]/g, "")}</title></head><body>`
+      );
+      if (!/<\/body>/i.test(out)) {
+        out = out.replace(/<\/html>/i, `</body></html>`);
+        if (!/<\/html>/i.test(out)) out += `\n</body>\n</html>`;
+      }
+    }
+  }
+
+  if (!/<!DOCTYPE\s+html/i.test(out) && /<html[\s>]/i.test(out)) {
+    out = `<!DOCTYPE html>\n${out}`;
+  }
+
+  if (/<html[\s>]/i.test(out) && !/<\/html>/i.test(out)) {
+    if (/<body[\s>]/i.test(out) && !/<\/body>/i.test(out)) {
+      out += "\n</body>";
+    }
+    out += "\n</html>";
+  }
+
+  // Help iframe preview scale if the model forgot a viewport meta.
+  if (/<head[\s>]/i.test(out) && !/<meta[^>]+viewport/i.test(out)) {
+    out = out.replace(
+      /<head([^>]*)>/i,
+      `<head$1>\n<meta charset="UTF-8" />\n<meta name="viewport" content="width=device-width, initial-scale=1.0" />`
+    );
+  }
+
+  return out;
+}
+
+function extractTitleFromHtml(html: string): string | null {
+  const m = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+  if (!m?.[1]) return null;
+  const title = m[1].replace(/\s+/g, " ").trim();
+  return title || null;
+}
+
+function countSlideMarkers(html: string): number {
+  const patterns = [
+    /class\s*=\s*["'][^"']*\bslide\b/gi,
+    /data-slide\s*=/gi,
+    /class\s*=\s*["'][^"']*\bdeck-slide\b/gi,
+    /class\s*=\s*["'][^"']*\bppt-slide\b/gi,
+    /id\s*=\s*["']slide[-_]?\d+/gi,
+  ];
+  let max = 0;
+  for (const re of patterns) {
+    const n = (html.match(re) || []).length;
+    if (n > max) max = n;
+  }
+  if (max < 2) {
+    const sections = (html.match(/<section[\s>]/gi) || []).length;
+    if (sections > max) max = sections;
+  }
+  if (max < 2) {
+    // Many freeform decks use article/div panes with role or aria labels.
+    const panes = (
+      html.match(
+        /<(?:div|article)[^>]*(?:aria-label\s*=\s*["'][^"']*slide|role\s*=\s*["'](?:region|group))/gi
+      ) || []
+    ).length;
+    if (panes > max) max = panes;
+  }
+  return max;
 }
 
 export function validateHtmlArtifact(html: string): void {
@@ -97,6 +243,64 @@ export function validateHtmlArtifact(html: string): void {
   }
 }
 
+export function validatePresentationHtmlArtifact(html: string): void {
+  validateHtmlArtifact(html);
+  const trimmed = html.trim();
+  if (trimmed.length < MIN_PRESENTATION_HTML_CHARS) {
+    throw new Error(
+      "Presentation HTML looks truncated. Try again with a larger output limit."
+    );
+  }
+  if (visibleTextLength(trimmed) < MIN_PRESENTATION_VISIBLE_CHARS) {
+    throw new Error(
+      "Presentation has too little visible content. Try again and ask for denser slides."
+    );
+  }
+  if (isShellOnlyOrTruncatedPresentationHtml(trimmed)) {
+    throw new Error(
+      "Presentation HTML was truncated (styles without slide content). Try again."
+    );
+  }
+  // Prefer multi-slide markers, but allow rich freeform HTML without them
+  // (preview still works). Only reject clearly non-deck stubs.
+  const slides = countSlideMarkers(trimmed);
+  if (slides < 2 && visibleTextLength(trimmed) < 900) {
+    throw new Error(
+      "Presentation HTML does not look like a multi-slide deck. Try again."
+    );
+  }
+}
+
+/**
+ * Free/fast models often burn tokens on CSS and never emit slides → blank black page.
+ * Detect stylesheet-heavy / content-empty shells.
+ */
+export function isShellOnlyOrTruncatedPresentationHtml(html: string): boolean {
+  const trimmed = html.trim();
+  if (!trimmed) return true;
+
+  // Unclosed <style> (truncated mid-CSS) — matches the blank black WW2 artifact.
+  if (/<style[\s>]/i.test(trimmed) && !/<\/style>/i.test(trimmed)) return true;
+
+  const styleBlocks = trimmed.match(/<style[\s\S]*?<\/style>/gi) || [];
+  const styleLen = styleBlocks.reduce((n, s) => n + s.length, 0);
+  const visible = visibleTextLength(trimmed);
+  const slideEls = countSlideMarkers(trimmed);
+
+  if (styleLen > 1500 && visible < 300) return true;
+  if (styleLen > 2500 && visible < 600) return true;
+  if (
+    slideEls === 0 &&
+    /background:\s*linear-gradient/i.test(trimmed) &&
+    visible < 400
+  ) {
+    return true;
+  }
+  if (slideEls > 0 && visible < 250) return true;
+
+  return false;
+}
+
 export function parseHtmlArtifactOutput(
   raw: string,
   topic: string
@@ -118,4 +322,24 @@ export function parseHtmlArtifactOutput(
   }
 
   return { html, output_name };
+}
+
+/** Cloud freeform PPT: extract HTML, light-repair, validate as a deck. */
+export function parsePresentationHtmlArtifactOutput(
+  raw: string,
+  topic: string
+): { html: string; output_name: string; title: string } {
+  if (looksLikePresentationJsonPlan(raw)) {
+    throw new Error("MODEL_RETURNED_JSON_SLIDE_PLAN");
+  }
+
+  const extracted = extractRawHtmlFromModelOutput(raw);
+  const html = lightRepairPresentationHtml(extracted, topic);
+  validatePresentationHtmlArtifact(html);
+
+  const fromTitle = extractTitleFromHtml(html);
+  const title = fromTitle || topic.trim().slice(0, 120) || "Presentation";
+  const output_name = slugifyArtifactName(fromTitle || topic);
+
+  return { html, output_name, title };
 }

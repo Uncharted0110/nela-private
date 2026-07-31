@@ -25,6 +25,13 @@ const STRONG_CREATE_ONLY =
 const EDIT_FILE_HINT =
   /\b(this|the|my|that|current|existing|above|attached|open|same)\s+(file|deck|slide|spreadsheet|sheet|workbook|table|page|html|artifact|presentation|ppt|excel|xlsx)\b/i;
 
+/** Questions / explain prompts must never become artifact edits. */
+const INFORMATION_SEEKING =
+  /^(explain|why|how\s+(does|did|do|can|would|is|are)|what\s+(is|are|was|were|does|did)|who|when|where|tell\s+me|describe|summarize|can\s+you\s+explain|could\s+you\s+explain|please\s+explain)\b/i;
+
+const STRUCTURAL_ARTIFACT_EDIT =
+  /\b((add|remove|delete|insert|append|reorder|move)\b[\s\S]{0,40}\bslides?\b|\bslides?\b[\s\S]{0,40}\b(add|remove|delete|insert|append|reorder|move)\b|change\s+(the\s+)?theme|update\s+(the\s+)?theme|change\s+(the\s+)?title|add\s+(a\s+)?(column|row)|remove\s+(a\s+)?(column|row)|delete\s+(a\s+)?(column|row))\b/i;
+
 const EDITABLE_EXTENSIONS = new Set([
   ".html",
   ".htm",
@@ -85,17 +92,37 @@ export function matchesArtifactEditIntent(
   }
 ): boolean {
   const trimmed = prompt.trim();
-  if (!trimmed || !EDIT_VERBS.test(trimmed)) return false;
+  if (!trimmed) return false;
 
-  const hasEditableTarget =
-    !!(options.artifactPath && isEditableArtifactPath(options.artifactPath)) ||
-    (options.attachedPaths ?? []).some(isEditableArtifactPath);
+  if (INFORMATION_SEEKING.test(trimmed)) return false;
+
+  if (!EDIT_VERBS.test(trimmed)) return false;
+
+  const attachedEditable = (options.attachedPaths ?? []).filter(
+    isEditableArtifactPath
+  );
+  const hasAttachedEditable = attachedEditable.length > 0;
+  const hasSessionArtifact = !!(
+    options.artifactPath && isEditableArtifactPath(options.artifactPath)
+  );
+  const hasEditableTarget = hasSessionArtifact || hasAttachedEditable;
 
   if (!hasEditableTarget && !EDIT_FILE_HINT.test(trimmed)) return false;
 
   // "Create a new deck" should stay on generation, not edit.
   if (STRONG_CREATE_ONLY.test(trimmed) && !EDIT_FILE_HINT.test(trimmed)) {
     return false;
+  }
+
+  // Open session artifact alone is not enough — require an explicit "this deck"
+  // style hint, an attached file, or a clear structural edit request.
+  if (hasSessionArtifact && !hasAttachedEditable) {
+    if (
+      !EDIT_FILE_HINT.test(trimmed) &&
+      !STRUCTURAL_ARTIFACT_EDIT.test(trimmed)
+    ) {
+      return false;
+    }
   }
 
   return true;

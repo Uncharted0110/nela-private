@@ -175,6 +175,8 @@ export interface SearchHit {
 
 export interface WebSearchResult {
   query: string;
+  /** Distinct queries used across one or more tool rounds (for disclosure UI). */
+  queries?: string[];
   results: SearchHit[];
   formatted_context: string;
   extracted_tables?: ExtractedWebTable[];

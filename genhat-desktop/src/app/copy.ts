@@ -8,7 +8,8 @@ export const COPY = {
   toolSearchDocs: "Search my documents",
   toolSearchDocsHint: "Look through documents you've added to answer your question.",
   toolSearchWeb: "Search the web",
-  toolSearchWebHint: "Allow looking things up online for this question.",
+  toolSearchWebHint:
+    "Look things up online for this question. On by default in Cloud mode; optional in Private.",
   toolShowReasoning: "Show reasoning", // advanced-only; see Task 12
   toolShowReasoningHint: "Show the assistant's step-by-step thinking.",
 
@@ -103,6 +104,16 @@ export const COPY = {
   // Generic errors (Task 10)
   errorNotReady: "NELA is still getting ready. Please try again in a moment.",
   errorGeneric: "Something went wrong. Please try again.",
+  errorTimeout: "That took too long. Please try again.",
+  errorMemory: "Your computer ran low on memory. Try a smaller model or close other apps.",
+  errorCloudUnreachable:
+    "We couldn't reach NELA Cloud. Check your internet connection and try again.",
+  errorAuthCredentials: "That email or password doesn't look right. Please try again.",
+  errorSessionExpired: "Your NELA Cloud session expired. Please sign in again.",
+  errorPlan: "Your plan doesn't cover this yet. Check your Cloud settings.",
+  errorOpenBrowser: "We couldn't open your browser. Please try again.",
+  errorNotSignedIn: "You're not signed in yet.",
+  errorSignInTimeout: "Sign-in took too long. Please try again.",
   retry: "Try again",
 
   // Slash commands

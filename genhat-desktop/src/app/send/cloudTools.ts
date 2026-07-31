@@ -10,13 +10,13 @@ export const WEB_SEARCH_TOOL: CloudToolDefinition = {
   function: {
     name: "web_search",
     description:
-      "Search the live web for current, factual, or external information. Use when the answer needs up-to-date facts.",
+      "Search the live public web. ALWAYS call this for current events, news, prices, sports scores, product details, documentation, or any factual question that benefits from up-to-date information. Do not answer those from memory alone when this tool is available. Pass a short, specific query.",
     parameters: {
       type: "object",
       properties: {
         query: {
           type: "string",
-          description: "Concise search query",
+          description: "Concise search query (keywords, not a full sentence)",
         },
         depth: {
           type: "string",
@@ -57,18 +57,25 @@ export const MCP_PRESENTATION_TOOL: CloudToolDefinition = {
   function: {
     name: "generate_presentation",
     description:
-      "Create a presentation / slide deck on the user's device from a structured plan.",
+      "Create a presentation / slide deck on the user's device. Prefer passing a complete self-contained HTML document in `html` (full creative control over design and dense slide content). " +
+      "Alternatively pass structured `slides` for the legacy template renderer. Honor the user's exact topic.",
     parameters: {
       type: "object",
       properties: {
         title: { type: "string" },
         theme: { type: "string" },
+        output_name: { type: "string" },
+        html: {
+          type: "string",
+          description:
+            "Full self-contained HTML presentation document (preferred). Includes CSS/JS for slide navigation.",
+        },
         slides: {
           type: "array",
           items: { type: "object" },
+          description: "Legacy structured slide plan (only if html is omitted)",
         },
       },
-      required: ["slides"],
       additionalProperties: true,
     },
   },

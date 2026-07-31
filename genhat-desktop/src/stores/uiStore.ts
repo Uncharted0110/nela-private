@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type { AppModalKind } from "../components/AppModal";
 import type { ImportModelProfile } from "../types";
+import { friendlyError } from "../app/friendlyError";
 
 export let modalResolve: ((value: boolean) => void) | null = null;
 
@@ -149,8 +150,8 @@ export const useUIStore = create<UIState & UIActions>((set, get) => ({
     });
   },
 
-  showError: (message, title = "Error") => {
-    get().showModal("error", title, message);
+  showError: (message, title = "Something went wrong") => {
+    get().showModal("error", title, friendlyError(message));
   },
 
   confirmAction: (title, message, confirmLabel = "OK", cancelLabel = "Cancel") =>

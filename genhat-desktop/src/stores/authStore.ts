@@ -13,6 +13,8 @@ import {
 } from "../api";
 import type { AvatarSource, UserProfile } from "../types";
 import { useCloudStore } from "./cloudStore";
+import { friendlyError } from "../app/friendlyError";
+import { COPY } from "../app/copy";
 
 interface AuthState {
   profile: UserProfile | null;
@@ -57,6 +59,10 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function toFriendly(err: unknown): string {
+  return friendlyError(err instanceof Error ? err.message : String(err));
+}
+
 function normalizePlan(plan: string | undefined): UserProfile["plan"] {
   const p = (plan ?? "free").toLowerCase();
   if (p === "premium" || p === "pro") return "pro";
@@ -95,7 +101,7 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
       set({
         profile: null,
         hydrated: true,
-        error: err instanceof Error ? err.message : String(err),
+        error: toFriendly(err),
       });
     }
   },
@@ -106,7 +112,7 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
       set({ profile, error: null });
     } catch (err) {
       set({
-        error: err instanceof Error ? err.message : String(err),
+        error: toFriendly(err),
       });
     }
   },
@@ -118,12 +124,8 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
       set({ pendingUserCode: start.userCode });
       try {
         await openUrl(start.verificationUrl);
-      } catch (err) {
-        throw new Error(
-          err instanceof Error
-            ? `Failed to open browser: ${err.message}`
-            : "Failed to open browser for NELA Cloud sign-in"
-        );
+      } catch {
+        throw new Error(COPY.errorOpenBrowser);
       }
 
       const intervalMs = Math.max(1, start.interval || 2) * 1000;
@@ -146,15 +148,16 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
         }
       }
 
-      throw new Error("NELA Cloud sign-in timed out. Please try again.");
+      throw new Error(COPY.errorSignInTimeout);
     } catch (err) {
+      const message = toFriendly(err);
       set({
         loading: false,
         loginPending: false,
         pendingUserCode: null,
-        error: err instanceof Error ? err.message : String(err),
+        error: message,
       });
-      throw err;
+      throw new Error(message);
     }
   },
 
@@ -167,11 +170,12 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
       set({ profile, loading: false, error: null });
       await useCloudStore.getState().refreshEntitlement();
     } catch (err) {
+      const message = toFriendly(err);
       set({
         loading: false,
-        error: err instanceof Error ? err.message : String(err),
+        error: message,
       });
-      throw err;
+      throw new Error(message);
     }
   },
 
@@ -184,11 +188,12 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
       set({ profile, loading: false, error: null });
       await useCloudStore.getState().refreshEntitlement();
     } catch (err) {
+      const message = toFriendly(err);
       set({
         loading: false,
-        error: err instanceof Error ? err.message : String(err),
+        error: message,
       });
-      throw err;
+      throw new Error(message);
     }
   },
 
@@ -199,17 +204,18 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
       useCloudStore.setState({ entitlement: null, error: null });
       set({ profile: null, loading: false });
     } catch (err) {
+      const message = toFriendly(err);
       set({
         loading: false,
-        error: err instanceof Error ? err.message : String(err),
+        error: message,
       });
-      throw err;
+      throw new Error(message);
     }
   },
 
   updateCachedProfile: async ({ name, email, avatar }) => {
     const current = get().profile;
-    if (!current) throw new Error("Not signed in");
+    if (!current) throw new Error(COPY.errorNotSignedIn);
     set({ loading: true, error: null });
     try {
       const profile = normalizeProfile(
@@ -221,11 +227,12 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
       );
       set({ profile, loading: false });
     } catch (err) {
+      const message = toFriendly(err);
       set({
         loading: false,
-        error: err instanceof Error ? err.message : String(err),
+        error: message,
       });
-      throw err;
+      throw new Error(message);
     }
   },
 
@@ -233,7 +240,7 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
 
   setAvatar: async (avatar) => {
     const current = get().profile;
-    if (!current) throw new Error("Not signed in");
+    if (!current) throw new Error(COPY.errorNotSignedIn);
     await get().updateCachedProfile({
       name: current.name,
       email: current.email,
@@ -243,7 +250,7 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
 
   uploadAvatar: async (imageBase64, mime) => {
     const current = get().profile;
-    if (!current) throw new Error("Not signed in");
+    if (!current) throw new Error(COPY.errorNotSignedIn);
     set({ loading: true, error: null });
     try {
       const avatar = await saveUploadedAvatar({ imageBase64, mime });
@@ -256,11 +263,12 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
       );
       set({ profile, loading: false });
     } catch (err) {
+      const message = toFriendly(err);
       set({
         loading: false,
-        error: err instanceof Error ? err.message : String(err),
+        error: message,
       });
-      throw err;
+      throw new Error(message);
     }
   },
 }));

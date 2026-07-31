@@ -38,7 +38,9 @@ export interface CloudNativeToolLoopOptions {
   generationOptions?: GenerationOptions;
   onChunk: (chunk: string) => void;
   onThinking: (thinking: string) => void;
-  onArtifact?: (result: ArtifactResult) => void;
+  /** Fired when a desktop-hosted tool starts/finishes (e.g. web search UI). */
+  onToolStatus?: (status: string | null) => void;
+  onArtifact?: (artifact: ArtifactResult) => void;
 }
 
 export interface CloudNativeToolLoopResult {
@@ -145,6 +147,7 @@ async function executeToolCall(
         : opts.webDepth;
     const fetchContent = depth === "full";
     const maxResults = fetchContent ? 4 : 5;
+    opts.onToolStatus?.(`Searching “${query}”`);
     try {
       const result = await Api.webSearch(query, maxResults, fetchContent);
       const merged =
@@ -158,8 +161,10 @@ async function executeToolCall(
           : result.results
               .map((h, i) => `${i + 1}. ${h.title}\n${h.snippet}\n${h.url}`)
               .join("\n\n"));
+      opts.onToolStatus?.(null);
       return { content: toolBody, webSearchResult: merged };
     } catch (e) {
+      opts.onToolStatus?.(null);
       return {
         content: `web_search failed: ${e}`,
         webSearchResult,
@@ -190,13 +195,32 @@ async function executeToolCall(
 
   if (name === "generate_presentation") {
     try {
-      const artifact = await Api.generatePresentation(args);
+      const html =
+        typeof args.html === "string" && args.html.trim().length > 0
+          ? args.html
+          : null;
+      const artifact = html
+        ? await Api.generateHtml({
+            title:
+              (typeof args.title === "string" && args.title.trim()) ||
+              "Presentation",
+            archetype: "landing",
+            sections: [],
+            html,
+            output_name:
+              typeof args.output_name === "string"
+                ? args.output_name
+                : typeof args.title === "string"
+                  ? args.title
+                  : undefined,
+          })
+        : await Api.generatePresentation(args);
       opts.onArtifact?.(artifact);
       return {
         content: JSON.stringify({
           ok: true,
           path: artifact.path,
-          kind: artifact.kind ?? "pptx",
+          kind: artifact.kind ?? "html",
         }),
         webSearchResult,
         artifact,
@@ -303,95 +327,115 @@ export async function runCloudNativeToolLoop(
       : cloudToolsWebAndMcp();
 
   let messages = toCloudMessages(opts.messages);
+  // Dynamic (non-cached) reminder so the model actually uses web_search when available.
+  if (tools.some((t) => t.function.name === "web_search")) {
+    const hint =
+      "You have a web_search tool for this turn. Use it for current events, news, prices, sports, documentation, or any factual question that needs up-to-date information before answering.";
+    const firstSystem = messages.findIndex((m) => m.role === "system");
+    if (firstSystem >= 0) {
+      messages = [
+        ...messages.slice(0, firstSystem + 1),
+        { role: "system", content: hint },
+        ...messages.slice(firstSystem + 1),
+      ];
+    } else {
+      messages = [{ role: "system", content: hint }, ...messages];
+    }
+  }
+
   let webSearchResult: WebSearchResult | null = null;
   const artifacts: ArtifactResult[] = [];
   let thinking = "";
   let lastContent = "";
 
-  for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-    // Don't stream intermediate tool-decision tokens to the chat bubble.
-    const decision = await streamCloudRound(messages, tools, {
-      ...opts,
-      onThinking: (t) => {
-        thinking += t;
-        opts.onThinking(t);
-      },
-      onChunk: () => {
-        /* suppress until final prose or no-tool answer */
-      },
-    });
+  try {
+    for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+      // Don't stream intermediate tool-decision tokens to the chat bubble.
+      const decision = await streamCloudRound(messages, tools, {
+        ...opts,
+        onThinking: (t) => {
+          thinking += t;
+          opts.onThinking(t);
+        },
+        onChunk: () => {
+          /* suppress until final prose or no-tool answer */
+        },
+      });
 
-    lastContent = decision.content;
+      lastContent = decision.content;
 
-    if (!decision.tool_calls?.length) {
-      if (decision.content.trim()) {
-        opts.onChunk(decision.content);
+      if (!decision.tool_calls?.length) {
+        if (decision.content.trim()) {
+          opts.onChunk(decision.content);
+        }
+        return {
+          content: decision.content,
+          thinking,
+          webSearchResult,
+          artifacts,
+        };
       }
-      return {
-        content: decision.content,
-        thinking,
-        webSearchResult,
-        artifacts,
-      };
-    }
 
-    // Append assistant tool_calls message
-    messages = [
-      ...messages,
-      {
-        role: "assistant",
-        content: decision.content || null,
-        tool_calls: decision.tool_calls,
-      },
-    ];
-
-    for (const call of decision.tool_calls) {
-      const executed = await executeToolCall(call, opts, webSearchResult);
-      webSearchResult = executed.webSearchResult;
-      if (executed.artifact) artifacts.push(executed.artifact);
+      // Append assistant tool_calls message
       messages = [
         ...messages,
         {
-          role: "tool",
-          tool_call_id: call.id,
-          name: call.function.name,
-          content: executed.content,
+          role: "assistant",
+          content: decision.content || null,
+          tool_calls: decision.tool_calls,
         },
       ];
+
+      for (const call of decision.tool_calls) {
+        const executed = await executeToolCall(call, opts, webSearchResult);
+        webSearchResult = executed.webSearchResult;
+        if (executed.artifact) artifacts.push(executed.artifact);
+        messages = [
+          ...messages,
+          {
+            role: "tool",
+            tool_call_id: call.id,
+            name: call.function.name,
+            content: executed.content,
+          },
+        ];
+      }
     }
-  }
 
-  // Final prose turn without tools
-  const finale = await new Promise<{ content: string }>((resolve, reject) => {
-    let content = "";
-    streamChatByMode({
-      messages,
-      intent: "quick_chat",
-      containsFileContext: opts.containsFileContext ?? false,
-      userConfirmedCloudContext: opts.userConfirmedCloudContext,
-      contextSource: opts.contextSource,
-      modelId: opts.modelId,
-      signal: opts.signal,
-      disableThinking: opts.disableThinking,
-      disableLocalFallback: true,
-      generationOptions: opts.generationOptions,
-      onChunk: (chunk) => {
-        content += chunk;
-        opts.onChunk(chunk);
-      },
-      onThinking: (t) => {
-        thinking += t;
-        opts.onThinking(t);
-      },
-      onFinish: () => resolve({ content }),
-      onError: reject,
+    // Final prose turn without tools
+    const finale = await new Promise<{ content: string }>((resolve, reject) => {
+      let content = "";
+      streamChatByMode({
+        messages,
+        intent: "quick_chat",
+        containsFileContext: opts.containsFileContext ?? false,
+        userConfirmedCloudContext: opts.userConfirmedCloudContext,
+        contextSource: opts.contextSource,
+        modelId: opts.modelId,
+        signal: opts.signal,
+        disableThinking: opts.disableThinking,
+        disableLocalFallback: true,
+        generationOptions: opts.generationOptions,
+        onChunk: (chunk) => {
+          content += chunk;
+          opts.onChunk(chunk);
+        },
+        onThinking: (t) => {
+          thinking += t;
+          opts.onThinking(t);
+        },
+        onFinish: () => resolve({ content }),
+        onError: reject,
+      });
     });
-  });
 
-  return {
-    content: finale.content || lastContent,
-    thinking,
-    webSearchResult,
-    artifacts,
-  };
+    return {
+      content: finale.content || lastContent,
+      thinking,
+      webSearchResult,
+      artifacts,
+    };
+  } finally {
+    opts.onToolStatus?.(null);
+  }
 }

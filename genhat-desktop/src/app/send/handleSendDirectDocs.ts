@@ -1,5 +1,7 @@
 import { Api } from "../../api";
 import type { ChatMessage } from "../../types";
+import { friendlyError } from "../friendlyError";
+import { createStreamChunkFlusher } from "../streamUiBatch";
 import {
   CONTEXT_COMPACTION_KEEP_RECENT,
   CONTEXT_COMPACTION_THRESHOLD,
@@ -85,6 +87,11 @@ export async function handleSendDirectDocs(
     let fullAnswer = "";
     let fullThinking = "";
     let firstTokenTimeMs: number | null = null;
+    const chunkFlusher = createStreamChunkFlusher((batched) => {
+      ctx.updateSession(sid, (prev) => ({
+        streamingContent: prev.streamingContent + batched,
+      }));
+    });
 
     await Api.streamChat(
       directMessages,
@@ -93,15 +100,14 @@ export async function handleSendDirectDocs(
           firstTokenTimeMs = Date.now();
         }
         fullAnswer += chunk;
-        ctx.updateSession(sid, (prev) => ({
-          streamingContent: prev.streamingContent + chunk,
-        }));
+        chunkFlusher.push(chunk);
       },
       (thinkingChunk) => {
         fullThinking += thinkingChunk;
         ctx.setStreamingThinking(fullThinking);
       },
       () => {
+        chunkFlusher.flushNow();
         if (ctx.generalIntervalRef.current) clearInterval(ctx.generalIntervalRef.current);
         const totalTime = Math.floor((Date.now() - directStartTime) / 100) / 10;
         const timeToFirstToken =
@@ -135,15 +141,17 @@ export async function handleSendDirectDocs(
         }
       },
       (err) => {
+        chunkFlusher.flushNow();
         console.error("Direct-document stream error:", err);
         ctx.updateSession(sid, (prev) => ({
           messages: [
             ...prev.messages,
             {
               role: "assistant" as const,
-              content: `Direct document query error: ${err}`,
+              content: friendlyError(String(err)),
             },
           ],
+          streamingContent: "",
           loading: false,
         }));
       },

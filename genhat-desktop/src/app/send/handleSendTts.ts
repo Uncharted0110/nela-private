@@ -1,4 +1,5 @@
 import { Api } from "../../api";
+import { friendlyError } from "../friendlyError";
 import type { SendHandlerContext } from "./types";
 
 export async function handleSendTts(
@@ -50,7 +51,7 @@ export async function handleSendTts(
     ctx.updateSession(sid, (prev) => ({
       messages: [
         ...prev.messages,
-        { role: "assistant" as const, content: `Error generating audio: ${e}` },
+        { role: "assistant" as const, content: friendlyError(String(e)) },
       ],
     }));
   }

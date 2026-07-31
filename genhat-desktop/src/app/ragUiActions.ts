@@ -64,7 +64,7 @@ export async function attachDirectDocuments(): Promise<void> {
     chatModeStore.setDirectDocumentPaths(Array.from(merged));
   } catch (err) {
     console.error("Failed to select direct documents:", err);
-    uiStore.showError(`Failed to select documents: ${err}`);
+    uiStore.showError("Couldn't add those documents. Please try again.");
   }
 }
 
@@ -117,14 +117,17 @@ export async function ingestFile(): Promise<void> {
 
     const failures = results.filter((r) => r.status === "rejected");
     if (failures.length > 0) {
-      const msgs = failures.map((r) => (r as PromiseRejectedResult).reason).join("\n");
-      alert(`${failures.length} file(s) failed to ingest:\n${msgs}`);
+      alert(
+        failures.length === 1
+          ? "One document couldn't be added. Please try again."
+          : `${failures.length} documents couldn't be added. Please try again.`
+      );
     }
   } catch (e) {
     console.error(e);
     chatModeStore.setRagIngesting(false);
     await loadRagDocs();
-    uiStore.showError(`Ingest failed: ${e}`);
+    uiStore.showError("Couldn't add those documents. Please try again.");
   }
 }
 
@@ -143,7 +146,7 @@ export async function ingestDir(): Promise<void> {
   } catch (e) {
     console.error(e);
     chatModeStore.setRagIngesting(false);
-    uiStore.showError(`Folder ingest failed: ${e}`);
+    uiStore.showError("Couldn't add that folder. Please try again.");
   }
 }
 
@@ -168,7 +171,7 @@ export async function deleteRagDoc(docId: number): Promise<void> {
     await loadRagDocs();
   } catch (e) {
     console.error(e);
-    uiStore.showError(`Delete failed: ${e}`);
+    uiStore.showError("Couldn't remove that document. Please try again.");
   }
 }
 
@@ -177,7 +180,7 @@ export async function deleteAllRagDocs(): Promise<void> {
   const uiStore = useUIStore.getState();
   
   if (chatModeStore.ragDocs.length === 0) return;
-  if (!window.confirm("Delete all documents from the knowledge base?")) return;
+  if (!window.confirm("Remove every document from the library? This cannot be undone.")) return;
 
   try {
     uiStore.setPdfViewerData(null);
@@ -186,7 +189,7 @@ export async function deleteAllRagDocs(): Promise<void> {
     await loadRagDocs();
   } catch (e) {
     console.error(e);
-    uiStore.showError(`Delete all failed: ${e}`);
+    uiStore.showError("Couldn't clear the library. Please try again.");
   }
 }
 
@@ -209,7 +212,7 @@ export async function openDocViewer(doc: IngestionStatus): Promise<void> {
       uiStore.setDocViewerFile(null); // Clear any other open viewer
     } catch (e) {
       console.error("Failed to load PDF:", e);
-      uiStore.showError(`Failed to open PDF: ${e}`);
+      uiStore.showError("Couldn't open that document. Please try again.");
     } finally {
       uiStore.setPdfLoading(false);
     }

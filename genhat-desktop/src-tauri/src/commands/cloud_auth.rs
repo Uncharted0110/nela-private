@@ -14,13 +14,13 @@ use tauri_plugin_opener::OpenerExt;
 fn app_data_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
     app.path()
         .app_data_dir()
-        .map_err(|e| format!("app_data_dir error: {e}"))
+        .map_err(|_| "Something went wrong on this device. Please try again.".to_string())
 }
 
 fn open_url(app: &AppHandle, url: &str) -> Result<(), String> {
     app.opener()
         .open_url(url, None::<&str>)
-        .map_err(|e| format!("Failed to open URL: {e}"))
+        .map_err(|_| "We couldn't open your browser. Please try again.".to_string())
 }
 
 /// Frontend-safe poll result — tokens never leave the Rust side.
@@ -144,7 +144,7 @@ pub async fn cloud_create_checkout(
     let dir = app_data_dir(&app)?;
     let plan = plan.trim().to_lowercase();
     if plan != "starter" && plan != "pro" {
-        return Err(format!("Unsupported checkout plan: {plan}"));
+        return Err("That plan isn't available. Please choose Starter or Pro.".to_string());
     }
     let response = client::create_checkout(&dir, &plan).await?;
     open_url(&app, &response.checkout_url)?;

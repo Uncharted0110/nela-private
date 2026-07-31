@@ -17,6 +17,7 @@ import { extractWebSearchQuery } from "../webSearchQuery";
 import type { GenerationOptions } from "./types";
 
 export const WEB_SEARCH_TOOL_SYSTEM = `You have a web_search tool for current, factual, or external information.
+When the user asks about news, prices, sports, docs, or anything that needs up-to-date facts, call the tool before answering.
 
 To search the web, reply with ONLY this JSON (no markdown, no other text):
 {"tool":"web_search","query":"concise search query"}
@@ -94,7 +95,12 @@ export function mergeWebSearchResults(
   a: WebSearchResult | null,
   b: WebSearchResult
 ): WebSearchResult {
-  if (!a) return b;
+  if (!a) {
+    return {
+      ...b,
+      queries: b.queries?.length ? b.queries : b.query ? [b.query] : [],
+    };
+  }
 
   const seen = new Set(a.results.map((r) => r.url));
   const mergedHits: SearchHit[] = [...a.results];
@@ -116,6 +122,13 @@ export function mergeWebSearchResults(
 
   return {
     query: a.query === b.query ? a.query : `${a.query}; ${b.query}`,
+    queries: Array.from(
+      new Set(
+        [...(a.queries ?? [a.query]), ...(b.queries ?? [b.query])].filter(
+          (q) => Boolean(q?.trim())
+        )
+      )
+    ),
     results: mergedHits,
     formatted_context: contexts.join("\n\n"),
     extracted_tables: tables.length > 0 ? tables : undefined,
@@ -326,6 +339,8 @@ export async function formulateArtifactWebQueries(
       content:
         "You choose web search queries for grounding an artifact. " +
         `Reply with ONLY JSON: {"queries":["query1",...]} with 1 to ${maxQueries} concise search queries. ` +
+        "Queries must research the USER'S TOPIC (events, facts, people, data). " +
+        "Never search for anything that is not aligning with the user's query in the artifact request. " +
         "No markdown, no other text.",
     },
     {

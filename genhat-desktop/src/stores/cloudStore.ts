@@ -5,9 +5,17 @@ import {
   createBillingManage,
 } from "../api";
 import type { CloudRoutingPreference, EntitlementResponse } from "../types";
+import { friendlyError } from "../app/friendlyError";
+import { useChatModeStore } from "./chatModeStore";
 
 const PREFERRED_MODE_KEY = "nela.cloud.preferredMode";
 const ENTITLEMENT_CACHE_KEY = "nela.cloud.entitlementDisplay";
+
+export function preferredModeEnablesWebSearch(
+  mode: CloudRoutingPreference
+): boolean {
+  return mode !== "local";
+}
 
 function readPreferredMode(): CloudRoutingPreference {
   try {
@@ -50,6 +58,10 @@ function persistEntitlementDisplay(entitlement: EntitlementResponse | null) {
   }
 }
 
+function toFriendly(err: unknown): string {
+  return friendlyError(err instanceof Error ? err.message : String(err));
+}
+
 export interface CloudStoreState {
   preferredMode: CloudRoutingPreference;
   entitlement: EntitlementResponse | null;
@@ -74,6 +86,10 @@ export const useCloudStore = create<CloudStoreState>((set) => ({
   setPreferredMode: (mode) => {
     persistPreferredMode(mode);
     set({ preferredMode: mode });
+    // Cloud / Auto: web search on by default. Private: off (user can re-enable in Tools).
+    useChatModeStore
+      .getState()
+      .setWebEnabled(preferredModeEnablesWebSearch(mode));
   },
 
   refreshEntitlement: async () => {
@@ -85,7 +101,7 @@ export const useCloudStore = create<CloudStoreState>((set) => ({
     } catch (err) {
       set({
         loading: false,
-        error: err instanceof Error ? err.message : String(err),
+        error: toFriendly(err),
       });
     }
   },
@@ -100,11 +116,12 @@ export const useCloudStore = create<CloudStoreState>((set) => ({
         void useCloudStore.getState().refreshEntitlement();
       }, 2500);
     } catch (err) {
+      const message = toFriendly(err);
       set({
         loading: false,
-        error: err instanceof Error ? err.message : String(err),
+        error: message,
       });
-      throw err;
+      throw new Error(message);
     }
   },
 
@@ -114,11 +131,12 @@ export const useCloudStore = create<CloudStoreState>((set) => ({
       await createBillingManage();
       set({ loading: false });
     } catch (err) {
+      const message = toFriendly(err);
       set({
         loading: false,
-        error: err instanceof Error ? err.message : String(err),
+        error: message,
       });
-      throw err;
+      throw new Error(message);
     }
   },
 }));

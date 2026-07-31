@@ -3,6 +3,7 @@ import { Api, cloudStreamChat } from "../../api";
 import { useCloudStore } from "../../stores/cloudStore";
 import { useModelStore } from "../../stores/modelStore";
 import { cloudQualityModeForIntelligence } from "../intelligenceModes";
+import { friendlyError } from "../friendlyError";
 import { prepareMessagesForCloudCaching } from "./prepareCloudMessages";
 import type {
   CloudChatMessage,
@@ -69,6 +70,19 @@ export function isCloudReadyForMode(mode: CloudQualityMode): boolean {
   return false;
 }
 
+/**
+ * Whether we should attempt a cloud request for the current routing preference.
+ * Explicit Cloud mode tries as long as the account has cloud enabled — the API
+ * clamps unpaid Smart/Deep requests down to Fast. Auto mode still requires the
+ * selected tier to be entitled client-side.
+ */
+export function canAttemptCloud(mode: CloudQualityMode): boolean {
+  const { preferredMode, entitlement } = useCloudStore.getState();
+  if (!entitlement?.cloudEnabled) return false;
+  if (preferredMode === "cloud") return true;
+  return isCloudReadyForMode(mode);
+}
+
 export function willRouteToCloud(args?: {
   containsFileContext?: boolean;
   userConfirmedCloudContext?: boolean;
@@ -78,10 +92,13 @@ export function willRouteToCloud(args?: {
   const intelligenceMode = useModelStore.getState().intelligenceMode;
   const mode =
     args?.mode ?? cloudQualityModeForIntelligence(intelligenceMode);
-  const cloudReady = isCloudReadyForMode(mode);
+  const cloudReady = canAttemptCloud(mode);
+  // Explicit Cloud mode is consent to send this turn (including file-derived
+  // artifact context) to NELA Cloud. Auto still requires an explicit confirm.
+  const confirmed =
+    Boolean(args?.userConfirmedCloudContext) || preferredMode === "cloud";
   const fileBlocksCloud =
-    Boolean(args?.containsFileContext) &&
-    !(args?.userConfirmedCloudContext ?? false);
+    Boolean(args?.containsFileContext) && !confirmed;
   if (preferredMode === "local" || fileBlocksCloud) return false;
   if (preferredMode === "cloud") return cloudReady;
   return preferredMode === "auto" && cloudReady;
@@ -97,31 +114,11 @@ function isAbortError(err: unknown): boolean {
 /** Short user-visible reason extracted from cloud / API errors. */
 export function summarizeCloudError(err: unknown): string {
   const raw = err instanceof Error ? err.message : String(err);
-  let msg = raw.trim();
-  // Prefer embedded JSON message when present.
-  const jsonMatch = msg.match(/\{[\s\S]*\}/);
-  if (jsonMatch) {
-    try {
-      const parsed = JSON.parse(jsonMatch[0]) as { message?: string; code?: string };
-      if (parsed.message) {
-        msg = parsed.code
-          ? `${parsed.message} (${parsed.code})`
-          : parsed.message;
-      }
-    } catch {
-      /* keep raw */
-    }
-  }
-  msg = msg
-    .replace(/^Cloud API error\s*\([^)]*\):\s*/i, "")
-    .replace(/^Error:\s*/i, "")
-    .trim();
-  if (msg.length > 220) msg = `${msg.slice(0, 217)}…`;
-  return msg || "Cloud request failed";
+  return friendlyError(raw);
 }
 
 export function formatCloudFallbackNotice(err: unknown): string {
-  return `*NELA Cloud unavailable — ${summarizeCloudError(err)}. Falling back to your local model.*\n\n`;
+  return `*NELA Cloud is unavailable right now — ${summarizeCloudError(err)} Using your local model instead.*\n\n`;
 }
 
 function runLocalStream(args: StreamArgs): void {
@@ -189,6 +186,14 @@ async function runCloudStream(args: StreamArgs): Promise<void> {
     args.generationOptions?.workspaceId?.trim() ||
     undefined;
 
+  // Stable sticky key: same chat → same OpenRouter provider (cache warmth).
+  const stickySessionId = sessionId
+    ? `nela-desktop:${args.generationOptions?.workspaceId?.trim() || "ws"}:${sessionId}`.slice(
+        0,
+        256
+      )
+    : undefined;
+
   const request: CloudChatRequest = {
     mode,
     intent: args.intent ?? "quick_chat",
@@ -208,7 +213,7 @@ async function runCloudStream(args: StreamArgs): Promise<void> {
     response_format: args.response_format,
     client: {
       platform: "desktop",
-      sessionId,
+      sessionId: stickySessionId,
     },
   };
 
@@ -283,12 +288,10 @@ async function runCloudStream(args: StreamArgs): Promise<void> {
 /**
  * Route chat streaming by preferred cloud routing preference.
  * - local: always local llama
- * - cloud / auto: try cloud; on any failure (auth, busy, offline), fall back to
- *   local with a short notice in the reply — never leave the user with only an error
- *   when a local model can answer.
- *
- * File-derived context is never sent to cloud unless userConfirmedCloudContext is true;
- * otherwise that turn stays local.
+ * - cloud: always try NELA Cloud (no silent local fallback). File context is
+ *   allowed because choosing Cloud mode is treated as confirmation.
+ * - auto: try cloud when entitled; on failure fall back to local. File-derived
+ *   context stays local unless userConfirmedCloudContext is true.
  *
  * Grammar is local-only — never sent on the cloud path.
  */
@@ -297,12 +300,19 @@ export function streamChatByMode(args: StreamArgs): void {
   const intelligenceMode = useModelStore.getState().intelligenceMode;
   const mode =
     args.mode ?? cloudQualityModeForIntelligence(intelligenceMode);
-  const cloudReady = isCloudReadyForMode(mode);
+  const strictCloud = preferredMode === "cloud";
+  const confirmedCloudContext =
+    Boolean(args.userConfirmedCloudContext) || strictCloud;
+  const cloudReady = canAttemptCloud(mode);
   const fileBlocksCloud =
-    args.containsFileContext && !(args.userConfirmedCloudContext ?? false);
+    Boolean(args.containsFileContext) && !confirmedCloudContext;
 
   const wantsCloud =
     preferredMode === "cloud" || preferredMode === "auto";
+
+  // Prefer no silent local fallback in explicit Cloud mode (artifacts/chat).
+  const disableLocalFallback =
+    Boolean(args.disableLocalFallback) || strictCloud;
 
   const localArgs: StreamArgs = {
     ...args,
@@ -312,6 +322,7 @@ export function streamChatByMode(args: StreamArgs): void {
   const cloudArgs: StreamArgs = {
     ...args,
     mode,
+    userConfirmedCloudContext: confirmedCloudContext,
     generationOptions: args.generationOptions
       ? { ...args.generationOptions, grammar: undefined }
       : undefined,
@@ -332,8 +343,8 @@ export function streamChatByMode(args: StreamArgs): void {
     const reason = paidNeeded
       ? "Smart/Deep cloud needs a paid plan or sign-in"
       : "not signed in or Fast quota exhausted";
-    if (args.disableLocalFallback) {
-      args.onError(new Error(`NELA Cloud unavailable (${reason})`));
+    if (disableLocalFallback) {
+      args.onError(new Error(friendlyError(reason)));
       return;
     }
     console.warn(`Cloud not ready (${reason}); falling back to local`);
@@ -349,7 +360,7 @@ export function streamChatByMode(args: StreamArgs): void {
       args.onError(err);
       return;
     }
-    if (args.disableLocalFallback) {
+    if (disableLocalFallback) {
       args.onError(err);
       return;
     }

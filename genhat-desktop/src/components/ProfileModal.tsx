@@ -145,7 +145,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) => {
     e.target.value = "";
     if (!file) return;
     if (!file.type.startsWith("image/")) {
-      useAuthStore.setState({ error: "Please choose an image file" });
+      useAuthStore.setState({ error: "Please choose an image file." });
       return;
     }
     clearError();

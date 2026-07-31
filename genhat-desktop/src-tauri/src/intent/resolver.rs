@@ -332,31 +332,19 @@ fn matches_artifact_trigger_presentation(lower: &str) -> bool {
 }
 
 fn matches_artifact_edit_trigger(prompt: &str) -> bool {
-    let lower = prompt.to_lowercase();
-    let has_edit_verb = lower.contains("edit")
-        || lower.contains("modify")
-        || lower.contains("update")
-        || lower.contains("change")
-        || lower.contains("revise")
-        || lower.contains("fix")
-        || lower.contains("adjust")
-        || lower.contains("tweak")
-        || lower.contains("improve")
-        || lower.contains("enhance")
-        || lower.contains("refine")
-        || lower.contains("rewrite")
-        || lower.contains("reformat")
-        || lower.contains("add ")
-        || lower.contains("remove ")
-        || lower.contains("delete ")
-        || lower.contains("insert ")
-        || lower.contains("replace ")
-        || lower.contains("polish")
-        || lower.contains("correct")
-        || lower.contains("amend")
-        || lower.contains("patch");
+    let trimmed = prompt.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    let lower = trimmed.to_lowercase();
 
-    if !has_edit_verb {
+    // Plain Q&A / explain prompts must stay in chat even if a deck is open.
+    // ("explain how facebook changed the world" used to match substring "change".)
+    if is_information_seeking_prompt(&lower) {
+        return false;
+    }
+
+    if !has_edit_verb_word(&lower) {
         return false;
     }
 
@@ -367,19 +355,80 @@ fn matches_artifact_edit_trigger(prompt: &str) -> bool {
         || lower.contains("build a new")
         || lower.contains("generate a new");
 
-    let references_existing = lower.contains("this file")
+    let references_existing = references_existing_artifact(&lower);
+    let structural = is_structural_artifact_edit(&lower);
+
+    if strong_create && !references_existing {
+        return false;
+    }
+
+    // Session artifact alone is not enough — require an explicit target hint or
+    // a clear structural edit (add/remove slide, change theme, …).
+    references_existing || structural
+}
+
+fn is_information_seeking_prompt(lower: &str) -> bool {
+    // Leading question / explain forms are chat, not deck edits.
+    let starters = [
+        "explain ",
+        "explain,",
+        "why ",
+        "why,",
+        "how does ",
+        "how did ",
+        "how do ",
+        "how can ",
+        "how would ",
+        "what is ",
+        "what are ",
+        "what was ",
+        "what were ",
+        "what does ",
+        "what did ",
+        "who ",
+        "when ",
+        "where ",
+        "tell me ",
+        "describe ",
+        "summarize ",
+        "can you explain",
+        "could you explain",
+        "please explain",
+    ];
+    starters.iter().any(|s| lower.starts_with(s))
+        || lower.starts_with("how ") && !lower.contains("slide") && !lower.contains("deck")
+}
+
+/// Word-boundary edit verbs — never match "changed" via substring "change".
+fn has_edit_verb_word(lower: &str) -> bool {
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let re = RE.get_or_init(|| {
+        regex::Regex::new(
+            r"(?i)\b(edit|modify|update|change|revise|fix|adjust|tweak|improve|enhance|refine|rewrite|reformat|add|remove|delete|insert|replace|shorten|expand|polish|correct|amend|patch)\b",
+        )
+        .expect("edit verb regex")
+    });
+    re.is_match(lower)
+}
+
+fn references_existing_artifact(lower: &str) -> bool {
+    lower.contains("this file")
         || lower.contains("this deck")
         || lower.contains("this slide")
         || lower.contains("this spreadsheet")
         || lower.contains("this sheet")
         || lower.contains("this page")
+        || lower.contains("this html")
         || lower.contains("this presentation")
+        || lower.contains("this ppt")
+        || lower.contains("this artifact")
         || lower.contains("the file")
         || lower.contains("the deck")
         || lower.contains("the spreadsheet")
         || lower.contains("the sheet")
         || lower.contains("the page")
         || lower.contains("the presentation")
+        || lower.contains("the ppt")
         || lower.contains("my deck")
         || lower.contains("my spreadsheet")
         || lower.contains("my presentation")
@@ -388,9 +437,32 @@ fn matches_artifact_edit_trigger(prompt: &str) -> bool {
         || lower.contains("attached file")
         || lower.contains("open file")
         || lower.contains("same file")
-        || lower.contains("same deck");
+        || lower.contains("same deck")
+        || lower.contains("existing deck")
+        || lower.contains("existing presentation")
+}
 
-    !strong_create || references_existing
+fn is_structural_artifact_edit(lower: &str) -> bool {
+    // Clear deck/spreadsheet surgery without needing "this deck".
+    (lower.contains("slide")
+        && (lower.contains("add")
+            || lower.contains("remove")
+            || lower.contains("delete")
+            || lower.contains("insert")
+            || lower.contains("append")
+            || lower.contains("reorder")
+            || lower.contains("move")))
+        || lower.contains("change the theme")
+        || lower.contains("change theme")
+        || lower.contains("update the theme")
+        || lower.contains("change the title")
+        || lower.contains("rename the title")
+        || lower.contains("add a column")
+        || lower.contains("add column")
+        || lower.contains("delete column")
+        || lower.contains("remove column")
+        || lower.contains("add a row")
+        || lower.contains("add row")
 }
 
 fn matches_artifact_trigger_html(lower: &str) -> bool {
@@ -415,4 +487,36 @@ fn matches_artifact_trigger_html(lower: &str) -> bool {
         || lower.contains("convert");
 
     has_html_noun && has_create_verb
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn explain_changed_world_is_not_artifact_edit() {
+        assert!(!matches_artifact_edit_trigger(
+            "explain how facebook changed the world"
+        ));
+    }
+
+    #[test]
+    fn change_this_deck_theme_is_artifact_edit() {
+        assert!(matches_artifact_edit_trigger(
+            "change the theme on this deck to midnight"
+        ));
+    }
+
+    #[test]
+    fn add_slide_is_structural_edit() {
+        assert!(matches_artifact_edit_trigger(
+            "add a slide about privacy at the end"
+        ));
+    }
+
+    #[test]
+    fn substring_change_in_changed_is_not_edit_verb() {
+        assert!(!has_edit_verb_word("facebook changed the world"));
+        assert!(has_edit_verb_word("please change the title"));
+    }
 }

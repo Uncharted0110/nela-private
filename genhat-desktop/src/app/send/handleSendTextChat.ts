@@ -1,5 +1,7 @@
 import { Api } from "../../api";
 import type { ChatMessage, WebSearchResult } from "../../types";
+import { friendlyError } from "../friendlyError";
+import { createStreamChunkFlusher } from "../streamUiBatch";
 import {
   applyCompactionResultToSession,
   CONTEXT_COMPACTION_KEEP_RECENT,
@@ -21,11 +23,13 @@ import {
   hasLocalFilePathReference,
   loadAmbientFileBody,
 } from "../ambientFileContent";
-import { NELA_SYSTEM_PROMPT } from "../nelaSystemPrompt";
+import { NELA_CLOUD_SYSTEM_PROMPT, NELA_SYSTEM_PROMPT } from "../nelaSystemPrompt";
+import { useCloudStore } from "../../stores/cloudStore";
 import { parseCSV } from "./csvParse";
 import { streamChatByMode } from "./cloudOrLocalStream";
 import type { SendHandlerContext } from "./types";
 import { runCloudAwareToolLoop } from "./cloudNativeToolLoop";
+import { useChatModeStore } from "../../stores/chatModeStore";
 
 export async function handleSendTextChat(
   text: string,
@@ -154,8 +158,13 @@ export async function handleSendTextChat(
     newMsg,
     // discoveryMsg is UI-only; omit it here so the LLM sees user as the last turn.
   ];
+  const preferredMode = useCloudStore.getState().preferredMode;
+  const identityPrompt =
+    preferredMode === "cloud" || preferredMode === "auto"
+      ? NELA_CLOUD_SYSTEM_PROMPT
+      : NELA_SYSTEM_PROMPT;
   let apiMessages = [
-    { role: "system" as const, content: NELA_SYSTEM_PROMPT },
+    { role: "system" as const, content: identityPrompt },
     ...toContextMessages(fullSessionMessages),
   ];
 
@@ -239,7 +248,15 @@ export async function handleSendTextChat(
   // from rejecting the request with "System message must be at the beginning".
   apiMessages = normalizeMessagesForLlm(apiMessages);
 
+  const chunkFlusher = createStreamChunkFlusher((batched) => {
+    ctx.updateSession(sid, (prev) => ({
+      streamingContent: prev.streamingContent + batched,
+    }));
+  });
+
   const finishOk = (response: string, thinking: string, web: WebSearchResult | null) => {
+    chunkFlusher.flushNow();
+    useChatModeStore.getState().setLiveToolStatus(null);
     if (ctx.generalIntervalRef.current) clearInterval(ctx.generalIntervalRef.current);
     const totalTime = Math.floor((Date.now() - chatStartTime) / 100) / 10;
     const timeToFirstToken =
@@ -275,6 +292,8 @@ export async function handleSendTextChat(
   };
 
   const finishErr = (err: unknown) => {
+    chunkFlusher.flushNow();
+    useChatModeStore.getState().setLiveToolStatus(null);
     if (ctx.generalIntervalRef.current) clearInterval(ctx.generalIntervalRef.current);
     ctx.setGeneralGenerating(false);
     ctx.setStreamingThinking("");
@@ -282,8 +301,9 @@ export async function handleSendTextChat(
     ctx.updateSession(sid, (prev) => ({
       messages: [
         ...prev.messages,
-        { role: "assistant" as const, content: `Error: ${err}` },
+        { role: "assistant" as const, content: friendlyError(String(err)) },
       ],
+      streamingContent: "",
       loading: false,
     }));
   };
@@ -292,10 +312,8 @@ export async function handleSendTextChat(
     if (textFirstTokenTimeMs === null) {
       textFirstTokenTimeMs = Date.now();
     }
-    ctx.updateSession(sid, (prev) => ({
-      streamingContent: prev.streamingContent + chunk,
-    }));
     fullResponse += chunk;
+    chunkFlusher.push(chunk);
   };
 
   const onThinking = (thinkingChunk: string) => {
@@ -321,6 +339,9 @@ export async function handleSendTextChat(
       generationOptions,
       onChunk,
       onThinking,
+      onToolStatus: (status) => {
+        useChatModeStore.getState().setLiveToolStatus(status);
+      },
       onArtifact: (artifact) => {
         ctx.updateSession(sid, (prev) => ({
           artifactPath: artifact.path,
