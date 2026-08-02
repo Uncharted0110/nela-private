@@ -6,9 +6,10 @@
 use crate::cloud::profile_cache;
 use crate::cloud::token_store;
 use crate::cloud::types::{
-    AuthTokenResponse, BillingManageResponse, CheckoutRequest, CheckoutResponse, CloudChatRequest,
-    DevicePollRequest, DevicePollResponse, DeviceStartResponse, EntitlementResponse,
-    LogoutRequest, RefreshRequest, RefreshTokenResponse, UserProfileDto,
+    AuthTokenResponse, BillingManageResponse, CheckoutRequest, CheckoutResponse,
+    ConfirmCheckoutRequest, ConfirmCheckoutResponse, CloudChatRequest, DevicePollRequest,
+    DevicePollResponse, DeviceStartResponse, EntitlementResponse, LogoutRequest,
+    RefreshRequest, RefreshTokenResponse, UserProfileDto,
 };
 use futures_util::StreamExt;
 use reqwest::StatusCode;
@@ -84,6 +85,17 @@ fn friendly_api_body_message(body: &str, status: StatusCode) -> String {
                 }
                 "QUOTA_EXCEEDED" | "ENTITLEMENT_REQUIRED" | "PLAN_REQUIRED" => {
                     return "Your plan doesn't cover this yet. Check your Cloud settings.".to_string();
+                }
+                "UPGRADE_REQUIRED" => {
+                    return "Upgrade to Premium to use Smart and Deep in Cloud".to_string();
+                }
+                "FAST_QUOTA_EXHAUSTED" => {
+                    return "Daily free Fast requests used up. Upgrade to Premium or wait for reset."
+                        .to_string();
+                }
+                "QUOTA_EXHAUSTED" => {
+                    return "Monthly cloud quota exhausted. Upgrade or wait for the next period."
+                        .to_string();
                 }
                 _ => {}
             }
@@ -431,6 +443,32 @@ pub async fn create_billing_manage(
     resp.json()
         .await
         .map_err(|_| "We couldn't open billing settings. Please try again.".to_string())
+}
+
+/// Confirm a completed Razorpay payment-link checkout and activate Premium.
+pub async fn confirm_checkout(
+    app_data_dir: &Path,
+) -> Result<ConfirmCheckoutResponse, String> {
+    let resp = authorized_request(app_data_dir, |token| async move {
+        send_cloud(
+            reqwest::Method::POST,
+            "/v1/billing/razorpay/confirm",
+            move |req| {
+                req.bearer_auth(token.clone())
+                    .json(&ConfirmCheckoutRequest::default())
+            },
+        )
+        .await
+    })
+    .await?;
+
+    if !resp.status().is_success() {
+        return Err(read_error_body(resp).await);
+    }
+
+    resp.json()
+        .await
+        .map_err(|_| "We couldn't confirm your payment. Please try again.".to_string())
 }
 
 /// Non-streaming chat completion — returns raw OpenAI-style JSON string

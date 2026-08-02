@@ -1464,6 +1464,23 @@ export async function createBillingManage(): Promise<
   );
 }
 
+/** Open the public website pricing page in the system browser. */
+export async function openCloudPricing(): Promise<void> {
+  return invoke<void>("cloud_open_pricing");
+}
+
+/** Confirm latest Razorpay payment and activate Premium entitlement. */
+export async function confirmCloudCheckout(): Promise<{
+  ok: boolean;
+  activated: boolean;
+  paidCloud?: boolean;
+  isPremium?: boolean;
+  displayPlan?: string;
+  plan?: string;
+}> {
+  return invoke("cloud_confirm_checkout");
+}
+
 export async function cloudCompleteChat(
   request: import("./types").CloudChatRequest
 ): Promise<string> {

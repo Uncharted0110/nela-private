@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { useAuthStore } from "../stores/authStore";
+import { useCloudStore } from "../stores/cloudStore";
 import { PRESET_AVATARS } from "../assets/avatars";
 import type { AvatarSource } from "../types";
 import "./ProfileModal.css";
@@ -46,6 +47,8 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) => {
   const clearError = useAuthStore((s) => s.clearError);
   const loginPending = useAuthStore((s) => s.loginPending);
   const pendingUserCode = useAuthStore((s) => s.pendingUserCode);
+  const refreshProfile = useAuthStore((s) => s.refreshProfile);
+  const refreshEntitlement = useCloudStore((s) => s.refreshEntitlement);
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -72,13 +75,23 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) => {
     clearError();
   }, [isOpen, profile, clearError]);
 
+  useEffect(() => {
+    if (!isOpen || !profile) return;
+    void refreshEntitlement();
+    void refreshProfile();
+    // Refresh once when the modal opens (not on every profile mutation).
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- open-only
+  }, [isOpen]);
+
   if (!isOpen) return null;
 
   const avatarUrl = resolveAvatarUrl(profile?.avatar ?? null);
-  const plan = (profile?.plan ?? "free").toLowerCase();
-  const isPaid = plan === "starter" || plan === "pro";
-  const planTitle =
-    plan === "pro" ? "Pro" : plan === "starter" ? "Starter" : "Free";
+  const isPremium =
+    profile?.isPremium === true ||
+    profile?.displayPlan === "premium" ||
+    profile?.plan === "starter" ||
+    profile?.plan === "pro";
+  const planTitle = isPremium ? "Premium" : "Free";
 
   const handleSignIn = async () => {
     clearError();
@@ -307,14 +320,14 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) => {
           ) : (
             <>
               <div
-                className={`profile-plan-banner ${isPaid ? "is-premium" : "is-free"}`}
+                className={`profile-plan-banner ${isPremium ? "is-premium" : "is-free"}`}
               >
                 <Crown size={16} />
                 <div>
                   <strong>{planTitle}</strong>
                   <span>
-                    {isPaid
-                      ? "Your plan is managed by NELA Cloud."
+                    {isPremium
+                      ? "Smart and Deep are unlocked in Cloud."
                       : "Upgrade from Cloud settings when you are ready."}
                   </span>
                 </div>

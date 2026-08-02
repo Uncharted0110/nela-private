@@ -39,16 +39,12 @@ const MODE_OPTIONS: Array<{
   },
 ];
 
-function planLabel(plan: string | undefined): string {
-  switch ((plan ?? "free").toLowerCase()) {
-    case "starter":
-      return "Starter";
-    case "pro":
-    case "premium":
-      return "Pro";
-    default:
-      return "Free";
-  }
+function planBannerLabel(input: {
+  isPremium: boolean;
+  plan?: string;
+}): string {
+  if (input.isPremium) return "Premium";
+  return "Free";
 }
 
 const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
@@ -56,13 +52,15 @@ const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
   onClose,
 }) => {
   const profile = useAuthStore((s) => s.profile);
+  const refreshProfile = useAuthStore((s) => s.refreshProfile);
   const preferredMode = useCloudStore((s) => s.preferredMode);
   const entitlement = useCloudStore((s) => s.entitlement);
   const loading = useCloudStore((s) => s.loading);
   const error = useCloudStore((s) => s.error);
   const setPreferredMode = useCloudStore((s) => s.setPreferredMode);
   const refreshEntitlement = useCloudStore((s) => s.refreshEntitlement);
-  const openCheckout = useCloudStore((s) => s.openCheckout);
+  const confirmCheckout = useCloudStore((s) => s.confirmCheckout);
+  const openPricingPage = useCloudStore((s) => s.openPricingPage);
   const openBillingManage = useCloudStore((s) => s.openBillingManage);
   const clearError = useCloudStore((s) => s.clearError);
 
@@ -70,14 +68,24 @@ const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
     if (!isOpen) return;
     clearError();
     if (profile) {
-      void refreshEntitlement();
+      void (async () => {
+        await confirmCheckout();
+        await refreshEntitlement();
+        await refreshProfile();
+      })();
     }
-  }, [isOpen, profile, refreshEntitlement, clearError]);
+  }, [isOpen, profile, refreshEntitlement, confirmCheckout, refreshProfile, clearError]);
 
   if (!isOpen) return null;
 
   const plan = entitlement?.plan ?? profile?.plan ?? "free";
-  const isPaid = plan === "starter" || plan === "pro";
+  const isPremium =
+    entitlement?.isPremium === true ||
+    entitlement?.displayPlan === "premium" ||
+    profile?.isPremium === true ||
+    profile?.displayPlan === "premium" ||
+    plan === "starter" ||
+    plan === "pro";
   const quota = entitlement?.quota;
 
   return (
@@ -156,11 +164,11 @@ const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
             ) : (
               <>
                 <div
-                  className={`cloud-plan-banner ${isPaid ? "is-paid" : "is-free"}`}
+                  className={`cloud-plan-banner ${isPremium ? "is-paid" : "is-free"}`}
                 >
                   <Crown size={16} />
                   <div>
-                    <strong>{planLabel(plan)}</strong>
+                    <strong>{planBannerLabel({ isPremium, plan })}</strong>
                     <span>
                       {entitlement
                         ? `Status: ${entitlement.status.replace(/_/g, " ")}`
@@ -201,37 +209,22 @@ const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                 )}
 
                 <div className="cloud-billing-actions">
-                  {plan !== "starter" && (
+                  {!isPremium && (
                     <button
                       type="button"
                       className="cloud-upgrade-btn"
                       disabled={loading}
-                      onClick={() => void openCheckout("starter")}
+                      onClick={() => void openPricingPage()}
                     >
                       {loading ? (
                         <Loader2 size={16} className="cloud-spin" />
                       ) : (
                         <Crown size={16} />
                       )}
-                      Upgrade to Starter
+                      Upgrade to Premium
                     </button>
                   )}
-                  {plan !== "pro" && (
-                    <button
-                      type="button"
-                      className="cloud-upgrade-btn cloud-upgrade-btn-pro"
-                      disabled={loading}
-                      onClick={() => void openCheckout("pro")}
-                    >
-                      {loading ? (
-                        <Loader2 size={16} className="cloud-spin" />
-                      ) : (
-                        <Crown size={16} />
-                      )}
-                      Upgrade to Pro
-                    </button>
-                  )}
-                  {isPaid && (
+                  {isPremium && (
                     <button
                       type="button"
                       className="cloud-manage-btn"

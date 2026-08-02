@@ -1,0 +1,157 @@
+.premium-upgrade-overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--modal-overlay-bg);
+  backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 80;
+}
+
+.premium-upgrade-modal {
+  width: min(420px, 92vw);
+  background: var(--modal-surface-solid);
+  border: 1px solid var(--color-glass-border);
+  border-radius: 16px;
+  box-shadow: var(--modal-shadow);
+  color: var(--color-txt);
+  overflow: hidden;
+  animation: premium-upgrade-pop 0.2s ease-out;
+}
+
+@keyframes premium-upgrade-pop {
+  0% {
+    transform: translateY(8px) scale(0.97);
+    opacity: 0;
+  }
+  100% {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
+}
+
+.premium-upgrade-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--modal-border-subtle);
+  background: linear-gradient(
+    120deg,
+    rgba(251, 191, 36, 0.12),
+    rgba(0, 212, 255, 0.08)
+  );
+}
+
+.premium-upgrade-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 600;
+}
+
+.premium-upgrade-title svg {
+  color: #fbbf24;
+}
+
+.premium-upgrade-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-txt-muted);
+  cursor: pointer;
+}
+
+.premium-upgrade-close:hover {
+  background: var(--color-glass-hover);
+  color: var(--color-txt);
+}
+
+.premium-upgrade-body {
+  padding: 20px 18px 8px;
+}
+
+.premium-upgrade-hero {
+  width: 52px;
+  height: 52px;
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 14px;
+  background: linear-gradient(
+    145deg,
+    rgba(251, 191, 36, 0.2),
+    rgba(0, 212, 255, 0.12)
+  );
+  color: #fbbf24;
+  border: 1px solid rgba(251, 191, 36, 0.35);
+}
+
+.premium-upgrade-body p {
+  margin: 0 0 10px;
+  line-height: 1.5;
+  color: var(--color-txt-secondary);
+  font-size: 0.92rem;
+}
+
+.premium-upgrade-body strong {
+  color: var(--color-txt);
+}
+
+.premium-upgrade-hint {
+  font-size: 0.8rem !important;
+  color: var(--color-txt-muted) !important;
+}
+
+.premium-upgrade-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 12px 18px 18px;
+}
+
+.premium-upgrade-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 14px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.premium-upgrade-btn:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.premium-upgrade-btn.ghost {
+  background: transparent;
+  border-color: var(--color-glass-border);
+  color: var(--color-txt-secondary);
+}
+
+.premium-upgrade-btn.ghost:hover {
+  background: var(--color-glass-hover);
+  color: var(--color-txt);
+}
+
+.premium-upgrade-btn.primary {
+  background: linear-gradient(120deg, #f59e0b, #fbbf24);
+  color: #1a1408;
+  border-color: rgba(251, 191, 36, 0.5);
+}
+
+.premium-upgrade-btn.primary:hover:not(:disabled) {
+  filter: brightness(1.06);
+}

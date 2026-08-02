@@ -86,7 +86,13 @@ export default function AppMainModeControls({
 }: AppMainModeControlsProps) {
   const { advanced } = useAdvancedMode();
   const preferredMode = useCloudStore((s) => s.preferredMode);
+  const entitlement = useCloudStore((s) => s.entitlement);
+  const openUpgradeModal = useCloudStore((s) => s.openUpgradeModal);
   const cloudMode = preferredMode !== "local";
+  const cloudSmartDeepLocked = cloudMode && !entitlement?.paidCloud;
+  const lockedModes = cloudSmartDeepLocked
+    ? (["smart", "deep"] as IntelligenceMode[])
+    : [];
   const disabledStyle = !!activeRuntimeParamTarget && activeRuntimeParamTarget.backend !== "LlamaServer";
   const inferredStyle = activeRuntimeParamTarget ? inferStyle(activeRuntimeParamTarget.params) : "balanced";
   const [styleValue, setStyleValue] = useState<ResponseStyle>(inferredStyle);
@@ -96,8 +102,7 @@ export default function AppMainModeControls({
   }, [inferredStyle]);
 
   const renderLlmPicker = () => {
-    // Cloud mode: Fast/Smart/Deep stay fully selectable as OpenRouter quality tiers.
-    // No local model switch UI, downloads, or "Choose a specific model".
+    // Cloud mode: Fast selectable; Smart/Deep locked for unpaid accounts.
     if (cloudMode) {
       return (
         <IntelligenceModeSelector
@@ -106,6 +111,8 @@ export default function AppMainModeControls({
           onSelectMode={onSelectIntelligenceMode}
           onChooseSpecificModel={onChooseSpecificModel}
           hideSpecificModel
+          lockedModes={lockedModes}
+          onLockedSelect={() => openUpgradeModal()}
         />
       );
     }

@@ -243,13 +243,18 @@ export async function ensureDownloadedAndSwitch(modelId: string): Promise<void> 
 export async function handleIntelligenceModeSelect(mode: IntelligenceMode): Promise<void> {
   const modelStore = useModelStore.getState();
   const uiStore = useUIStore.getState();
-  const { preferredMode } = useCloudStore.getState();
+  const { preferredMode, entitlement, openUpgradeModal } = useCloudStore.getState();
 
   // In Cloud (or prefer-cloud auto) mode, intelligence tiers map 1:1 to cloud
   // quality tiers, so switching tiers must NOT prompt a local model download or
   // the local deep-load warning. Only the private/local path touches on-device
   // models.
   const cloudMode = preferredMode !== "local";
+
+  if (cloudMode && (mode === "smart" || mode === "deep") && !entitlement?.paidCloud) {
+    openUpgradeModal();
+    return;
+  }
 
   if (!cloudMode && mode === "deep") {
     const ok = await uiStore.confirmAction(

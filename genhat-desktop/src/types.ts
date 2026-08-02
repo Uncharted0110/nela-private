@@ -526,6 +526,8 @@ export interface FileRecord {
 
 export type UserPlan = "free" | "starter" | "pro";
 
+export type DisplayPlan = "free" | "premium";
+
 export type EntitlementStatus =
   | "inactive"
   | "active"
@@ -547,6 +549,8 @@ export interface UserProfile {
   email: string;
   avatar: AvatarSource | null;
   plan: UserPlan;
+  displayPlan?: DisplayPlan;
+  isPremium?: boolean;
   entitlementStatus?: EntitlementStatus;
   authProvider: AuthProvider;
   updatedAt: string;
@@ -595,6 +599,8 @@ export interface EntitlementResponse {
   cloudEnabled: boolean;
   plan: UserPlan;
   status: EntitlementStatus;
+  displayPlan?: DisplayPlan;
+  isPremium?: boolean;
   paidCloud?: boolean;
   quota: {
     includedUsd: number;

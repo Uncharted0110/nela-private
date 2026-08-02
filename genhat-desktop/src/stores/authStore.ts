@@ -72,9 +72,17 @@ function normalizePlan(plan: string | undefined): UserProfile["plan"] {
 
 function normalizeProfile(profile: UserProfile | null): UserProfile | null {
   if (!profile) return null;
+  const plan = normalizePlan(profile.plan);
+  const isPremium =
+    profile.isPremium === true ||
+    profile.displayPlan === "premium" ||
+    plan === "starter" ||
+    plan === "pro";
   return {
     ...profile,
-    plan: normalizePlan(profile.plan),
+    plan,
+    displayPlan: isPremium ? "premium" : "free",
+    isPremium,
   };
 }
 

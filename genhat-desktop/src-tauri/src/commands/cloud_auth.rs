@@ -158,3 +158,18 @@ pub async fn cloud_create_billing_manage(app: AppHandle) -> Result<BillingManage
     open_url(&app, &response.manage_url)?;
     Ok(response)
 }
+
+/// Confirm latest paid Razorpay checkout and refresh Premium entitlement.
+#[tauri::command]
+pub async fn cloud_confirm_checkout(app: AppHandle) -> Result<crate::cloud::types::ConfirmCheckoutResponse, String> {
+    let dir = app_data_dir(&app)?;
+    client::confirm_checkout(&dir).await
+}
+
+/// Open the public pricing page so users can upgrade to Premium.
+#[tauri::command]
+pub async fn cloud_open_pricing(app: AppHandle) -> Result<(), String> {
+    let base = crate::cloud::web_base_url();
+    let url = format!("{}/pricing", base.trim_end_matches('/'));
+    open_url(&app, &url)
+}
