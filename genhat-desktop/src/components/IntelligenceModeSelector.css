@@ -103,6 +103,15 @@
   color: var(--color-neon);
 }
 
+.intelligence-option.locked {
+  opacity: 0.85;
+}
+
+.intelligence-option.locked:hover {
+  background: rgba(251, 191, 36, 0.08);
+  color: var(--color-txt);
+}
+
 .intelligence-option-copy {
   display: flex;
   flex-direction: column;
@@ -113,6 +122,16 @@
 .intelligence-option-label {
   font-size: 0.88rem;
   font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.intelligence-option-lock {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: #fbbf24;
 }
 
 .intelligence-option-hint {

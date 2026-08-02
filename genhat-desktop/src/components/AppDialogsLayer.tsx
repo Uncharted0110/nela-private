@@ -18,6 +18,7 @@ import StartupModal from "./StartupModal";
 import ToursModal from "./ToursModal";
 import ProfileModal from "./ProfileModal";
 import CloudSettingsModal from "./CloudSettingsModal";
+import PremiumUpgradeModal from "./PremiumUpgradeModal";
 import RagSourcePickerModal from "./RagSourcePickerModal";
 import FileIndexerSetupModal from "./FileIndexerSetupModal";
 import FileIndexerChatModal from "./FileIndexerChatModal";
@@ -129,6 +130,8 @@ export default function AppDialogsLayer({
         isOpen={cloudSettingsOpen}
         onClose={() => setCloudSettingsOpen(false)}
       />
+
+      <PremiumUpgradeModal />
 
       <RagSourcePickerModal />
     </>

@@ -61,6 +61,7 @@ export function isCloudReadyForMode(mode: CloudQualityMode): boolean {
   const { entitlement } = useCloudStore.getState();
   if (!entitlement?.cloudEnabled) return false;
   if (entitlement.paidCloud) return true;
+  if (mode === "smart" || mode === "deep") return false;
   if (mode === "fast" || mode === "auto") {
     return (
       (entitlement.fastFree?.remaining ?? 0) > 0 ||
@@ -72,15 +73,24 @@ export function isCloudReadyForMode(mode: CloudQualityMode): boolean {
 
 /**
  * Whether we should attempt a cloud request for the current routing preference.
- * Explicit Cloud mode tries as long as the account has cloud enabled — the API
- * clamps unpaid Smart/Deep requests down to Fast. Auto mode still requires the
- * selected tier to be entitled client-side.
+ * Explicit Cloud mode still requires paid entitlement for Smart/Deep (no silent Fast clamp).
  */
 export function canAttemptCloud(mode: CloudQualityMode): boolean {
   const { preferredMode, entitlement } = useCloudStore.getState();
   if (!entitlement?.cloudEnabled) return false;
-  if (preferredMode === "cloud") return true;
+  if (preferredMode === "cloud") {
+    if (mode === "smart" || mode === "deep") return Boolean(entitlement.paidCloud);
+    return true;
+  }
   return isCloudReadyForMode(mode);
+}
+
+/** True when Cloud Smart/Deep would require Premium. */
+export function needsPremiumForCloudMode(mode: CloudQualityMode): boolean {
+  const { preferredMode, entitlement } = useCloudStore.getState();
+  if (preferredMode === "local") return false;
+  if (mode !== "smart" && mode !== "deep") return false;
+  return !entitlement?.paidCloud;
 }
 
 export function willRouteToCloud(args?: {
@@ -339,10 +349,13 @@ export function streamChatByMode(args: StreamArgs): void {
   }
 
   if (!cloudReady) {
-    const paidNeeded = mode === "smart" || mode === "deep";
-    const reason = paidNeeded
-      ? "Smart/Deep cloud needs a paid plan or sign-in"
-      : "not signed in or Fast quota exhausted";
+    const paidNeeded = needsPremiumForCloudMode(mode);
+    if (paidNeeded) {
+      useCloudStore.getState().openUpgradeModal();
+      args.onError(new Error("Upgrade to Premium to use Smart and Deep in Cloud"));
+      return;
+    }
+    const reason = "not signed in or Fast quota exhausted";
     if (disableLocalFallback) {
       args.onError(new Error(friendlyError(reason)));
       return;
@@ -357,6 +370,12 @@ export function streamChatByMode(args: StreamArgs): void {
 
   const failOrFallback = (err: unknown) => {
     if (isAbortError(err)) {
+      args.onError(err);
+      return;
+    }
+    const msg = err instanceof Error ? err.message : String(err);
+    if (/upgrade to premium|UPGRADE_REQUIRED/i.test(msg)) {
+      useCloudStore.getState().openUpgradeModal();
       args.onError(err);
       return;
     }

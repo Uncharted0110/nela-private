@@ -11,9 +11,12 @@ import {
   Sun,
   Moon,
   User,
+  Crown,
 } from "lucide-react";
 import { useAuthStore } from "../stores/authStore";
+import { useCloudStore } from "../stores/cloudStore";
 import { convertFileSrc } from "@tauri-apps/api/core";
+import { isPremiumAccount } from "../app/premiumAccess";
 
 interface SidebarNavProps {
   selected: "chats" | "audio" | "mindmaps" | "playground" | null;
@@ -43,6 +46,7 @@ const SidebarNav: React.FC<SidebarNavProps> = ({
   onToggleTheme,
 }) => {
   const profile = useAuthStore((s) => s.profile);
+  const entitlement = useCloudStore((s) => s.entitlement);
   let avatarUrl: string | null = null;
   if (profile?.avatar) {
     const v = profile.avatar.value;
@@ -65,6 +69,7 @@ const SidebarNav: React.FC<SidebarNavProps> = ({
     profile?.name?.trim()?.charAt(0)?.toUpperCase() ||
     profile?.email?.trim()?.charAt(0)?.toUpperCase() ||
     null;
+  const isPremium = isPremiumAccount({ profile, entitlement });
 
   return (
     <nav
@@ -149,19 +154,35 @@ const SidebarNav: React.FC<SidebarNavProps> = ({
 
         <button
           type="button"
-          className="mt-1 flex items-center justify-center w-9 h-9 rounded-full border border-glass-border bg-void-700 text-txt-secondary hover:text-neon hover:border-neon/40 transition-colors overflow-hidden shrink-0"
-          title={profile ? `Profile · ${profile.name}` : "Profile"}
+          className="mt-1 relative flex items-center justify-center w-9 h-9 rounded-full border border-glass-border bg-void-700 text-txt-secondary hover:text-neon hover:border-neon/40 transition-colors overflow-visible shrink-0"
+          title={
+            profile
+              ? isPremium
+                ? `Profile · ${profile.name} · Premium`
+                : `Profile · ${profile.name}`
+              : "Profile"
+          }
           onClick={onOpenProfile}
           data-tour="sidebar-profile"
           aria-label={profile ? `Profile · ${profile.name}` : "Open profile"}
         >
-          {avatarUrl ? (
-            <img src={avatarUrl} alt="" className="w-full h-full object-cover" />
-          ) : profileInitial ? (
-            <span className="text-[0.85rem] font-semibold leading-none">{profileInitial}</span>
-          ) : (
-            <User size={18} />
-          )}
+          <span className="flex items-center justify-center w-full h-full rounded-full overflow-hidden">
+            {avatarUrl ? (
+              <img src={avatarUrl} alt="" className="w-full h-full object-cover" />
+            ) : profileInitial ? (
+              <span className="text-[0.85rem] font-semibold leading-none">{profileInitial}</span>
+            ) : (
+              <User size={18} />
+            )}
+          </span>
+          {isPremium ? (
+            <span
+              className="absolute -top-0.5 -right-0.5 flex items-center justify-center w-4 h-4 rounded-full bg-amber-400 text-[#1a1408] border border-void-900"
+              aria-hidden
+            >
+              <Crown size={9} strokeWidth={2.5} />
+            </span>
+          ) : null}
         </button>
       </div>
     </nav>

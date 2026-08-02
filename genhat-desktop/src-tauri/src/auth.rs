@@ -52,6 +52,13 @@ pub struct AvatarSource {
     pub value: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum DisplayPlan {
+    Free,
+    Premium,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UserProfile {
@@ -60,6 +67,10 @@ pub struct UserProfile {
     pub email: String,
     pub avatar: Option<AvatarSource>,
     pub plan: UserPlan,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_plan: Option<DisplayPlan>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_premium: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub entitlement_status: Option<EntitlementStatus>,
     pub auth_provider: AuthProvider,
@@ -132,6 +143,8 @@ pub fn save_user_profile(
         email: email.trim().to_string(),
         avatar,
         plan: existing.plan,
+        display_plan: existing.display_plan,
+        is_premium: existing.is_premium,
         entitlement_status: existing.entitlement_status,
         auth_provider: existing.auth_provider,
         updated_at: Utc::now().to_rfc3339(),

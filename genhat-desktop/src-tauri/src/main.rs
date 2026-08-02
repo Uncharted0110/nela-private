@@ -433,6 +433,8 @@ fn main() {
             app_lib::commands::cloud_auth::cloud_get_entitlement,
             app_lib::commands::cloud_auth::cloud_create_checkout,
             app_lib::commands::cloud_auth::cloud_create_billing_manage,
+            app_lib::commands::cloud_auth::cloud_confirm_checkout,
+            app_lib::commands::cloud_auth::cloud_open_pricing,
             // NELA Cloud inference
             app_lib::commands::cloud_inference::cloud_chat_stream,
             app_lib::commands::cloud_inference::cloud_chat_complete,

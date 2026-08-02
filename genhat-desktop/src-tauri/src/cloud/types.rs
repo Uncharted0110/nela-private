@@ -12,6 +12,13 @@ pub enum CloudPlan {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum DisplayPlan {
+    Free,
+    Premium,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum EntitlementStatus {
     Inactive,
@@ -30,6 +37,10 @@ pub struct UserProfileDto {
     pub avatar_url: Option<String>,
     pub auth_provider: String,
     pub plan: CloudPlan,
+    #[serde(default)]
+    pub display_plan: Option<DisplayPlan>,
+    #[serde(default)]
+    pub is_premium: Option<bool>,
     pub entitlement_status: EntitlementStatus,
     pub updated_at: String,
 }
@@ -107,6 +118,10 @@ pub struct EntitlementResponse {
     pub plan: CloudPlan,
     pub status: EntitlementStatus,
     #[serde(default)]
+    pub display_plan: Option<DisplayPlan>,
+    #[serde(default)]
+    pub is_premium: Option<bool>,
+    #[serde(default)]
     pub paid_cloud: bool,
     pub quota: EntitlementQuota,
     #[serde(default)]
@@ -124,6 +139,30 @@ pub struct CheckoutResponse {
 #[serde(rename_all = "camelCase")]
 pub struct BillingManageResponse {
     pub manage_url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfirmCheckoutRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plan: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub payment_link_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfirmCheckoutResponse {
+    pub ok: bool,
+    pub activated: bool,
+    pub plan: CloudPlan,
+    pub status: EntitlementStatus,
+    #[serde(default)]
+    pub paid_cloud: bool,
+    #[serde(default)]
+    pub is_premium: bool,
+    #[serde(default)]
+    pub display_plan: Option<DisplayPlan>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

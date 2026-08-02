@@ -63,18 +63,41 @@ function toFriendly(err: unknown): string {
   return friendlyError(err instanceof Error ? err.message : String(err));
 }
 
+function clearEntitlementCache() {
+  try {
+    localStorage.removeItem("nela.cloud.entitlementDisplay");
+  } catch {
+    /* ignore */
+  }
+  useCloudStore.setState({ entitlement: null, error: null });
+}
+
 function normalizePlan(plan: string | undefined): UserProfile["plan"] {
   const p = (plan ?? "free").toLowerCase();
-  if (p === "premium" || p === "pro") return "pro";
+  if (p === "pro") return "pro";
   if (p === "starter") return "starter";
+  // Never map display label "premium" onto a concrete billed plan.
   return "free";
 }
 
 function normalizeProfile(profile: UserProfile | null): UserProfile | null {
   if (!profile) return null;
+  const plan = normalizePlan(profile.plan);
+  // Trust server premium flags. Do not invent Premium from plan alone when
+  // the API explicitly says the account is free.
+  const isPremium =
+    profile.isPremium === true ||
+    profile.displayPlan === "premium" ||
+    (profile.isPremium === undefined &&
+      profile.displayPlan === undefined &&
+      (plan === "starter" || plan === "pro") &&
+      profile.entitlementStatus !== "inactive" &&
+      profile.entitlementStatus !== "cancelled");
   return {
     ...profile,
-    plan: normalizePlan(profile.plan),
+    plan,
+    displayPlan: isPremium ? "premium" : "free",
+    isPremium,
   };
 }
 
@@ -90,6 +113,7 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
 
   hydrate: async () => {
     try {
+      clearEntitlementCache();
       const profile = normalizeProfile(await getUserProfile());
       set({ profile, hydrated: true, error: null });
       if (profile) {
@@ -135,6 +159,7 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
         await sleep(intervalMs);
         const poll = await pollCloudAuth(start.deviceCode);
         if (poll.status === "approved") {
+          clearEntitlementCache();
           const profile = normalizeProfile(poll.profile);
           set({
             profile,
@@ -164,6 +189,7 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
   signInWithEmail: async ({ email, password }) => {
     set({ loading: true, loginPending: false, error: null });
     try {
+      clearEntitlementCache();
       const profile = normalizeProfile(
         await emailLoginCloud({ email, password })
       );
@@ -182,6 +208,7 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
   registerWithEmail: async ({ email, password, name }) => {
     set({ loading: true, loginPending: false, error: null });
     try {
+      clearEntitlementCache();
       const profile = normalizeProfile(
         await emailRegisterCloud({ email, password, name })
       );
@@ -201,7 +228,7 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
     set({ loading: true, error: null });
     try {
       await signOutCloud();
-      useCloudStore.setState({ entitlement: null, error: null });
+      clearEntitlementCache();
       set({ profile: null, loading: false });
     } catch (err) {
       const message = toFriendly(err);

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { ChevronDown, Loader2, Sparkles, Zap, Brain, Wand2 } from "lucide-react";
+import { ChevronDown, Loader2, Sparkles, Zap, Brain, Wand2, Crown, Lock } from "lucide-react";
 import type { IntelligenceMode } from "../app/intelligenceModes";
 import { INTELLIGENCE_MODE_OPTIONS } from "../app/intelligenceModes";
 import { COPY } from "../app/copy";
@@ -20,6 +20,9 @@ interface IntelligenceModeSelectorProps {
   onChooseSpecificModel: () => void;
   /** When true, hide "Choose a specific model" (used in Cloud mode). */
   hideSpecificModel?: boolean;
+  /** Modes locked behind Premium (Cloud unpaid Smart/Deep). */
+  lockedModes?: IntelligenceMode[];
+  onLockedSelect?: (mode: IntelligenceMode) => void;
 }
 
 const IntelligenceModeSelector: React.FC<IntelligenceModeSelectorProps> = ({
@@ -29,9 +32,12 @@ const IntelligenceModeSelector: React.FC<IntelligenceModeSelectorProps> = ({
   onSelectMode,
   onChooseSpecificModel,
   hideSpecificModel = false,
+  lockedModes = [],
+  onLockedSelect,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const lockedSet = new Set(lockedModes);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -82,28 +88,44 @@ const IntelligenceModeSelector: React.FC<IntelligenceModeSelectorProps> = ({
           {INTELLIGENCE_MODE_OPTIONS.map((option) => {
             const Icon = MODE_ICONS[option.key];
             const active = mode === option.key;
-            const hint = hideSpecificModel
-              ? option.key === "fast"
-                ? "Quick cloud answers — OpenRouter picks the model."
-                : option.key === "smart"
-                  ? "Balanced cloud reasoning — OpenRouter picks the model."
-                  : option.key === "deep"
-                    ? "Highest cloud quality — OpenRouter picks the model."
-                    : "OpenRouter chooses the best cloud model automatically."
-              : option.hint;
+            const locked = lockedSet.has(option.key);
+            const hint = locked
+              ? "Premium required for Smart and Deep in Cloud"
+              : hideSpecificModel
+                ? option.key === "fast"
+                  ? "Quick cloud answers — OpenRouter picks the model."
+                  : option.key === "smart"
+                    ? "Balanced cloud reasoning — OpenRouter picks the model."
+                    : option.key === "deep"
+                      ? "Highest cloud quality — OpenRouter picks the model."
+                      : "OpenRouter chooses the best cloud model automatically."
+                : option.hint;
             return (
               <button
                 key={option.key}
                 type="button"
-                className={`intelligence-option ${active ? "selected" : ""}`}
+                className={`intelligence-option ${active ? "selected" : ""} ${locked ? "locked" : ""}`}
                 onClick={() => {
+                  if (locked) {
+                    onLockedSelect?.(option.key);
+                    setIsOpen(false);
+                    return;
+                  }
                   onSelectMode(option.key);
                   setIsOpen(false);
                 }}
               >
                 <Icon size={15} />
                 <span className="intelligence-option-copy">
-                  <span className="intelligence-option-label">{option.label}</span>
+                  <span className="intelligence-option-label">
+                    {option.label}
+                    {locked ? (
+                      <span className="intelligence-option-lock" aria-hidden>
+                        <Lock size={12} />
+                        <Crown size={12} />
+                      </span>
+                    ) : null}
+                  </span>
                   <span className="intelligence-option-hint">{hint}</span>
                 </span>
               </button>
