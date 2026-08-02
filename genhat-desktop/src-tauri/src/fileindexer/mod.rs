@@ -271,10 +271,44 @@ fn resolve_sidecar_binary() -> Result<PathBuf, String> {
         }
     }
 
-    let mut candidates = vec![
-        PathBuf::from(r"C:\Users\assas\CODEBASES\FileIndexer\target\release\fileindexer_sidecar.exe"),
-        PathBuf::from(r"C:\Users\assas\CODEBASES\FileIndexer\target\debug\fileindexer_sidecar.exe"),
-    ];
+    // Same layout as MCP sidecars (prepare-sidecars.mjs → bin/mcp-<os>/).
+    let os_folder = if cfg!(windows) {
+        "mcp-win"
+    } else if cfg!(target_os = "macos") {
+        "mcp-mac"
+    } else {
+        "mcp-lin"
+    };
+    #[cfg(windows)]
+    let bundled_names: &[&str] = &["fileindexer_sidecar.exe"];
+    #[cfg(not(windows))]
+    let bundled_names: &[&str] = &["fileindexer_sidecar"];
+    if let Ok(path) = crate::paths::resolve_bundled_binary(os_folder, bundled_names) {
+        return Ok(path);
+    }
+
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+
+    // Dev: cargo output + staged copies from prepare-sidecars.
+    for profile in ["debug", "release"] {
+        candidates.push(
+            manifest
+                .join("target")
+                .join(profile)
+                .join("fileindexer_sidecar.exe"),
+        );
+        candidates.push(
+            manifest
+                .join("target")
+                .join(profile)
+                .join("fileindexer_sidecar"),
+        );
+    }
+    candidates.push(manifest.join("bin").join(os_folder).join("fileindexer_sidecar.exe"));
+    candidates.push(manifest.join("bin").join(os_folder).join("fileindexer_sidecar"));
+    candidates.push(manifest.join("resources").join("fileindexer_sidecar.exe"));
+    candidates.push(manifest.join("resources").join("fileindexer_sidecar"));
 
     if let Ok(target_dir) = std::env::var("CARGO_TARGET_DIR") {
         candidates.push(PathBuf::from(&target_dir).join("release").join("fileindexer_sidecar.exe"));
@@ -283,11 +317,12 @@ fn resolve_sidecar_binary() -> Result<PathBuf, String> {
         candidates.push(PathBuf::from(&target_dir).join("debug").join("fileindexer_sidecar"));
     }
 
-    // Next to the running NELA binary.
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
             candidates.push(dir.join("fileindexer_sidecar.exe"));
             candidates.push(dir.join("fileindexer_sidecar"));
+            candidates.push(dir.join("bin").join(os_folder).join("fileindexer_sidecar.exe"));
+            candidates.push(dir.join("bin").join(os_folder).join("fileindexer_sidecar"));
         }
     }
 
@@ -298,7 +333,7 @@ fn resolve_sidecar_binary() -> Result<PathBuf, String> {
     }
 
     Err(
-        "fileindexer_sidecar not found. Build it with: cargo build --release --bin fileindexer_sidecar (in FileIndexer), or set FILEINDEXER_SIDECAR"
+        "fileindexer_sidecar not found. Run `npm run prepare:sidecars` (or `:release`) from genhat-desktop, or set FILEINDEXER_SIDECAR"
             .into(),
     )
 }
@@ -347,6 +382,44 @@ fn parse_search_hits(v: &serde_json::Value) -> Vec<FileIndexerHit> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+fn child_is_running(child: &mut Child) -> bool {
+    matches!(child.try_wait(), Ok(None))
+}
+
+fn send_sidecar_cmd(stdin: &mut ChildStdin, cmd: &str) -> Result<(), String> {
+    writeln!(stdin, "{cmd}").and_then(|_| stdin.flush()).map_err(|e| e.to_string())
+}
+
+/// Start sidecar if needed; if already running, ask it to reindex with current roots.
+fn ensure_sidecar(app: &AppHandle, state: &FileIndexerState) -> Result<(), String> {
+    let data_dir = {
+        let inner = state.inner.lock().map_err(|e| e.to_string())?;
+        inner.data_dir.clone()
+    };
+    let cfg = load_config(&data_dir)?;
+    if !cfg.setup_done || cfg.roots.is_empty() {
+        return Err("File indexing is not configured yet".into());
+    }
+    save_config(&data_dir, &cfg)?;
+
+    {
+        let mut guard = state.inner.lock().map_err(|e| e.to_string())?;
+        if let Some(child) = guard.child.as_mut() {
+            if child_is_running(child) && guard.stdin.is_some() {
+                guard.status.phase = "scanning".into();
+                guard.status.message = "Refreshing folders…".into();
+                let status = guard.status.clone();
+                send_sidecar_cmd(guard.stdin.as_mut().unwrap(), r#"{"cmd":"reindex"}"#)?;
+                drop(guard);
+                let _ = app.emit("fileindexer:status", &status);
+                return Ok(());
+            }
+        }
+    }
+
+    spawn_sidecar(app, state)
 }
 
 fn spawn_sidecar(app: &AppHandle, state: &FileIndexerState) -> Result<(), String> {
@@ -487,7 +560,8 @@ fn spawn_sidecar(app: &AppHandle, state: &FileIndexerState) -> Result<(), String
                 g.child = None;
                 g.stdin = None;
                 g.status.running = false;
-                if g.status.phase != "ready" && g.status.phase != "error" {
+                if g.status.phase != "ready" && g.status.phase != "error" && g.status.phase != "sleeping"
+                {
                     g.status.phase = "stopped".into();
                     g.status.message = "File indexer stopped".into();
                 }
@@ -586,20 +660,14 @@ pub fn fileindexer_complete_setup(
         roots,
     };
     save_config(&data_dir, &cfg)?;
-    // Rebuild from the new root set (old index may contain paths outside the new selection).
-    let index_path = data_dir.join("file_indexer_index.bin");
-    let _ = std::fs::remove_file(&index_path);
+    // Keep existing index + running sidecar (warm model); hot-reindex roots.
     {
         let mut g = state.inner.lock().map_err(|e| e.to_string())?;
         g.status.setup_done = true;
         g.status.phase = "configured".into();
-        g.status.message = "Folders saved — starting indexer…".into();
-        g.status.files_total = 0;
-        g.status.files_embedded = 0;
-        g.status.embed_done = 0;
-        g.status.embed_total = 0;
+        g.status.message = "Folders saved — refreshing indexer…".into();
     }
-    spawn_sidecar(&app, &*state)?;
+    ensure_sidecar(&app, &*state)?;
     let status = state
         .inner
         .lock()
@@ -621,7 +689,7 @@ pub fn fileindexer_get_status(state: State<'_, FileIndexerState>) -> Result<File
 
 #[tauri::command]
 pub fn fileindexer_start(state: State<'_, FileIndexerState>, app: AppHandle) -> Result<FileIndexerStatus, String> {
-    spawn_sidecar(&app, &*state)?;
+    ensure_sidecar(&app, &*state)?;
     Ok(state
         .inner
         .lock()

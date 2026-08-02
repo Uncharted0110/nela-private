@@ -7,14 +7,19 @@ export default function FileIndexerStatusBadge() {
   const openSetup = useFileIndexerStore((s) => s.openSetup);
 
   const phase = status.phase || "idle";
-  const ready = phase === "ready";
+  const ready = phase === "ready" || phase === "sleeping";
   const error = phase === "error";
   const working = ["starting", "loading_model", "scanning", "embedding", "configured"].includes(
     phase,
   );
 
   let tooltip = status.message || "File indexer";
-  if (ready) {
+  if (phase === "sleeping") {
+    tooltip =
+      status.filesTotal > 0
+        ? `${status.filesTotal.toLocaleString()} files indexed (model sleeping)`
+        : "File indexer idle (model sleeping)";
+  } else if (ready) {
     tooltip = `${status.filesTotal.toLocaleString()} files indexed`;
   } else if (phase === "embedding") {
     if (status.embedTotal > 0) {

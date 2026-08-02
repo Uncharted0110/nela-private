@@ -9,6 +9,12 @@ edition = "2021"
 rust-version = "1.77.2"
 default-run = "app"
 
+# Workspace: main app + FileIndexer sidecar crate (kept separate so ort/fastembed
+# stay out of the UI process).
+[workspace]
+members = [".", "crates/file-indexer"]
+resolver = "2"
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [lib]
@@ -112,6 +118,9 @@ path = "src/bin/mcp_server_presentation.rs"
 [[bin]]
 name = "mcp-server-html"
 path = "src/bin/mcp_server_html.rs"
+
+# Note: fileindexer_sidecar lives in crates/file-indexer (workspace member),
+# built/copied by scripts/prepare-sidecars.mjs — same pattern as MCP sidecars.
 
 [dependencies.rust_xlsxwriter]
 version = "0.95"
