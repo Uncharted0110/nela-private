@@ -13,6 +13,7 @@ import { useAuthStore } from "../stores/authStore";
 import { useCloudStore } from "../stores/cloudStore";
 import { PRESET_AVATARS } from "../assets/avatars";
 import type { AvatarSource } from "../types";
+import { isPremiumAccount } from "../app/premiumAccess";
 import "./ProfileModal.css";
 
 interface ProfileModalProps {
@@ -49,6 +50,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) => {
   const pendingUserCode = useAuthStore((s) => s.pendingUserCode);
   const refreshProfile = useAuthStore((s) => s.refreshProfile);
   const refreshEntitlement = useCloudStore((s) => s.refreshEntitlement);
+  const entitlement = useCloudStore((s) => s.entitlement);
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -86,11 +88,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) => {
   if (!isOpen) return null;
 
   const avatarUrl = resolveAvatarUrl(profile?.avatar ?? null);
-  const isPremium =
-    profile?.isPremium === true ||
-    profile?.displayPlan === "premium" ||
-    profile?.plan === "starter" ||
-    profile?.plan === "pro";
+  const isPremium = isPremiumAccount({ profile, entitlement });
   const planTitle = isPremium ? "Premium" : "Free";
 
   const handleSignIn = async () => {

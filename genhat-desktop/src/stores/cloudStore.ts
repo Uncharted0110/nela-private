@@ -105,8 +105,9 @@ export interface CloudStoreState {
 }
 
 export const useCloudStore = create<CloudStoreState>((set) => ({
+  // Never hydrate Premium/unlock from a previous account's localStorage cache.
   preferredMode: readPreferredMode(),
-  entitlement: readCachedEntitlement(),
+  entitlement: null,
   loading: false,
   error: null,
   upgradeModalOpen: false,
@@ -135,7 +136,10 @@ export const useCloudStore = create<CloudStoreState>((set) => ({
         refreshProfileSoft();
       }
     } catch (err) {
+      // On failure, do not keep a stale paid entitlement around.
+      persistEntitlementDisplay(null);
       set({
+        entitlement: null,
         loading: false,
         error: toFriendly(err),
       });

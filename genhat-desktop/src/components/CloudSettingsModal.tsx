@@ -10,6 +10,7 @@ import {
 import { useAuthStore } from "../stores/authStore";
 import { useCloudStore } from "../stores/cloudStore";
 import type { CloudRoutingPreference } from "../types";
+import { isPremiumAccount } from "../app/premiumAccess";
 import "./CloudSettingsModal.css";
 
 interface CloudSettingsModalProps {
@@ -39,12 +40,8 @@ const MODE_OPTIONS: Array<{
   },
 ];
 
-function planBannerLabel(input: {
-  isPremium: boolean;
-  plan?: string;
-}): string {
-  if (input.isPremium) return "Premium";
-  return "Free";
+function planBannerLabel(isPremium: boolean): string {
+  return isPremium ? "Premium" : "Free";
 }
 
 const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
@@ -59,7 +56,6 @@ const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
   const error = useCloudStore((s) => s.error);
   const setPreferredMode = useCloudStore((s) => s.setPreferredMode);
   const refreshEntitlement = useCloudStore((s) => s.refreshEntitlement);
-  const confirmCheckout = useCloudStore((s) => s.confirmCheckout);
   const openPricingPage = useCloudStore((s) => s.openPricingPage);
   const openBillingManage = useCloudStore((s) => s.openBillingManage);
   const clearError = useCloudStore((s) => s.clearError);
@@ -68,24 +64,16 @@ const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
     if (!isOpen) return;
     clearError();
     if (profile) {
-      void (async () => {
-        await confirmCheckout();
-        await refreshEntitlement();
-        await refreshProfile();
-      })();
+      // Refresh this user's entitlement only — do not auto-confirm payments
+      // here (that belongs on the billing return path).
+      void refreshEntitlement();
+      void refreshProfile();
     }
-  }, [isOpen, profile, refreshEntitlement, confirmCheckout, refreshProfile, clearError]);
+  }, [isOpen, profile, refreshEntitlement, refreshProfile, clearError]);
 
   if (!isOpen) return null;
 
-  const plan = entitlement?.plan ?? profile?.plan ?? "free";
-  const isPremium =
-    entitlement?.isPremium === true ||
-    entitlement?.displayPlan === "premium" ||
-    profile?.isPremium === true ||
-    profile?.displayPlan === "premium" ||
-    plan === "starter" ||
-    plan === "pro";
+  const isPremium = isPremiumAccount({ profile, entitlement });
   const quota = entitlement?.quota;
 
   return (
@@ -168,7 +156,7 @@ const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                 >
                   <Crown size={16} />
                   <div>
-                    <strong>{planBannerLabel({ isPremium, plan })}</strong>
+                    <strong>{planBannerLabel(isPremium)}</strong>
                     <span>
                       {entitlement
                         ? `Status: ${entitlement.status.replace(/_/g, " ")}`

@@ -16,6 +16,7 @@ import {
 import { useAuthStore } from "../stores/authStore";
 import { useCloudStore } from "../stores/cloudStore";
 import { convertFileSrc } from "@tauri-apps/api/core";
+import { isPremiumAccount } from "../app/premiumAccess";
 
 interface SidebarNavProps {
   selected: "chats" | "audio" | "mindmaps" | "playground" | null;
@@ -68,13 +69,7 @@ const SidebarNav: React.FC<SidebarNavProps> = ({
     profile?.name?.trim()?.charAt(0)?.toUpperCase() ||
     profile?.email?.trim()?.charAt(0)?.toUpperCase() ||
     null;
-  const isPremium =
-    profile?.isPremium === true ||
-    profile?.displayPlan === "premium" ||
-    entitlement?.isPremium === true ||
-    entitlement?.displayPlan === "premium" ||
-    profile?.plan === "starter" ||
-    profile?.plan === "pro";
+  const isPremium = isPremiumAccount({ profile, entitlement });
 
   return (
     <nav
