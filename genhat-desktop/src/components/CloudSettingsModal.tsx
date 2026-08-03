@@ -74,7 +74,6 @@ const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
   if (!isOpen) return null;
 
   const isPremium = isPremiumAccount({ profile, entitlement });
-  const quota = entitlement?.quota;
 
   return (
     <div className="cloud-settings-overlay" onClick={onClose}>
@@ -165,37 +164,36 @@ const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                   </div>
                 </div>
 
-                {quota && (
+                {(entitlement?.credits || entitlement?.fastFree) && (
                   <div className="cloud-quota">
                     {entitlement?.credits ? (
                       <>
                         <div className="cloud-quota-row">
-                          <span>Credits</span>
+                          <span>Credits remaining</span>
                           <strong>{entitlement.credits.balance}</strong>
                         </div>
                         {entitlement.credits.monthlyGrant > 0 && (
                           <div className="cloud-quota-row">
-                            <span>Monthly grant</span>
-                            <strong>{entitlement.credits.monthlyGrant}</strong>
+                            <span>Monthly grant used</span>
+                            <strong>
+                              {Math.min(
+                                entitlement.credits.monthlyGrant,
+                                Math.max(
+                                  0,
+                                  entitlement.credits.monthlyGrant -
+                                    Math.max(
+                                      0,
+                                      entitlement.credits.balance -
+                                        entitlement.credits.packCredits
+                                    )
+                                )
+                              )}{" "}
+                              / {entitlement.credits.monthlyGrant}
+                            </strong>
                           </div>
                         )}
                       </>
-                    ) : (
-                      <>
-                        <div className="cloud-quota-row">
-                          <span>Included</span>
-                          <strong>${quota.includedUsd.toFixed(2)}</strong>
-                        </div>
-                        <div className="cloud-quota-row">
-                          <span>Used</span>
-                          <strong>${quota.usedUsd.toFixed(2)}</strong>
-                        </div>
-                        <div className="cloud-quota-row">
-                          <span>Remaining</span>
-                          <strong>${quota.remainingUsd.toFixed(2)}</strong>
-                        </div>
-                      </>
-                    )}
+                    ) : null}
                     {entitlement?.fastFree && (
                       <div className="cloud-quota-row">
                         <span>
