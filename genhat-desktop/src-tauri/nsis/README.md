@@ -29,31 +29,30 @@ First app launch reads those files, materializes `config.json`, and auto-starts 
 ## Before building the installer
 
 ```powershell
-# 1) Build FileIndexer sidecar (separate FileIndexer repo) and stage it
-cd C:\Users\assas\CODEBASES\FileIndexer
-cargo build --release --bin fileindexer_sidecar
-Copy-Item .\target\release\fileindexer_sidecar.exe `
-  C:\Users\assas\CODEBASES\nela-private\genhat-desktop\src-tauri\resources\fileindexer_sidecar.exe -Force
-
-# 2) Stage MiniLM ONNX under:
-#    src-tauri\resources\models\fileindexer\models--Qdrant--all-MiniLM-L6-v2-onnx\
-
-# 3) Bundle (also rebuilds MCP excel/presentation/html sidecars via prepare:sidecars:release)
 cd C:\Users\assas\CODEBASES\nela-private\genhat-desktop
+
+# Builds all sidecars the same way (excel / presentation / html / fileindexer)
+# → src-tauri/bin/mcp-win/  (+ fileindexer also → resources/ for the installer)
+npm run prepare:sidecars:release
+
+# Ensure MiniLM ONNX is under:
+#   src-tauri\resources\models\fileindexer\models--Qdrant--all-MiniLM-L6-v2-onnx\
+
 npx tauri build
 ```
 
-MCP artifact sidecars (`mcp-server-excel`, `mcp-server-presentation`, `mcp-server-html`) are rebuilt on every
-`npx tauri dev` / `npx tauri build` through `scripts/prepare-sidecars.mjs` (wired in `beforeDevCommand` /
-`beforeBuildCommand`). Force manually with:
+FileIndexer lives in-repo at `src-tauri/crates/file-indexer` (workspace member).
+`npx tauri dev` / `npx tauri build` run `prepare:sidecars` automatically via
+`beforeDevCommand` / `beforeBuildCommand`.
 
 ```bash
 npm run prepare:sidecars          # debug
 npm run prepare:sidecars:release  # release
 ```
 
-FileIndexer resources are Windows-only (`tauri.windows.conf.json`) so Linux/macOS `tauri dev` no longer
-requires `resources/models/fileindexer`.
+All four sidecars are built with the same loop (`cargo build -p <pkg> --bin <name>` then
+copy into `bin/mcp-<os>/`). FileIndexer is only a separate *package* so ONNX/embeddings
+stay out of the main NELA binary; it is still also copied to `resources/` for NSIS.
 
 Installer output: `src-tauri/target/release/bundle/nsis/`.
 

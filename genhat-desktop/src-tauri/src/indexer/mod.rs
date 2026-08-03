@@ -42,45 +42,13 @@ impl AmbientIndexer {
         let watcher_slot: Arc<Mutex<Option<RecommendedWatcher>>> =
             Arc::new(Mutex::new(None));
 
-        // 1. Background crawler
-        let db_crawler = db.clone();
-        let gov_crawler = governor.clone();
-        let cancel_crawler = cancel_token.clone();
-        let home_crawler = home_dir.clone();
-        let ws_crawler = workspace_paths.clone();
-        std::thread::spawn(move || {
-            crawler::run_crawler(home_crawler, ws_crawler, db_crawler, gov_crawler, cancel_crawler);
-        });
-
-        // 2. Background watcher registration (recursive home watch is slow; must not block UI)
-        let watcher_slot_bg = watcher_slot.clone();
-        let db_watcher = db.clone();
-        let gov_watcher = governor.clone();
-        let cancel_watcher = cancel_token.clone();
-        let home_watcher = home_dir;
-        let ws_watcher = workspace_paths;
-        std::thread::spawn(move || {
-            log::info!("Registering ambient filesystem watches in background...");
-            match watcher::start_watcher(
-                home_watcher,
-                db_watcher,
-                gov_watcher,
-                cancel_watcher,
-                ws_watcher,
-            ) {
-                Ok(w) => {
-                    *watcher_slot_bg.lock().unwrap() = Some(w);
-                    log::info!("Ambient filesystem watches registered.");
-                }
-                Err(e) => {
-                    log::error!(
-                        "Failed to start ambient filesystem watcher: {e} (crawl will still run)"
-                    );
-                }
-            }
-        });
-
-        log::info!("Ambient indexer started (crawl and watches running in background).");
+        // Ambient crawl/watch disabled — FileIndexer owns folder indexing.
+        // Keep the DB open so legacy search/content commands can still read
+        // whatever was indexed previously (or return empty).
+        let _ = (home_dir, workspace_paths, governor.clone());
+        log::info!(
+            "Ambient indexer DB ready (background crawl/watch disabled; FileIndexer handles indexing)."
+        );
 
         Ok(Arc::new(Self {
             db,
