@@ -29,16 +29,6 @@ function readPreferredMode(): CloudRoutingPreference {
   return "local";
 }
 
-function readCachedEntitlement(): EntitlementResponse | null {
-  try {
-    const raw = localStorage.getItem(ENTITLEMENT_CACHE_KEY);
-    if (!raw) return null;
-    return JSON.parse(raw) as EntitlementResponse;
-  } catch {
-    return null;
-  }
-}
-
 function persistPreferredMode(mode: CloudRoutingPreference) {
   try {
     localStorage.setItem(PREFERRED_MODE_KEY, mode);

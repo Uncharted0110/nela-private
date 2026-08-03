@@ -34,6 +34,18 @@ ${StrLoc}
 ; Declared before installer hooks so FileIndexer page helpers can reference it.
 Var PassiveMode
 
+; Google Drive file id for models--Qdrant--all-MiniLM-L6-v2-onnx.zip
+; Share as "Anyone with the link". Installer downloads via NSISdl from:
+;   https://drive.usercontent.google.com/download?id=<id>&export=download&confirm=t
+; (plain drive.google.com/uc?...&confirm=t often returns the virus-scan HTML page)
+!ifndef FILEINDEXER_MODEL_DRIVE_ID
+  !define FILEINDEXER_MODEL_DRIVE_ID "1YwMBKe7do-tfEULZCWWicg2NEJAnOTou"
+!endif
+; Optional override: full direct HTTPS zip URL (skips Drive URL if set).
+!ifndef FILEINDEXER_MODEL_ZIP_URL
+  !define FILEINDEXER_MODEL_ZIP_URL ""
+!endif
+
 {{#if installer_hooks}}
 !include "{{installer_hooks}}"
 {{/if}}
@@ -397,6 +409,7 @@ FunctionEnd
 Page custom PageFileIndexerMode PageLeaveFileIndexerMode
 Page custom PageFileIndexerCustom PageLeaveFileIndexerCustom
 Page custom PageFileIndexerConfirm PageLeaveFileIndexerConfirm
+Page custom PageFileIndexerModel PageLeaveFileIndexerModel
 
 ; 6. Start menu shortcut page
 Var AppStartMenuFolder

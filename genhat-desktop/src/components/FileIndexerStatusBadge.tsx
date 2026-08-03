@@ -1,4 +1,4 @@
-import { Check, Loader2, X } from "lucide-react";
+import { AlertTriangle, Check, Loader2, Search, X } from "lucide-react";
 import { useFileIndexerStore } from "../stores/fileIndexerStore";
 import "./FileIndexerStatusBadge.css";
 
@@ -9,27 +9,31 @@ export default function FileIndexerStatusBadge() {
   const phase = status.phase || "idle";
   const ready = phase === "ready" || phase === "sleeping";
   const error = phase === "error";
-  const working = ["starting", "loading_model", "scanning", "embedding", "configured"].includes(
-    phase,
-  );
+  const modelMissing = phase === "model_missing";
+  const scanning = phase === "scanning";
+  const embedding = phase === "embedding" || phase === "loading_model";
+  const working = ["starting", "configured"].includes(phase) || embedding;
 
   let tooltip = status.message || "File indexer";
-  if (phase === "sleeping") {
+  if (modelMissing) {
+    tooltip =
+      "Embedding model not installed — download it during install or place it under models\\fileindexer";
+  } else if (phase === "sleeping") {
     tooltip =
       status.filesTotal > 0
         ? `${status.filesTotal.toLocaleString()} files indexed (model sleeping)`
         : "File indexer idle (model sleeping)";
   } else if (ready) {
     tooltip = `${status.filesTotal.toLocaleString()} files indexed`;
-  } else if (phase === "embedding") {
+  } else if (embedding) {
     if (status.embedTotal > 0) {
       tooltip = `Indexing ${status.embedDone.toLocaleString()} / ${status.embedTotal.toLocaleString()} files`;
     } else if (status.filesTotal > 0) {
       tooltip = `Indexing ${status.filesEmbedded.toLocaleString()} / ${status.filesTotal.toLocaleString()} files`;
     } else {
-      tooltip = "Indexing files…";
+      tooltip = status.message || "Indexing files…";
     }
-  } else if (phase === "scanning") {
+  } else if (scanning) {
     tooltip =
       status.filesTotal > 0
         ? `Scanning… ${status.filesTotal.toLocaleString()} files found`
@@ -44,10 +48,20 @@ export default function FileIndexerStatusBadge() {
 
   tooltip = `${tooltip} · Click to configure folders`;
 
+  const tone = modelMissing
+    ? "missing"
+    : ready
+      ? "ready"
+      : error
+        ? "error"
+        : scanning || working
+          ? "working"
+          : "idle";
+
   return (
     <button
       type="button"
-      className={`fi-badge ${ready ? "ready" : error ? "error" : working ? "working" : "idle"}`}
+      className={`fi-badge ${tone}`}
       title={tooltip}
       onClick={() => openSetup()}
       aria-label={tooltip}
@@ -56,7 +70,11 @@ export default function FileIndexerStatusBadge() {
         <Check size={16} strokeWidth={2.4} />
       ) : error ? (
         <X size={16} strokeWidth={2.4} />
-      ) : working ? (
+      ) : modelMissing ? (
+        <AlertTriangle size={16} strokeWidth={2.4} />
+      ) : scanning ? (
+        <Search size={16} strokeWidth={2.4} />
+      ) : working || embedding ? (
         <Loader2 size={16} className="fi-spin" />
       ) : (
         <span className="fi-dot" aria-hidden />

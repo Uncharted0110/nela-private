@@ -54,10 +54,10 @@ export function isPremiumAccount(input: {
 }
 
 export function displayPlanLabel(input: {
-  profile?: Pick<UserProfile, "plan" | "displayPlan" | "isPremium"> | null;
+  profile?: Pick<UserProfile, "plan" | "displayPlan" | "isPremium" | "entitlementStatus"> | null;
   entitlement?: Pick<
     EntitlementResponse,
-    "plan" | "displayPlan" | "isPremium" | "paidCloud"
+    "plan" | "displayPlan" | "isPremium" | "paidCloud" | "status"
   > | null;
 }): DisplayPlan {
   return isPremiumAccount(input) ? "premium" : "free";
