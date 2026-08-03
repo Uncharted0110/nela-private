@@ -1035,7 +1035,7 @@ fn build_font_faces(theme: &Theme, fonts_dir: Option<&PathBuf>) -> String {
 pub fn write_presentation_plan(plan: PresentationPlan) -> Result<PathBuf, String> {
     let plan = super::enrich::enrich_presentation_plan(plan);
     let output_name = plan.output_name.as_deref().unwrap_or("nela_presentation");
-    let out_dir = std::env::temp_dir().join("nela_artifacts");
+    let out_dir = crate::paths::artifacts_dir();
     std::fs::create_dir_all(&out_dir).map_err(|e| format!("Create output dir: {e}"))?;
     let path = out_dir.join(format!("{output_name}.html"));
 

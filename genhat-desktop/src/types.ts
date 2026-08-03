@@ -58,6 +58,16 @@ export interface ChatMessage {
   artifactPath?: string | null;
   /** Optional artifact stage if this message is generating one */
   artifactStage?: string | null;
+  /** Prefer side-panel chip UI instead of inline preview (Smart/Deep freeform). */
+  artifactUseSidePanel?: boolean;
+  /** Title shown on the artifact chip / panel. */
+  artifactTitle?: string;
+  /** Follow-up prose shown after the artifact chip (Claude-style). */
+  artifactFollowup?: string;
+  streamingArtifactHtml?: string;
+  streamingArtifactCsv?: string;
+  streamingArtifactType?: "text/html" | "text/csv";
+  streamingArtifactTitle?: string;
 }
 
 export interface ChatContextMessage {
@@ -312,6 +322,16 @@ export interface ChatSession {
   artifactPath?: string | null;
   /** The current pipeline stage of the generating artifact. */
   artifactStage?: string | null;
+  /** True while a Claude-style artifact body is streaming into the side panel. */
+  artifactStreamActive?: boolean;
+  /** User-toggled visibility of the artifact side panel (content kept when closed). */
+  artifactPanelOpen?: boolean;
+  /** Live HTML/PPT body for the side panel. */
+  streamingArtifactHtml?: string;
+  /** Live CSV body for the side panel. */
+  streamingArtifactCsv?: string;
+  streamingArtifactType?: "text/html" | "text/csv";
+  streamingArtifactTitle?: string;
 }
 
 /** Available KittenTTS voice names. */
@@ -602,6 +622,11 @@ export interface EntitlementResponse {
   displayPlan?: DisplayPlan;
   isPremium?: boolean;
   paidCloud?: boolean;
+  credits?: {
+    balance: number;
+    packCredits: number;
+    monthlyGrant: number;
+  };
   quota: {
     includedUsd: number;
     usedUsd: number;
@@ -611,6 +636,8 @@ export interface EntitlementResponse {
     limit: number;
     used: number;
     remaining: number;
+    windowHours?: number;
+    resetsAt?: string | null;
   };
   limits: {
     maxInputTokens: number;

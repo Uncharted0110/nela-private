@@ -6,7 +6,7 @@ use crate::grammar::schema::HtmlPlan;
 
 use super::render_html_plan;
 
-/// Render `plan` and persist it under the system temp directory.
+/// Render `plan` and persist it under the durable app artifacts directory.
 pub fn write_html_plan(plan: HtmlPlan) -> Result<PathBuf, String> {
     let output_name = plan
         .output_name
@@ -43,7 +43,7 @@ pub fn write_html_plan(plan: HtmlPlan) -> Result<PathBuf, String> {
         slug
     };
 
-    let out_dir = std::env::temp_dir().join("nela_artifacts");
+    let out_dir = crate::paths::artifacts_dir();
     std::fs::create_dir_all(&out_dir).map_err(|e| format!("Create output dir: {e}"))?;
     let path = out_dir.join(format!("{slug}.html"));
 

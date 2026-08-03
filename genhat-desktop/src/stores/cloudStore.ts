@@ -92,13 +92,15 @@ export interface CloudStoreState {
   loading: boolean;
   error: string | null;
   upgradeModalOpen: boolean;
+  /** Why the upgrade modal opened — shapes copy toward packs vs plans. */
+  upgradeModalReason: "upgrade" | "credits";
 
   setPreferredMode: (mode: CloudRoutingPreference) => void;
   refreshEntitlement: () => Promise<void>;
   openCheckout: (plan: "starter" | "pro") => Promise<void>;
   openBillingManage: () => Promise<void>;
   openPricingPage: () => Promise<void>;
-  openUpgradeModal: () => void;
+  openUpgradeModal: (reason?: "upgrade" | "credits") => void;
   closeUpgradeModal: () => void;
   confirmCheckout: () => Promise<boolean>;
   clearError: () => void;
@@ -111,10 +113,12 @@ export const useCloudStore = create<CloudStoreState>((set) => ({
   loading: false,
   error: null,
   upgradeModalOpen: false,
+  upgradeModalReason: "upgrade",
 
   clearError: () => set({ error: null }),
 
-  openUpgradeModal: () => set({ upgradeModalOpen: true }),
+  openUpgradeModal: (reason = "upgrade") =>
+    set({ upgradeModalOpen: true, upgradeModalReason: reason }),
   closeUpgradeModal: () => set({ upgradeModalOpen: false }),
 
   setPreferredMode: (mode) => {

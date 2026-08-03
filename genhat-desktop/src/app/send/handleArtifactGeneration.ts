@@ -33,6 +33,7 @@ import {
 } from "../artifactImagePool";
 import {
   HTML_PLAN_MAX_TOKENS,
+  HTML_FREEFORM_MAX_TOKENS,
   buildHtmlArtifactSystemParts,
   defaultThemeForArchetype,
   htmlPlanRequest,
@@ -40,9 +41,10 @@ import {
   mapHtmlRendererTheme,
 } from "../htmlArtifactPrompt";
 import { buildPresentationSystemParts } from "../presentationPlanPrompt";
-import { resolveCloudPresentationMode } from "../cloudPresentationMode";
+import { resolveCloudArtifactMode } from "../cloudPresentationMode";
 import {
   parsePresentationHtmlArtifactOutput,
+  looksLikeHtmlPageJsonPlan,
   looksLikePresentationJsonPlan,
 } from "../artifactHtmlOutput";
 import {
@@ -52,6 +54,17 @@ import {
   webSearchOptionsForArtifact,
 } from "../webSearchQuery";
 import { formulateArtifactWebQueries, mergeWebSearchResults } from "./webSearchToolLoop";
+import { MAX_ARTIFACT_HOST_QUERIES } from "./webSearchLimits";
+import { runCloudArtifactWebResearch } from "./cloudNativeToolLoop";
+import { useModelStore } from "../../stores/modelStore";
+import { StreamArtifactParser, looksLikeHtmlContent, stripPartialArtifactTags } from "../streamArtifactParser";
+import {
+  defaultArtifactFollowup,
+  defaultArtifactIntro,
+} from "../artifactChatCopy";
+import { saveStreamedArtifact } from "../streamArtifactSave";
+import { sanitizeCsvArtifactBody } from "../sanitizeCsvArtifact";
+import { createStreamChunkFlusher } from "../streamUiBatch";
 import {
   extractAmbientSearchQuery,
   selectAmbientResultsForInjection,
@@ -85,17 +98,49 @@ export async function handleArtifactGeneration(
     forceFileSearch?: boolean;
   }
 ): Promise<void> {
+  const preferredModeEarly = useCloudStore.getState().preferredMode;
+  const earlyUseCloud = willRouteToCloud({
+    containsFileContext: false,
+    userConfirmedCloudContext: preferredModeEarly === "cloud",
+  });
+  const earlyKind =
+    schemaId === "presentation_synthesis"
+      ? "presentation"
+      : schemaId === "spreadsheet_synthesis"
+        ? "spreadsheet"
+        : schemaId === "html_synthesis"
+          ? "html"
+          : null;
+  const earlyFreeform = Boolean(
+    earlyKind &&
+      earlyUseCloud &&
+      (() => {
+        const mode = resolveCloudArtifactMode({
+          useCloud: true,
+          kind: earlyKind,
+        });
+        return mode === "html" || mode === "csv";
+      })()
+  );
+
   ctx.updateSession(sid, (prev) => ({
     loading: true,
     artifactStage: "IntentLocked",
     artifactPath: null,
+    artifactPanelOpen: false,
+    artifactStreamActive: false,
+    streamingArtifactHtml: undefined,
+    streamingArtifactCsv: undefined,
+    streamingArtifactType: undefined,
+    streamingArtifactTitle: undefined,
     messages: [
       ...prev.messages,
       {
         role: "assistant",
-        content: `Generating artifact for: "${text}"`,
+        content: "",
         artifactStage: "IntentLocked",
         artifactPath: null,
+        ...(earlyFreeform ? { artifactUseSidePanel: true } : {}),
       }
     ]
   }));
@@ -114,11 +159,26 @@ export async function handleArtifactGeneration(
         .reverse()
         .find(({ m }) => m.role === "assistant" && m.artifactStage !== undefined)?.i;
       if (idx !== undefined && updated[idx]) {
+        const prevMsg = updated[idx]!;
+        // Never dump HTML / file paths into the chat bubble for side-panel artifacts.
+        let nextContent = prevMsg.content;
+        if (contentOverride !== undefined) {
+          const looksLikeDump =
+            /Generated artifact successfully/i.test(contentOverride) ||
+            /<!DOCTYPE\s+html|<html[\s>]/i.test(contentOverride) ||
+            contentOverride.includes("/tmp/nela_artifacts");
+          if (prevMsg.artifactUseSidePanel && looksLikeDump) {
+            // Keep existing short prose; chip carries the file affordance.
+            nextContent = prevMsg.content;
+          } else {
+            nextContent = contentOverride;
+          }
+        }
         updated[idx] = {
-          ...updated[idx],
+          ...prevMsg,
           artifactStage: stage,
           ...(path !== null ? { artifactPath: path } : {}),
-          ...(contentOverride !== undefined ? { content: contentOverride } : {}),
+          content: nextContent,
           ...(artifactWebSearchResult
             ? { webSearchResult: artifactWebSearchResult }
             : {}),
@@ -305,42 +365,79 @@ export async function handleArtifactGeneration(
           schemaId,
           contextWindowTokens
         );
-        useChatModeStore
-          .getState()
-          .setLiveToolStatus("Choosing web search queries…");
-        const queries = await formulateArtifactWebQueries(text, {
-          modelId: ctx.selectedModel || undefined,
-          maxQueries: 3,
-        });
         let merged = null as WebSearchResult | null;
-        // Cap total hits across queries so context stays within budget.
-        const perQuery = Math.max(
-          1,
-          Math.ceil(maxResults / Math.max(queries.length, 1))
-        );
-        for (const searchQuery of queries) {
-          if (!searchQuery.trim()) continue;
+
+        const intelligenceMode = useModelStore.getState().intelligenceMode;
+        const useCloudWebTools =
+          willRouteToCloud({
+            containsFileContext: false,
+            userConfirmedCloudContext: cloudConfirmed,
+          }) &&
+          (intelligenceMode === "smart" ||
+            intelligenceMode === "deep" ||
+            intelligenceMode === "auto");
+
+        if (useCloudWebTools) {
+          // Smart/Deep: OpenRouter model issues web_search tool calls with its own queries.
+          useChatModeStore
+            .getState()
+            .setLiveToolStatus("Cloud model choosing web searches…");
           try {
-            useChatModeStore
-              .getState()
-              .setLiveToolStatus(`Searching the web: ${searchQuery.slice(0, 80)}`);
-            const result = await Api.webSearch(
-              searchQuery,
-              perQuery,
-              fetchContent
+            merged = await runCloudArtifactWebResearch({
+              artifactRequest: text,
+              schemaId,
+              webDepth: fetchContent ? "full" : "snippets",
+              signal: ctrl.signal,
+              onStatus: (status) =>
+                useChatModeStore.getState().setLiveToolStatus(status),
+            });
+          } catch (cloudWebErr) {
+            console.warn(
+              "Cloud artifact web research failed; falling back to host queries:",
+              cloudWebErr
             );
-            merged = mergeWebSearchResults(merged, result);
-            if (merged) {
-              artifactWebSearchResult = merged;
-              // Attach sources to the artifact bubble as soon as we have hits.
-              updateArtifactMsg("CrunchingMetrics");
-            }
-          } catch (err) {
-            console.warn("Web search query failed:", searchQuery, err);
           }
         }
+
+        if (!merged) {
+          useChatModeStore
+            .getState()
+            .setLiveToolStatus("Choosing web search queries…");
+          const queries = await formulateArtifactWebQueries(text, {
+            modelId: ctx.selectedModel || undefined,
+            maxQueries: MAX_ARTIFACT_HOST_QUERIES,
+          });
+          const perQuery = Math.max(
+            1,
+            Math.ceil(maxResults / Math.max(queries.length, 1))
+          );
+          for (const searchQuery of queries) {
+            if (!searchQuery.trim()) continue;
+            try {
+              useChatModeStore
+                .getState()
+                .setLiveToolStatus(
+                  `Searching the web: ${searchQuery.slice(0, 80)}`
+                );
+              const result = await Api.webSearch(
+                searchQuery,
+                perQuery,
+                fetchContent
+              );
+              merged = mergeWebSearchResults(merged, result);
+              if (merged) {
+                artifactWebSearchResult = merged;
+                updateArtifactMsg("CrunchingMetrics");
+              }
+            } catch (err) {
+              console.warn("Web search query failed:", searchQuery, err);
+            }
+          }
+        }
+
         if (merged) {
           artifactWebSearchResult = merged;
+          updateArtifactMsg("CrunchingMetrics");
           if (
             schemaId === "spreadsheet_synthesis" &&
             merged.extracted_tables &&
@@ -501,16 +598,67 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
       containsFileContext,
       userConfirmedCloudContext: cloudConfirmed,
     });
-    // Free/fast models can't finish freeform HTML decks (truncate mid-CSS → blank page).
-    // Use structured JSON → NELA renderer for those; HTML freeform only when capable.
+    // Free/fast models can't finish freeform HTML (truncate mid-CSS → blank page).
+    // Use structured JSON → NELA renderer for those; freeform streaming for Smart/Deep.
+    const artifactKind =
+      schemaId === "presentation_synthesis"
+        ? "presentation"
+        : schemaId === "spreadsheet_synthesis"
+          ? "spreadsheet"
+          : schemaId === "html_synthesis"
+            ? "html"
+            : null;
+    const cloudArtifactMode = artifactKind
+      ? useCloud
+        ? resolveCloudArtifactMode({ useCloud: true, kind: artifactKind })
+        : "local"
+      : null;
     const cloudPresentationMode =
-      schemaId === "presentation_synthesis" && useCloud
-        ? resolveCloudPresentationMode({ useCloud: true })
-        : schemaId === "presentation_synthesis"
-          ? "local"
-          : null;
+      schemaId === "presentation_synthesis"
+        ? cloudArtifactMode === "csv"
+          ? "json"
+          : cloudArtifactMode
+        : null;
+    const cloudHtmlMode =
+      schemaId === "html_synthesis"
+        ? cloudArtifactMode === "csv"
+          ? "json"
+          : cloudArtifactMode
+        : null;
+    const cloudSpreadsheetMode =
+      schemaId === "spreadsheet_synthesis"
+        ? cloudArtifactMode === "html"
+          ? "csv"
+          : cloudArtifactMode === "csv" ||
+              cloudArtifactMode === "json" ||
+              cloudArtifactMode === "local"
+            ? cloudArtifactMode
+            : "local"
+        : null;
     const cloudPresentationFreeform = cloudPresentationMode === "html";
     const cloudPresentationJson = cloudPresentationMode === "json";
+    const cloudHtmlFreeform = cloudHtmlMode === "html";
+    const cloudSpreadsheetFreeform = cloudSpreadsheetMode === "csv";
+    const cloudAnyFreeform =
+      cloudPresentationFreeform || cloudHtmlFreeform || cloudSpreadsheetFreeform;
+
+    if (cloudAnyFreeform) {
+      ctx.updateSession(sid, (prev) => {
+        const updated = [...prev.messages];
+        const idx = updated
+          .map((m, i) => ({ m, i }))
+          .reverse()
+          .find(({ m }) => m.role === "assistant" && m.artifactStage !== undefined)?.i;
+        if (idx !== undefined && updated[idx]) {
+          updated[idx] = {
+            ...updated[idx]!,
+            artifactUseSidePanel: true,
+            content: "",
+          };
+        }
+        return { messages: updated };
+      });
+    }
 
     const slideCountInstruction = cloudPresentationFreeform
       ? slidePlan.explicit
@@ -529,9 +677,17 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
         ? buildHtmlArtifactSystemParts(htmlArchetype, {
             hasSourceData: htmlHasSourceData,
             hasImages: imagePool.length > 0,
+            cloudMode: cloudHtmlMode ?? "local",
           })
         : schemaId === "spreadsheet_synthesis"
-        ? buildSpreadsheetSystemParts(hasSourceData, rowPlan.count)
+        ? buildSpreadsheetSystemParts(hasSourceData, rowPlan.count, {
+            cloudMode:
+              cloudSpreadsheetMode === "csv"
+                ? "csv"
+                : cloudSpreadsheetMode === "json"
+                  ? "json"
+                  : "local",
+          })
         : schemaId === "presentation_synthesis"
         ? buildPresentationSystemParts({
             slideCountInstruction,
@@ -549,7 +705,7 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
 
     // Local / cloud-JSON decks use the theme-aware renderer.
     // Cloud HTML freeform invents its own design.
-    const themeSuffix = cloudPresentationFreeform
+    const themeSuffix = cloudAnyFreeform
       ? ""
       : ` Theme: "${themeHint}".`;
     const rowCountSuffix =
@@ -562,10 +718,10 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
       schemaId === "presentation_synthesis"
         ? cloudPresentationFreeform
           ? hasSourceDocument
-            ? `Write a complete HTML presentation deck for: "${text}". Use only real details from the ATTACHED SOURCE DOCUMENT. Output ONLY the HTML document. Put ALL slide body content BEFORE CSS.`
+            ? `Write a complete HTML presentation deck for: "${text}". Use only real details from the ATTACHED SOURCE DOCUMENT. Wrap in <nela-artifact type="text/html" title="...">. Put ALL slide body content BEFORE CSS.`
             : `Write a complete HTML presentation deck about: "${text}". ` +
               `Stay on this exact subject — do not pivot to worksheets, crafts, or unrelated products. ` +
-              `Put ALL slide body content BEFORE CSS. Output ONLY the HTML document.`
+              `Wrap in <nela-artifact type="text/html" title="...">. Put ALL slide body content BEFORE CSS.`
           : hasSourceDocument
             ? `Using the ATTACHED SOURCE DOCUMENT, create a ${slidePlan.count}-slide deck. User request: "${text}". Use only real details from the source — no placeholders.${themeSuffix}`
             : `Create a ${slidePlan.count}-slide JSON deck about: "${text}".` +
@@ -576,8 +732,17 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
                 ? ` Reply with ONLY a single JSON object starting with { and ending with }. No HTML, no markdown fences, no commentary.`
                 : "")
         : schemaId === "html_synthesis"
-        ? htmlPlanRequest(text, htmlArchetype, { hasSourceData: htmlHasSourceData })
-        : `Generate a plan for the user request: "${text}".${rowCountSuffix}`;
+        ? htmlPlanRequest(text, htmlArchetype, {
+            hasSourceData: htmlHasSourceData,
+            cloudMode: cloudHtmlMode ?? "local",
+          })
+        : schemaId === "spreadsheet_synthesis" && cloudSpreadsheetFreeform
+          ? `Create a spreadsheet as CSV for: "${text}".` +
+            (rowPlan.explicit && rowPlan.count
+              ? ` Include EXACTLY ${rowPlan.count} data rows.`
+              : "") +
+            ` Wrap it in <nela-artifact type="text/csv" title="...">...</nela-artifact>.`
+          : `Generate a plan for the user request: "${text}".${rowCountSuffix}`;
     const spreadsheetContext =
       schemaId === "html_synthesis" && spreadsheetData
         ? buildHtmlDataContext(spreadsheetData)
@@ -609,14 +774,18 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
                   (hasSourceDocument ? 600 : 0)
               )
         : schemaId === "html_synthesis"
-        ? HTML_PLAN_MAX_TOKENS
+        ? cloudHtmlFreeform
+          ? HTML_FREEFORM_MAX_TOKENS
+          : HTML_PLAN_MAX_TOKENS
         : schemaId === "spreadsheet_synthesis"
-        ? spreadsheetPlanMaxTokens(hasSourceData, ambientFileContent, rowPlan.count)
+        ? cloudSpreadsheetFreeform
+          ? Math.min(12_000, Math.max(4096, 800 + (rowPlan.count ?? 20) * 40))
+          : spreadsheetPlanMaxTokens(hasSourceData, ambientFileContent, rowPlan.count)
         : 500;
 
-    // Cloud presentation must not be crushed by local model context sizes.
+    // Cloud freeform / JSON must not be crushed by local model context sizes.
     const promptContextWindowTokens =
-      cloudPresentationFreeform || cloudPresentationJson
+      cloudAnyFreeform || cloudPresentationJson
         ? Math.max(contextWindowTokens, 128_000)
         : contextWindowTokens;
 
@@ -629,19 +798,23 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
     });
 
     const planMaxTokens =
-      cloudPresentationFreeform || cloudPresentationJson
+      cloudAnyFreeform || cloudPresentationJson
         ? Math.max(fitted.maxOutputTokens, desiredPlanMaxTokens)
         : fitted.maxOutputTokens;
     const planTemperature =
       schemaId === "html_synthesis"
-        ? 0.4
+        ? cloudHtmlFreeform
+          ? 0.55
+          : 0.4
         : schemaId === "presentation_synthesis"
           ? cloudPresentationFreeform
             ? 0.55
             : cloudPresentationJson
               ? 0.4
               : 0.35
-          : 0.1;
+          : schemaId === "spreadsheet_synthesis" && cloudSpreadsheetFreeform
+            ? 0.3
+            : 0.1;
 
     let planJson = "";
     const generationOptions = ctx.getChatGenerationOptions(ctx.selectedModel);
@@ -779,13 +952,113 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
         .setLiveToolStatus(
           cloudPresentationFreeform
             ? "Writing presentation HTML…"
-            : schemaId === "presentation_synthesis"
-              ? "Writing presentation plan…"
-              : "Writing artifact plan…"
+            : cloudHtmlFreeform
+              ? "Writing webpage HTML…"
+              : cloudSpreadsheetFreeform
+                ? "Writing spreadsheet CSV…"
+                : schemaId === "presentation_synthesis"
+                  ? "Writing presentation plan…"
+                  : "Writing artifact plan…"
         );
     } else if (!options?.webEnabled) {
       useChatModeStore.getState().setLiveToolStatus(null);
     }
+
+    const streamParser = cloudAnyFreeform ? new StreamArtifactParser() : null;
+    let streamedArtifactBody = "";
+    let streamedArtifactType: "text/html" | "text/csv" =
+      cloudSpreadsheetFreeform ? "text/csv" : "text/html";
+    let streamedArtifactTitle = "";
+
+    const artifactUiFlusher = createStreamChunkFlusher(() => {
+      const displayBody =
+        streamedArtifactType === "text/csv"
+          ? sanitizeCsvArtifactBody(streamedArtifactBody)
+          : streamedArtifactBody;
+      ctx.updateSession(sid, (prev) => {
+        const updated = [...prev.messages];
+        const idx = updated
+          .map((m, i) => ({ m, i }))
+          .reverse()
+          .find(({ m }) => m.role === "assistant" && m.artifactStage !== undefined)?.i;
+        if (idx !== undefined && updated[idx]) {
+          const prevContent = updated[idx]!.content || "";
+          const cleaned = stripPartialArtifactTags(prevContent).trim();
+          updated[idx] = {
+            ...updated[idx]!,
+            content:
+              cleaned &&
+              !looksLikeHtmlContent(cleaned) &&
+              !/<nela-artifact\b/i.test(cleaned)
+                ? cleaned
+                : "",
+            artifactUseSidePanel: true,
+            artifactTitle: streamedArtifactTitle || updated[idx]!.artifactTitle,
+            streamingArtifactType: streamedArtifactType,
+          };
+        }
+        return {
+          artifactStreamActive: true,
+          artifactPanelOpen: true,
+          streamingArtifactType: streamedArtifactType,
+          streamingArtifactTitle: streamedArtifactTitle || undefined,
+          messages: updated,
+          ...(streamedArtifactType === "text/csv"
+            ? { streamingArtifactCsv: displayBody }
+            : { streamingArtifactHtml: displayBody }),
+        };
+      });
+    });
+
+    const applyStreamEmit = (emit: {
+      chatDelta: string;
+      artifactDelta: string;
+      meta?: { type: "text/html" | "text/csv"; title: string };
+      closed?: boolean;
+    }) => {
+      if (emit.chatDelta) planJson += emit.chatDelta;
+      if (emit.meta) {
+        streamedArtifactType = emit.meta.type;
+        streamedArtifactTitle = emit.meta.title;
+      }
+      if (emit.artifactDelta) {
+        streamedArtifactBody += emit.artifactDelta;
+        updateArtifactMsg("WritingCode");
+        // Batch panel updates to one paint/frame — avoids freezing the UI.
+        artifactUiFlusher.push("1");
+      } else if (emit.chatDelta.trim() && streamParser) {
+        const intro = stripPartialArtifactTags(
+          streamParser.chatBeforeArtifact
+        ).trim();
+        const followup = stripPartialArtifactTags(
+          streamParser.chatAfterArtifact
+        ).trim();
+        if (
+          (intro && !looksLikeHtmlContent(intro)) ||
+          (followup && !looksLikeHtmlContent(followup))
+        ) {
+          ctx.updateSession(sid, (prev) => {
+            const updated = [...prev.messages];
+            const idx = updated
+              .map((m, i) => ({ m, i }))
+              .reverse()
+              .find(({ m }) => m.role === "assistant" && m.artifactStage !== undefined)?.i;
+            if (idx !== undefined && updated[idx]) {
+              updated[idx] = {
+                ...updated[idx]!,
+                ...(intro && !looksLikeHtmlContent(intro)
+                  ? { content: intro }
+                  : {}),
+                ...(followup && !looksLikeHtmlContent(followup)
+                  ? { artifactFollowup: followup }
+                  : {}),
+              };
+            }
+            return { messages: updated };
+          });
+        }
+      }
+    };
 
     streamChatByMode({
       messages: planMessages,
@@ -797,9 +1070,9 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
       signal: ctrl.signal,
       disableThinking: true,
       disableLocalFallback: cloudConfirmed,
-      // Freeform HTML must not use json_object; cloud JSON / other schemas should.
+      // Freeform streaming must not use json_object; cloud JSON / other schemas should.
       response_format:
-        useCloud && !cloudPresentationFreeform
+        useCloud && !cloudAnyFreeform
           ? { type: "json_object" }
           : undefined,
       generationOptions: {
@@ -810,7 +1083,11 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
         grammar: useCloud ? undefined : grammar,
       },
       onChunk: (chunk) => {
-        planJson += chunk;
+        if (streamParser) {
+          applyStreamEmit(streamParser.push(chunk));
+        } else {
+          planJson += chunk;
+        }
       },
       onThinking: () => {},
       onFinish: () => {
@@ -818,44 +1095,138 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
           useChatModeStore.getState().setLiveToolStatus(null);
           updateArtifactMsg("WritingCode");
           try {
-            if (cloudPresentationFreeform) {
+            if (cloudAnyFreeform && streamParser) {
+              applyStreamEmit(streamParser.finalize());
+              artifactUiFlusher.flushNow();
+              const body =
+                streamedArtifactType === "text/csv"
+                  ? sanitizeCsvArtifactBody(
+                      streamedArtifactBody.trim() || planJson.trim()
+                    )
+                  : streamedArtifactBody.trim() || planJson.trim();
+              const parserIntro = stripPartialArtifactTags(
+                streamParser.chatBeforeArtifact || ""
+              ).trim();
+              const parserFollowup = stripPartialArtifactTags(
+                streamParser.chatAfterArtifact || ""
+              ).trim();
+              const safeIntro =
+                parserIntro && !looksLikeHtmlContent(parserIntro)
+                  ? parserIntro
+                  : "";
+              const safeFollowup =
+                parserFollowup && !looksLikeHtmlContent(parserFollowup)
+                  ? parserFollowup
+                  : "";
               try {
-                const parsed = parsePresentationHtmlArtifactOutput(planJson, text);
-                const result = await Api.generateHtml({
-                  title: parsed.title,
-                  archetype: "landing",
-                  sections: [],
-                  html: parsed.html,
-                  output_name: parsed.output_name,
+                const result = await saveStreamedArtifact({
+                  type: streamedArtifactType,
+                  rawBody: body,
+                  topic: text,
+                  title: streamedArtifactTitle || undefined,
+                  asPresentation: schemaId === "presentation_synthesis",
                 });
-                ctx.updateSession(sid, { loading: false });
+                const filename = result.path.split(/[/\\]/).pop() ?? "artifact";
+                const title =
+                  streamedArtifactTitle ||
+                  filename.replace(/\.(html?|xlsx|csv)$/i, "");
+                const asPresentation = schemaId === "presentation_synthesis";
+                const prose =
+                  safeIntro ||
+                  defaultArtifactIntro({
+                    title,
+                    type: streamedArtifactType,
+                    asPresentation,
+                  });
+                const followup =
+                  safeFollowup ||
+                  defaultArtifactFollowup({
+                    type: streamedArtifactType,
+                    asPresentation,
+                  });
+                // Panel must show the actual HTML/CSV body (may have lived in planJson).
+                if (!streamedArtifactBody.trim() && body) {
+                  streamedArtifactBody = body;
+                }
+                ctx.updateSession(sid, (prev) => {
+                  const updated = [...prev.messages];
+                  const idx = updated
+                    .map((m, i) => ({ m, i }))
+                    .reverse()
+                    .find(
+                      ({ m }) =>
+                        m.role === "assistant" && m.artifactStage !== undefined
+                    )?.i;
+                  if (idx !== undefined && updated[idx]) {
+                    updated[idx] = {
+                      ...updated[idx]!,
+                      content: prose,
+                      artifactFollowup: followup,
+                      artifactStage: "LivePreview",
+                      artifactPath: result.path,
+                      artifactUseSidePanel: true,
+                      artifactTitle: title,
+                      streamingArtifactType: streamedArtifactType,
+                    };
+                  }
+                  return {
+                    loading: false,
+                    artifactStreamActive: true,
+                    artifactPanelOpen: true,
+                    artifactStage: "LivePreview",
+                    artifactPath: result.path,
+                    streamingArtifactType: streamedArtifactType,
+                    streamingArtifactTitle: title,
+                    messages: updated,
+                    ...(streamedArtifactType === "text/csv"
+                      ? { streamingArtifactCsv: streamedArtifactBody }
+                      : { streamingArtifactHtml: streamedArtifactBody }),
+                  };
+                });
                 useChatModeStore.getState().setLiveToolStatus(null);
-                const filename = result.path.split(/[/\\]/).pop();
-                updateArtifactMsg(
-                  "LivePreview",
-                  result.path,
-                  `Generated artifact successfully: **${filename}**\nPath: \`${result.path}\``
-                );
                 return;
-              } catch (htmlErr) {
+              } catch (streamErr) {
                 const msg =
-                  htmlErr instanceof Error ? htmlErr.message : String(htmlErr);
-                // Model often still returns a JSON slide plan — render via template as fallback.
+                  streamErr instanceof Error
+                    ? streamErr.message
+                    : String(streamErr);
+                // Fall back to JSON plan parsers when the model ignored tags.
                 if (
                   msg === "MODEL_RETURNED_JSON_SLIDE_PLAN" ||
-                  looksLikePresentationJsonPlan(planJson)
+                  msg === "MODEL_RETURNED_JSON_HTML_PLAN" ||
+                  looksLikePresentationJsonPlan(body) ||
+                  looksLikeHtmlPageJsonPlan(body)
                 ) {
                   console.warn(
-                    "Cloud PPT returned JSON slides instead of HTML; using structured renderer fallback"
+                    "Freeform stream returned JSON plan; using structured renderer fallback"
                   );
-                  const planObj = parseArtifactPlanJson(planJson, {
-                    userPrompt: text,
-                    schemaId,
+                  // fall through to JSON path below with planJson/body
+                  planJson = body || planJson;
+                } else if (body.trim()) {
+                  // Keep preview in the side panel even when disk save fails.
+                  if (!streamedArtifactBody.trim()) {
+                    streamedArtifactBody = body;
+                  }
+                  console.error("Streamed artifact save failed:", streamErr);
+                  ctx.updateSession(sid, {
+                    loading: false,
+                    artifactStreamActive: true,
+                    artifactPanelOpen: true,
+                    ...(streamedArtifactType === "text/csv"
+                      ? { streamingArtifactCsv: streamedArtifactBody }
+                      : { streamingArtifactHtml: streamedArtifactBody }),
+                    streamingArtifactType: streamedArtifactType,
+                    streamingArtifactTitle: streamedArtifactTitle || undefined,
                   });
-                  await executePlanObj(planObj);
+                  updateArtifactMsg(
+                    "Error",
+                    null,
+                    `Preview is ready but saving failed: ${msg}`
+                  );
                   return;
+                } else {
+                  throw streamErr;
                 }
-                throw htmlErr;
               }
             }
 
@@ -966,10 +1337,18 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
             useChatModeStore.getState().setLiveToolStatus(null);
             ctx.updateSession(sid, { loading: false });
             const msg = execErr instanceof Error ? execErr.message : String(execErr);
+            const kindLabel =
+              schemaId === "presentation_synthesis"
+                ? "presentation"
+                : schemaId === "spreadsheet_synthesis"
+                  ? "spreadsheet"
+                  : schemaId === "html_synthesis"
+                    ? "webpage"
+                    : "artifact";
             updateArtifactMsg(
               "Error",
               null,
-              `Couldn't finish the presentation: ${msg}`
+              `Couldn't finish the ${kindLabel}: ${msg}`
             );
           }
         })();

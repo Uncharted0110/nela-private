@@ -2,7 +2,7 @@
  * OpenAI-style host-mediated web_search tool loop.
  *
  * When web is enabled the model may emit a JSON tool call; the host runs
- * Api.webSearch and continues until a final prose answer (max 2 tool rounds).
+ * Api.webSearch and continues until a final prose answer (up to 20 tool rounds).
  */
 
 import { Api } from "../../api";
@@ -15,9 +15,11 @@ import type {
 } from "../../types";
 import { extractWebSearchQuery } from "../webSearchQuery";
 import type { GenerationOptions } from "./types";
+import { MAX_WEB_SEARCH_TOOL_ROUNDS } from "./webSearchLimits";
 
 export const WEB_SEARCH_TOOL_SYSTEM = `You have a web_search tool for current, factual, or external information.
-When the user asks about news, prices, sports, docs, or anything that needs up-to-date facts, call the tool before answering.
+When the user asks about news, prices, sports, docs, trips, flights, or anything that needs up-to-date facts, call the tool before answering.
+You may call web_search multiple times (different queries) until you have enough coverage — up to ${MAX_WEB_SEARCH_TOOL_ROUNDS} searches.
 
 To search the web, reply with ONLY this JSON (no markdown, no other text):
 {"tool":"web_search","query":"concise search query"}
@@ -25,7 +27,7 @@ To search the web, reply with ONLY this JSON (no markdown, no other text):
 To answer without searching, reply with normal prose (not JSON).
 After you receive tool results, answer using those sources. Do not invent facts that are not in the results.`;
 
-const MAX_TOOL_ROUNDS = 2;
+const MAX_TOOL_ROUNDS = MAX_WEB_SEARCH_TOOL_ROUNDS;
 
 export interface WebSearchToolCall {
   tool: "web_search";
@@ -285,8 +287,8 @@ export async function runWebSearchToolLoop(
         {
           role: "user",
           content: canSearchAgain
-            ? "Using the tool results above, answer the user's question. " +
-              "If you still need different information, you may call web_search once more with a better query; otherwise answer in prose."
+            ? `Using the tool results above, continue. You have ${MAX_TOOL_ROUNDS - (round + 1)} search rounds left — ` +
+              "call web_search again with a NEW focused query if more facets are needed; otherwise answer in prose."
             : "Using the tool results above, answer the user's question in prose now. Do not call tools again.",
         },
       ];
@@ -339,8 +341,8 @@ export async function formulateArtifactWebQueries(
       content:
         "You choose web search queries for grounding an artifact. " +
         `Reply with ONLY JSON: {"queries":["query1",...]} with 1 to ${maxQueries} concise search queries. ` +
-        "Queries must research the USER'S TOPIC (events, facts, people, data). " +
-        "Never search for anything that is not aligning with the user's query in the artifact request. " +
+        "Queries must be short keyword searches about the USER'S TOPIC (places, brands, facts). " +
+        "Never paste the full artifact request or conversational phrasing as a query. " +
         "No markdown, no other text.",
     },
     {

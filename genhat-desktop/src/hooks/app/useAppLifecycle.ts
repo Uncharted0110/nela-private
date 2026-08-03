@@ -334,65 +334,75 @@ export function useAppLifecycle() {
     };
   }, [workspaceScope]);
 
-  // Persist sessions whenever they change
+  // Persist sessions whenever they change (debounced; paused while generating).
   useEffect(() => {
     if (!workspaceScope || !sessionStoreReady || sessions.length === 0) return;
     if (workspaceScope === "workspace:none") return;
 
-    const safeActive = sessions.some((s) => s.id === activeSessionId)
-      ? activeSessionId
-      : sessions[0].id;
+    const anyGenerating = sessions.some((s) => s.loading);
+    // Avoid freezing the UI by syncing huge streaming state to disk on every token.
+    const delayMs = anyGenerating ? 3000 : 500;
 
-    const storageKey = `${SESSION_STORAGE_PREFIX}${workspaceScope}`;
-    const fullLegacyState = buildWorkspaceFrontendState(safeActive);
+    const timer = window.setTimeout(() => {
+      const latest = useSessionStore.getState();
+      const safeActive = latest.sessions.some((s) => s.id === latest.activeSessionId)
+        ? latest.activeSessionId
+        : latest.sessions[0]?.id;
+      if (!safeActive) return;
 
-    if (!legacySessionStorageDisabledRef.current) {
-      try {
-        localStorage.setItem(storageKey, fullLegacyState);
-      } catch (err) {
-        const isQuotaError =
-          err instanceof DOMException &&
-          (err.name === "QuotaExceededError" || err.name === "NS_ERROR_DOM_QUOTA_REACHED");
+      const storageKey = `${SESSION_STORAGE_PREFIX}${workspaceScope}`;
+      const fullLegacyState = buildWorkspaceFrontendState(safeActive);
 
-        if (isQuotaError) {
-          promptClearSessionStorage();
-          try {
-            for (let i = localStorage.length - 1; i >= 0; i -= 1) {
-              const key = localStorage.key(i);
-              if (!key) continue;
-              if (key.startsWith(SESSION_STORAGE_PREFIX) && key !== storageKey) {
-                localStorage.removeItem(key);
+      if (!legacySessionStorageDisabledRef.current) {
+        try {
+          localStorage.setItem(storageKey, fullLegacyState);
+        } catch (err) {
+          const isQuotaError =
+            err instanceof DOMException &&
+            (err.name === "QuotaExceededError" || err.name === "NS_ERROR_DOM_QUOTA_REACHED");
+
+          if (isQuotaError) {
+            promptClearSessionStorage();
+            try {
+              for (let i = localStorage.length - 1; i >= 0; i -= 1) {
+                const key = localStorage.key(i);
+                if (!key) continue;
+                if (key.startsWith(SESSION_STORAGE_PREFIX) && key !== storageKey) {
+                  localStorage.removeItem(key);
+                }
+              }
+              localStorage.setItem(storageKey, fullLegacyState);
+            } catch {
+              try {
+                const modelStore = useModelStore.getState();
+                localStorage.setItem(
+                  storageKey,
+                  JSON.stringify({
+                    sessions: [],
+                    activeSessionId: safeActive,
+                    openSessionIds: [safeActive],
+                    selectedModel: modelStore.selectedModel,
+                    selectedTtsEngine: modelStore.selectedTtsEngine,
+                    selectedVisionModel: modelStore.selectedVisionModel,
+                  })
+                );
+              } catch (retryErr) {
+                legacySessionStorageDisabledRef.current = true;
+                console.warn("Disabling legacy localStorage session mirror due to quota:", retryErr);
               }
             }
-            localStorage.setItem(storageKey, fullLegacyState);
-          } catch {
-            try {
-              localStorage.setItem(
-                storageKey,
-                JSON.stringify({
-                  sessions: [],
-                  activeSessionId: safeActive,
-                  openSessionIds: [safeActive],
-                  selectedModel: selectedModel,
-                  selectedTtsEngine: selectedTtsEngine,
-                  selectedVisionModel: selectedVisionModel,
-                })
-              );
-            } catch (retryErr) {
-              legacySessionStorageDisabledRef.current = true;
-              console.warn("Disabling legacy localStorage session mirror due to quota:", retryErr);
-            }
+          } else {
+            console.warn("Failed to persist legacy localStorage session state:", err);
           }
-        } else {
-          console.warn("Failed to persist legacy localStorage session state:", err);
         }
       }
-    }
 
-    // Mirror into active workspace cache for .nela save/open flows.
-    void Api.saveWorkspaceFrontendState(fullLegacyState).catch((err) => {
-      console.warn("Failed to persist workspace frontend state to backend:", err);
-    });
+      void Api.saveWorkspaceFrontendState(fullLegacyState).catch((err) => {
+        console.warn("Failed to persist workspace frontend state to backend:", err);
+      });
+    }, delayMs);
+
+    return () => window.clearTimeout(timer);
   }, [
     workspaceScope,
     sessionStoreReady,

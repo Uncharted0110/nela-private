@@ -21,8 +21,9 @@ import {
 import { cloudToolsWebAndMcp, cloudToolsWebOnly } from "./cloudTools";
 import { mergeWebSearchResults, runWebSearchToolLoop } from "./webSearchToolLoop";
 import type { GenerationOptions } from "./types";
+import { MAX_WEB_SEARCH_TOOL_ROUNDS } from "./webSearchLimits";
 
-const MAX_TOOL_ROUNDS = 2;
+const MAX_TOOL_ROUNDS = MAX_WEB_SEARCH_TOOL_ROUNDS;
 
 export interface CloudNativeToolLoopOptions {
   messages: ChatContextMessage[];
@@ -400,6 +401,19 @@ export async function runCloudNativeToolLoop(
           },
         ];
       }
+
+      if (round + 1 < MAX_TOOL_ROUNDS) {
+        const remaining = MAX_TOOL_ROUNDS - (round + 1);
+        messages = [
+          ...messages,
+          {
+            role: "user",
+            content:
+              `You have ~${remaining} tool rounds left. ` +
+              "If you still need more web facts, call web_search again with a NEW query; otherwise answer in prose now.",
+          },
+        ];
+      }
     }
 
     // Final prose turn without tools
@@ -438,4 +452,175 @@ export async function runCloudNativeToolLoop(
   } finally {
     opts.onToolStatus?.(null);
   }
+}
+
+/**
+ * Cloud Smart/Deep artifact prelude: let the OpenRouter model call web_search
+ * with its own concise queries (not the raw user prompt).
+ * Returns merged search results for grounding; does not write the artifact.
+ */
+export async function runCloudArtifactWebResearch(opts: {
+  artifactRequest: string;
+  schemaId: string;
+  webDepth?: "snippets" | "full";
+  signal?: AbortSignal;
+  onStatus?: (status: string | null) => void;
+}): Promise<WebSearchResult | null> {
+  const webDepth = opts.webDepth ?? "full";
+  const kind =
+    opts.schemaId === "presentation_synthesis"
+      ? "presentation"
+      : opts.schemaId === "spreadsheet_synthesis"
+        ? "spreadsheet"
+        : opts.schemaId === "html_synthesis"
+          ? "webpage"
+          : "artifact";
+
+  const researchOpts: CloudNativeToolLoopOptions = {
+    messages: [
+      {
+        role: "system",
+        content:
+          `You are researching facts to ground a ${kind} the user will generate next. ` +
+          "Call web_search repeatedly with SHORT keyword queries covering DIFFERENT facets " +
+          "(e.g. flights, destinations, day activities, seasons, transport). " +
+          "Never paste the full user prompt as the query. Prefer depth=full when you need page text. " +
+          `You may search up to ${MAX_TOOL_ROUNDS} times. After enough research, reply with a one-line acknowledgement — do not write the artifact.`,
+      },
+      {
+        role: "user",
+        content: `Research for this ${kind} request:\n${opts.artifactRequest.slice(0, 1500)}`,
+      },
+    ],
+    webDepth,
+    includeMcpTools: false,
+    signal: opts.signal,
+    disableThinking: true,
+    generationOptions: {
+      maxTokens: 256,
+      temperature: 0.2,
+    },
+    onChunk: () => {
+      /* research-only; discard acknowledgement */
+    },
+    onThinking: () => {},
+    onToolStatus: opts.onStatus,
+  };
+
+  const tools = cloudToolsWebOnly();
+  let messages = toCloudMessages(researchOpts.messages);
+  messages = [
+    messages[0]!,
+    {
+      role: "system",
+      content:
+        "You MUST call the web_search tool at least once with a concise keyword query before finishing.",
+    },
+    ...messages.slice(1),
+  ];
+
+  let webSearchResult: WebSearchResult | null = null;
+
+  try {
+    for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+      const decision = await new Promise<{
+        content: string;
+        tool_calls?: CloudToolCall[];
+      }>((resolve, reject) => {
+        let content = "";
+        let settled = false;
+        const settle = (fn: () => void) => {
+          if (settled) return;
+          settled = true;
+          opts.signal?.removeEventListener("abort", onAbort);
+          fn();
+        };
+        const onAbort = () => {
+          settle(() => reject(new DOMException("Aborted", "AbortError")));
+        };
+        opts.signal?.addEventListener("abort", onAbort);
+        if (opts.signal?.aborted) {
+          onAbort();
+          return;
+        }
+
+        streamChatByMode({
+          messages,
+          intent: "quick_chat",
+          containsFileContext: false,
+          signal: opts.signal,
+          disableThinking: true,
+          disableLocalFallback: true,
+          tools,
+          // Force a tool call on the first round so the OR model picks the query.
+          tool_choice:
+            round === 0
+              ? { type: "function", function: { name: "web_search" } }
+              : "auto",
+          generationOptions: researchOpts.generationOptions,
+          onChunk: (chunk) => {
+            content += chunk;
+          },
+          onThinking: () => {},
+          onFinish: (meta) => {
+            settle(() =>
+              resolve({ content, tool_calls: meta?.tool_calls })
+            );
+          },
+          onError: (err) => settle(() => reject(err)),
+        });
+      });
+
+      if (!decision.tool_calls?.length) {
+        break;
+      }
+
+      messages = [
+        ...messages,
+        {
+          role: "assistant",
+          content: decision.content || null,
+          tool_calls: decision.tool_calls,
+        },
+      ];
+
+      for (const call of decision.tool_calls) {
+        const executed = await executeToolCall(
+          call,
+          researchOpts,
+          webSearchResult
+        );
+        webSearchResult = executed.webSearchResult;
+        messages = [
+          ...messages,
+          {
+            role: "tool",
+            tool_call_id: call.id,
+            name: call.function.name,
+            content: executed.content,
+          },
+        ];
+      }
+
+      // Encourage multi-facet research until the model stops or hits the round cap.
+      if (webSearchResult && round + 1 < MAX_TOOL_ROUNDS) {
+        const remaining = MAX_TOOL_ROUNDS - (round + 1);
+        messages = [
+          ...messages,
+          {
+            role: "user",
+            content:
+              `You have ~${remaining} search rounds left. ` +
+              "If important facets are still missing (flights, dates, places, hours, prices, nature spots, transfers), " +
+              "call web_search again with a NEW focused query. " +
+              "Otherwise reply briefly that research is done.",
+          },
+        ];
+      }
+    }
+  } finally {
+    opts.onStatus?.(null);
+  }
+
+  return webSearchResult;
 }

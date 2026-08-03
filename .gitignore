@@ -6,6 +6,7 @@ models/
 build/
 dist/
 .kittify/
+scripts/
 
 # Backend build and dist directories, models, and TTS inference data
 The-Bare/build/
@@ -20,6 +21,8 @@ genhat-desktop/node_modules/
 genhat-desktop/src-tauri/node_modules/
 genhat-desktop/.agents/
 genhat-desktop/.neon
+!genhat-desktop/scripts/
+!genhat-desktop/scripts/**
 genhat-desktop/skills-lock.json
 The-Bare/TTS-inference/--collect-data
 The-Bare/TTS-inference/--hidden-import
@@ -40,7 +43,6 @@ workspace/
 # Script results
 results.zip
 RESEARCH_PAPER_PLAN.md
-scripts/
 classifier/
 datasets/
 

@@ -74,6 +74,12 @@ export async function executeHandleSend(
     streamingContent: "",
     audioOutputs: prev.audioOutputs ?? [],
     cancelled: false,
+    artifactStreamActive: false,
+    artifactPanelOpen: false,
+    streamingArtifactHtml: undefined,
+    streamingArtifactCsv: undefined,
+    streamingArtifactType: undefined,
+    streamingArtifactTitle: undefined,
     ...titlePatch,
   }));
 

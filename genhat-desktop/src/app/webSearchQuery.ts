@@ -2,7 +2,15 @@
  * Build a clean web search query from user input (strips slash commands, etc.).
  */
 
+import { ARTIFACT_WEB_MAX_RESULTS } from "./send/webSearchLimits";
+
 const SLASH_PREFIX = /^\/[a-zA-Z][a-zA-Z0-9_-]*\s*/;
+const LEAD_IN =
+  /^(?:can you|could you|would you|please|hey|hi|hello)[,!]?\s+/i;
+const GENERATE_LEAD =
+  /^(?:generate|create|make|build|write|design|draft)\s+(?:a|an|the|me\s+a|me\s+an)?\s*/i;
+const TRAILING_CHATTER =
+  /\s*(?:let me know if you want(?:\s+any)?\s+more details|any more details|thanks|thank you)[.!]?\s*$/i;
 
 /** Remove leading slash commands like `/web /excel` from the search query. */
 export function extractWebSearchQuery(text: string): string {
@@ -10,7 +18,18 @@ export function extractWebSearchQuery(text: string): string {
   while (SLASH_PREFIX.test(q)) {
     q = q.replace(SLASH_PREFIX, "").trim();
   }
-  return q.slice(0, 150);
+  q = q.replace(LEAD_IN, "").replace(GENERATE_LEAD, "").replace(TRAILING_CHATTER, "").trim();
+  // Prefer the subject after "about …" when present (common artifact phrasing).
+  const about = q.match(/\babout\s+(.+?)(?:\s*[?.!]|$)/i);
+  if (about?.[1]?.trim()) {
+    q = about[1].trim();
+  }
+  // Drop leftover "webpage" / "presentation" framing words.
+  q = q
+    .replace(/\b(?:a|an|the)\s+(?:webpage|web page|website|page|presentation|deck|spreadsheet)\s+/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return q.slice(0, 120);
 }
 
 /** Prefer full-page fetch when web is combined with artifact generation. */
@@ -22,21 +41,24 @@ export function webSearchOptionsForArtifact(
   maxResults: number;
 } {
   const smallCtx = contextWindowTokens <= 4096;
+  const maxResults = smallCtx ? 3 : ARTIFACT_WEB_MAX_RESULTS;
 
-  if (schemaId === "spreadsheet_synthesis") {
-    return { fetchContent: true, maxResults: smallCtx ? 2 : 3 };
+  if (
+    schemaId === "spreadsheet_synthesis" ||
+    schemaId === "presentation_synthesis" ||
+    schemaId === "html_synthesis"
+  ) {
+    return { fetchContent: true, maxResults };
   }
-  if (schemaId === "presentation_synthesis") {
-    return { fetchContent: true, maxResults: smallCtx ? 2 : 3 };
-  }
-  return { fetchContent: true, maxResults: smallCtx ? 2 : 3 };
+  return { fetchContent: true, maxResults };
 }
 
 /** Max chars to keep from web formatted context for artifact plans. */
 export function webContextCharLimit(contextWindowTokens: number): number {
-  if (contextWindowTokens <= 4096) return 3500;
-  if (contextWindowTokens <= 8192) return 7000;
-  return 12000;
+  if (contextWindowTokens <= 4096) return 4500;
+  if (contextWindowTokens <= 8192) return 10000;
+  // Cloud / large-context models can absorb multi-facet research.
+  return 28000;
 }
 
 /** Strict grounding for spreadsheets / numeric artifacts. */

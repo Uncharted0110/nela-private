@@ -145,6 +145,7 @@ fn main() {
                 .unwrap_or_else(|_| std::path::PathBuf::from(".genhat_data"));
             let llama_runtime_dir = app_data_dir.join("llama-runtime");
             app_lib::paths::init_llama_runtime_root(llama_runtime_dir.clone());
+            app_lib::paths::init_artifacts_root(app_data_dir.join("artifacts"));
 
             let llama_runtime_for_update = llama_runtime_dir.clone();
             tauri::async_runtime::spawn(async move {

@@ -121,11 +121,13 @@ export function lightRepairPresentationHtml(
   let out = html.trim();
   if (!out) return out;
 
-  // Model returned a fragment (slides/divs) without a document shell.
+  // Model returned a fragment (slides/divs/headings) without a document shell.
   const hasBody = /<body[\s>]/i.test(out);
   const hasHtml = /<html[\s>]/i.test(out);
   const hasFragment =
-    /<(?:div|section|main|article|header|style|script)[\s>]/i.test(out);
+    /<(?:div|section|main|article|header|style|script|head|h[1-6]|p|ul|ol|table|nav|footer)[\s>]/i.test(
+      out
+    );
 
   if (!hasBody && !hasHtml && hasFragment) {
     const safeTitle = fallbackTitle
@@ -236,7 +238,11 @@ export function validateHtmlArtifact(html: string): void {
     );
   }
 
-  if (!/<body[\s>]/i.test(trimmed) && !/<main[\s>]/i.test(trimmed)) {
+  if (
+    !/<body[\s>]/i.test(trimmed) &&
+    !/<main[\s>]/i.test(trimmed) &&
+    !/<(?:div|section|article|header)[\s>]/i.test(trimmed)
+  ) {
     throw new Error(
       "Generated HTML is missing body content. Try again."
     );
@@ -301,14 +307,38 @@ export function isShellOnlyOrTruncatedPresentationHtml(html: string): boolean {
   return false;
 }
 
+/** True when the model returned a structured HTML section plan instead of freeform HTML. */
+export function looksLikeHtmlPageJsonPlan(raw: string): boolean {
+  const cleaned = stripModelPreamble(raw).trim();
+  if (!cleaned.includes("sections")) return false;
+  if (cleaned.startsWith("{") || cleaned.startsWith("[")) {
+    try {
+      const obj = JSON.parse(cleaned) as Record<string, unknown>;
+      return Array.isArray(obj.sections);
+    } catch {
+      /* fall through */
+    }
+  }
+  return /"sections"\s*:\s*\[/.test(cleaned) && /"archetype"\s*:/.test(cleaned);
+}
+
 export function parseHtmlArtifactOutput(
   raw: string,
   topic: string
-): { html: string; output_name: string } {
-  const html = extractRawHtmlFromModelOutput(raw);
+): { html: string; output_name: string; title: string } {
+  if (looksLikeHtmlPageJsonPlan(raw)) {
+    throw new Error("MODEL_RETURNED_JSON_HTML_PLAN");
+  }
+
+  const extracted = extractRawHtmlFromModelOutput(raw);
+  // Same shell repair as presentations — models often emit <head>/<h1> fragments
+  // without a <body>, which used to fail validation as "missing body content".
+  const html = lightRepairPresentationHtml(extracted, topic);
   validateHtmlArtifact(html);
 
-  let output_name = slugifyArtifactName(topic);
+  const fromTitle = extractTitleFromHtml(html);
+  const title = fromTitle || topic.trim().slice(0, 120) || "Generated Page";
+  let output_name = slugifyArtifactName(fromTitle || topic);
 
   if (raw.trim().startsWith("{") || raw.includes('"output_name"')) {
     try {
@@ -321,7 +351,7 @@ export function parseHtmlArtifactOutput(
     }
   }
 
-  return { html, output_name };
+  return { html, output_name, title };
 }
 
 /** Cloud freeform PPT: extract HTML, light-repair, validate as a deck. */

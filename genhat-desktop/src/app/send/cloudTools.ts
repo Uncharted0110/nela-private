@@ -10,7 +10,7 @@ export const WEB_SEARCH_TOOL: CloudToolDefinition = {
   function: {
     name: "web_search",
     description:
-      "Search the live public web. ALWAYS call this for current events, news, prices, sports scores, product details, documentation, or any factual question that benefits from up-to-date information. Do not answer those from memory alone when this tool is available. Pass a short, specific query.",
+      "Search the live public web. Call this for current events, news, prices, sports, flights, travel facts, documentation, or any question that needs up-to-date information. You may call it multiple times with different focused queries (up to ~20) until coverage is enough. Pass a short, specific keyword query — never the full user prompt.",
     parameters: {
       type: "object",
       properties: {

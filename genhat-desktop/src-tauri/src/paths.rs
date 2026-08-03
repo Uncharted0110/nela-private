@@ -22,10 +22,40 @@ use std::sync::OnceLock;
 const PRODUCT_NAME: &str = "NELA";
 
 static RUNTIME_LLAMA_ROOT: OnceLock<PathBuf> = OnceLock::new();
+static ARTIFACTS_ROOT: OnceLock<PathBuf> = OnceLock::new();
 
 /// Register the writable llama.cpp runtime directory (typically app data).
 pub fn init_llama_runtime_root(root: PathBuf) {
     let _ = RUNTIME_LLAMA_ROOT.set(root);
+}
+
+/// Register the durable artifacts directory (HTML / PPT / XLSX outputs).
+pub fn init_artifacts_root(root: PathBuf) {
+    let _ = std::fs::create_dir_all(&root);
+    let _ = ARTIFACTS_ROOT.set(root);
+}
+
+/// Durable directory for generated artifacts (survives app restarts).
+/// Prefer the path set at app startup; otherwise fall back to `~/.nela/artifacts`
+/// (not system temp — `/tmp` is wiped on reboot).
+pub fn artifacts_dir() -> PathBuf {
+    if let Some(root) = ARTIFACTS_ROOT.get() {
+        let _ = std::fs::create_dir_all(root);
+        return root.clone();
+    }
+    if let Ok(custom) = std::env::var("NELA_ARTIFACTS_DIR") {
+        let path = PathBuf::from(custom);
+        let _ = std::fs::create_dir_all(&path);
+        return path;
+    }
+    let fallback = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".nela")
+        .join("artifacts");
+    let _ = std::fs::create_dir_all(&fallback);
+    fallback
 }
 
 fn runtime_llama_root() -> Option<&'static PathBuf> {

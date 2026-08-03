@@ -6,6 +6,7 @@ import VoiceInputButton from "./VoiceInputButton";
 import SpeakButton from "./SpeakButton";
 import { Api } from "../api";
 import InlineArtifact from "./InlineArtifact";
+import ArtifactChip from "./ArtifactChip";
 import type { ChatMessage, MediaAsset, IngestionStatus, ChatMode, ChatSession, WebSearchResult } from "../types";
 import { COPY } from "../app/copy";
 import { friendlyError } from "../app/friendlyError";
@@ -17,7 +18,10 @@ import GenerationProgressLabel from "./GenerationProgressLabel";
 import type { GenerationProgressMode } from "../app/generationProgress";
 import { useCloudStore } from "../stores/cloudStore";
 import { useChatModeStore } from "../stores/chatModeStore";
+import { useSessionStore } from "../stores/sessionStore";
 import WebSearchDisclosure from "./WebSearchDisclosure";
+import type { PipelineStageKind } from "./ProgressSlate";
+import { scrubChatArtifactProtocol } from "../app/streamArtifactParser";
 import "./ModeBanner.css";
 import "./WebSearchDisclosure.css";
 
@@ -26,6 +30,20 @@ function chatModeToProgressMode(mode: string): GenerationProgressMode {
   if (mode === "rag") return "rag";
   if (mode === "mindmap") return "mindmap";
   return "chat";
+}
+
+function looksLikeArtifactDump(text: string): boolean {
+  // Scrub protocol leaks first — a single bad tag line must not hide a useful reply.
+  const scrubbed = scrubChatArtifactProtocol(text).trim();
+  if (!scrubbed) return true;
+  return (
+    /Generated artifact successfully/i.test(scrubbed) ||
+    /Created artifact:/i.test(scrubbed) ||
+    /<!DOCTYPE\s+html|<html[\s>]|<head[\s>]|<body[\s>]/i.test(scrubbed) ||
+    scrubbed.includes("/tmp/nela_artifacts") ||
+    // Partial stream crumbs ("<h", "<div…") must never render as the reply.
+    /^<\/?[a-zA-Z!]/.test(scrubbed)
+  );
 }
 
 const MODE_ICON_MAP: Record<ChatMode, React.ElementType> = {
@@ -314,10 +332,12 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
   streamingThinking = "",
   thinkingEnabled = false,
   onToggleThinking,
+  session,
 }) => {
   const { advanced } = useAdvancedMode();
   const preferredMode = useCloudStore((s) => s.preferredMode);
   const liveToolStatus = useChatModeStore((s) => s.liveToolStatus);
+  const updateSession = useSessionStore((s) => s.updateSession);
   const modeChatBorderClass =
     preferredMode !== "local" ? "mode-chat-border--cloud" : "mode-chat-border--private";
   const [inputObj, setInputObj] = useState("");
@@ -1056,34 +1076,155 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
                       <div className="text-[0.9rem] leading-relaxed text-txt glass rounded-2xl rounded-tl-sm py-3 px-4">
                         {advanced && msg.thinking && <ThinkingBox thinking={msg.thinking} />}
                         {renderInlineWebSources(msg.webSearchResult)}
-                        <MarkdownRenderer content={msg.content} />
-                        {mediaAssets[idx] && <MediaGallery assets={mediaAssets[idx]} />}
-                        {(msg.artifactPath || msg.artifactStage) && (
-                          <div className="mt-3">
-                            <InlineArtifact
-                              key={`artifact-${idx}-${msg.artifactPath ?? "pending"}`}
-                              artifactPath={msg.artifactPath}
-                              artifactStage={msg.artifactStage as any}
-                              errorMessage={msg.artifactStage === "Error" ? friendlyError(msg.content) : undefined}
-                            />
-                            {msg.artifactStage === "Error" && (
-                              <button
-                                type="button"
-                                className="mt-2 text-[0.78rem] text-neon hover:text-neon-hover underline-offset-2 hover:underline"
-                                onClick={() => {
-                                  for (let i = idx - 1; i >= 0; i--) {
-                                    const prior = messages[i];
-                                    if (prior?.role === "user" && prior.content.trim()) {
-                                      onSend(prior.content);
-                                      return;
-                                    }
-                                  }
-                                }}
-                              >
-                                {COPY.retry}
-                              </button>
+                        {msg.artifactUseSidePanel ? (
+                          <>
+                            {(() => {
+                              const stage = msg.artifactStage as PipelineStageKind | null | undefined;
+                              const generating =
+                                Boolean(stage) &&
+                                stage !== "LivePreview" &&
+                                stage !== "Error";
+                              const safeContent =
+                                msg.content?.trim() && !looksLikeArtifactDump(msg.content)
+                                  ? scrubChatArtifactProtocol(msg.content)
+                                  : "";
+                              const chipTitle =
+                                msg.artifactTitle ||
+                                session?.streamingArtifactTitle ||
+                                (msg.artifactPath
+                                  ? msg.artifactPath.split(/[/\\]/).pop()?.replace(/\.html?$/i, "")
+                                  : undefined) ||
+                                "Artifact";
+                              const chipType =
+                                msg.streamingArtifactType ||
+                                session?.streamingArtifactType ||
+                                "text/html";
+                              const panelOpen = Boolean(
+                                session &&
+                                  session.artifactPanelOpen !== false &&
+                                  (session.artifactStreamActive ||
+                                    session.streamingArtifactHtml ||
+                                    session.streamingArtifactCsv ||
+                                    Boolean(msg.artifactPath))
+                              );
+                              const showChip =
+                                Boolean(msg.artifactPath) ||
+                                Boolean(session?.streamingArtifactHtml) ||
+                                Boolean(session?.streamingArtifactCsv) ||
+                                stage === "LivePreview" ||
+                                stage === "WritingCode";
+
+                              return (
+                                <>
+                                  {generating && !safeContent && (
+                                    <div className="space-y-2">
+                                      {liveToolStatus && idx === messages.length - 1 && (
+                                        <div className="web-search-live" role="status">
+                                          <span className="web-search-live__pulse" aria-hidden />
+                                          <span>{liveToolStatus}</span>
+                                        </div>
+                                      )}
+                                      <GenerationProgressLabel
+                                        active
+                                        mode="artifact"
+                                        elapsedSec={
+                                          idx === messages.length - 1
+                                            ? generalElapsedTime
+                                            : 0
+                                        }
+                                        stage={stage}
+                                      />
+                                    </div>
+                                  )}
+                                  {safeContent ? (
+                                    <MarkdownRenderer content={safeContent} />
+                                  ) : null}
+                                  {msg.artifactStage === "Error" && (
+                                    <div className="mt-2 text-[0.85rem] text-red-300/90">
+                                      {friendlyError(msg.content)}
+                                      <button
+                                        type="button"
+                                        className="mt-2 block text-[0.78rem] text-neon hover:text-neon-hover underline-offset-2 hover:underline"
+                                        onClick={() => {
+                                          for (let i = idx - 1; i >= 0; i--) {
+                                            const prior = messages[i];
+                                            if (prior?.role === "user" && prior.content.trim()) {
+                                              onSend(prior.content);
+                                              return;
+                                            }
+                                          }
+                                        }}
+                                      >
+                                        {COPY.retry}
+                                      </button>
+                                    </div>
+                                  )}
+                                  {showChip && msg.artifactStage !== "Error" && (
+                                    <ArtifactChip
+                                      title={chipTitle}
+                                      type={chipType}
+                                      path={msg.artifactPath}
+                                      panelOpen={panelOpen}
+                                      loading={generating || !msg.artifactPath}
+                                      onTogglePanel={() => {
+                                        if (!session) return;
+                                        updateSession(session.id, {
+                                          artifactPanelOpen: !panelOpen,
+                                          // Ensure reopen still has a body reference.
+                                          artifactStreamActive: true,
+                                        });
+                                      }}
+                                    />
+                                  )}
+                                  {msg.artifactFollowup?.trim() &&
+                                    msg.artifactStage !== "Error" && (
+                                      <div className="mt-3">
+                                        <MarkdownRenderer
+                                          content={scrubChatArtifactProtocol(
+                                            msg.artifactFollowup
+                                          )}
+                                        />
+                                      </div>
+                                    )}
+                                </>
+                              );
+                            })()}
+                          </>
+                        ) : (
+                          <>
+                            <MarkdownRenderer content={scrubChatArtifactProtocol(msg.content)} />
+                            {mediaAssets[idx] && <MediaGallery assets={mediaAssets[idx]} />}
+                            {(msg.artifactPath || msg.artifactStage) && (
+                              <div className="mt-3">
+                                <InlineArtifact
+                                  key={`artifact-${idx}-${msg.artifactPath ?? "pending"}`}
+                                  artifactPath={msg.artifactPath}
+                                  artifactStage={msg.artifactStage as any}
+                                  errorMessage={msg.artifactStage === "Error" ? friendlyError(msg.content) : undefined}
+                                />
+                                {msg.artifactStage === "Error" && (
+                                  <button
+                                    type="button"
+                                    className="mt-2 text-[0.78rem] text-neon hover:text-neon-hover underline-offset-2 hover:underline"
+                                    onClick={() => {
+                                      for (let i = idx - 1; i >= 0; i--) {
+                                        const prior = messages[i];
+                                        if (prior?.role === "user" && prior.content.trim()) {
+                                          onSend(prior.content);
+                                          return;
+                                        }
+                                      }
+                                    }}
+                                  >
+                                    {COPY.retry}
+                                  </button>
+                                )}
+                              </div>
                             )}
-                          </div>
+                          </>
+                        )}
+                        {mediaAssets[idx] && msg.artifactUseSidePanel && (
+                          <MediaGallery assets={mediaAssets[idx]} />
                         )}
                         <div className="flex items-center gap-1 mt-2 pt-1.5">
                           <CopyMsgButton text={msg.content} label="Copy response" />
@@ -1118,7 +1259,13 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
           );
         })}
 
-        {isLoading && !messages.some(m => m.artifactStage && m.artifactStage !== "LivePreview" && m.artifactStage !== "Error") && (
+        {isLoading &&
+          !messages.some(
+            (m) =>
+              m.artifactStage &&
+              m.artifactStage !== "LivePreview" &&
+              m.artifactStage !== "Error"
+          ) && (
           <div className="flex gap-3 mb-5 max-w-3xl mx-auto">
             <img
               src="/logo-dark.png"
@@ -1141,13 +1288,20 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
                   <pre className="whitespace-pre-wrap font-mono">{streamingThinking}</pre>
                 </div>
               )}
-              {streamingContent ? (
-                <MarkdownRenderer content={streamingContent} streaming />
+              {streamingContent && !looksLikeArtifactDump(streamingContent) ? (
+                <MarkdownRenderer
+                  content={scrubChatArtifactProtocol(streamingContent)}
+                  streaming
+                />
               ) : !advanced || !streamingThinking ? (
-                !liveToolStatus ? (
+                !liveToolStatus || looksLikeArtifactDump(streamingContent) ? (
                   <GenerationProgressLabel
                     active
-                    mode={chatModeToProgressMode(chatMode)}
+                    mode={
+                      session?.artifactStreamActive
+                        ? "artifact"
+                        : chatModeToProgressMode(chatMode)
+                    }
                     elapsedSec={generalElapsedTime}
                   />
                 ) : null

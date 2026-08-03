@@ -120,10 +120,56 @@ export type SpreadsheetSystemParts = {
   dynamic: string;
 };
 
+export type CloudSpreadsheetMode = "csv" | "json" | "local";
+
+/** Cloud Smart/Deep: stream CSV inside a nela-artifact tag (no JSON ops plan). */
+export const SPREADSHEET_CLOUD_CSV_STATIC = `You generate spreadsheet data as CSV wrapped in a NELA artifact tag.
+
+OUTPUT FORMAT (mandatory):
+1. BEFORE the tag: 2–4 sentences explaining the sheet (plain text ONLY — never write the words "nela-artifact" outside the real tag).
+2. Then EXACTLY this opening tag (angle brackets required):
+   <nela-artifact type="text/csv" title="Short Sheet Title">
+3. Emit CSV only: first line = header row, following lines = data rows.
+4. Close with </nela-artifact>.
+5. AFTER the tag: 2–4 sentences summarizing columns, row coverage, and caveats.
+
+NEVER write fake tags like **nela-artifact type="text/csv"** or nela-artifact without < >.
+
+CSV RULES:
+- Use a real header row with clear column names.
+- Include enough realistic data rows to fulfill the request (prefer ≥8 when listing items).
+- Escape fields that contain commas by wrapping in double quotes.
+- Do NOT return JSON ops plans (no WRITE_DATA, no {"ops":...}).
+- Do NOT use markdown fences.
+- When web excerpts are provided, treat them as source of truth — do not invent numbers not present.
+- Stay on the USER'S TOPIC.
+- TRAVEL / TRIP / LOGISTICS sheets (only when the user asked for a spreadsheet): prioritize in-country movement. Prefer columns like:
+  Day, From, To, Mode (rental car / train / bus / taxi / walk), Operator or company, Duration, Distance, Est. cost, Booking notes, Source URL.
+  Compare rental car vs trains/buses when relevant. Flights only as bookend rows unless the user asks for them.
+- LINKS: Put every source URL in its own column named "Source URL" (or "Link") as a bare https://… URL with no surrounding text.
+  Do not bury URLs inside Notes. Notes may say "see Source URL" but the clickable link must be the bare URL cell.
+  Example: ...,"Day hike to Kolsai","https://example.com/kolsai"
+`;
+
 export function buildSpreadsheetSystemParts(
   hasSourceData: boolean,
-  rowCount?: number | null
+  rowCount?: number | null,
+  options?: { cloudMode?: CloudSpreadsheetMode }
 ): SpreadsheetSystemParts {
+  if (options?.cloudMode === "csv") {
+    const rowRule =
+      rowCount && rowCount > 0
+        ? `Include EXACTLY ${rowCount} data rows (not counting the header).`
+        : "Include a substantial number of data rows for the topic.";
+    const dataRule = hasSourceData
+      ? "Source table/document context may be attached — derive columns and values from it; do not invent conflicting numbers."
+      : "No source table attached — invent plausible, topic-specific rows.";
+    return {
+      cacheable: SPREADSHEET_CLOUD_CSV_STATIC,
+      dynamic: [rowRule, dataRule].filter(Boolean).join("\n"),
+    };
+  }
+
   const dataRules = hasSourceData
     ? `- Source data is already attached. Do NOT use WRITE_DATA to duplicate it.
 - Use transform ops: SORT_ASC, SORT_DESC, FILTER_ROWS, SUM_COLUMN, COUNT_BY_GROUP, AVERAGE_BY_GROUP, ADD_COLUMN, PIVOT.

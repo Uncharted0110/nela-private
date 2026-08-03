@@ -1,0 +1,370 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import { X, FileCode, Table2, Presentation, Code2, Eye } from "lucide-react";
+import { prepareArtifactHtmlPreview } from "../app/artifactHtmlPreview";
+import { parseCSV } from "../app/send/csvParse";
+import { sanitizeCsvArtifactBody } from "../app/sanitizeCsvArtifact";
+import { Api } from "../api";
+import ExcelSheetGrid from "./ExcelSheetGrid";
+
+export interface ArtifactSidePanelProps {
+  active: boolean;
+  title?: string;
+  type?: "text/html" | "text/csv";
+  html?: string;
+  csv?: string;
+  /** Finished file path — panel can stay open after stream ends. */
+  savedPath?: string | null;
+  onClose: () => void;
+}
+
+function HtmlSourceStream({
+  html,
+  follow,
+}: {
+  html: string;
+  follow: boolean;
+}) {
+  const endRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!follow) return;
+    endRef.current?.scrollIntoView({ behavior: "auto", block: "end" });
+  }, [html, follow]);
+
+  if (!html.trim()) {
+    return (
+      <div className="p-4 text-sm text-txt-muted">Waiting for HTML…</div>
+    );
+  }
+
+  return (
+    <div className="h-full overflow-auto bg-void-800">
+      <pre className="m-0 p-3 text-[0.72rem] leading-relaxed font-mono text-txt whitespace-pre-wrap break-words">
+        {html}
+        {follow ? (
+          <span className="inline-block w-1.5 h-3.5 ml-0.5 align-middle bg-neon/80 animate-pulse" />
+        ) : null}
+      </pre>
+      <div ref={endRef} />
+    </div>
+  );
+}
+
+function CsvSourceStream({
+  csv,
+  follow,
+}: {
+  csv: string;
+  follow: boolean;
+}) {
+  const endRef = useRef<HTMLDivElement>(null);
+  const cleaned = sanitizeCsvArtifactBody(csv || "");
+  useEffect(() => {
+    if (!follow) return;
+    endRef.current?.scrollIntoView({ behavior: "auto", block: "end" });
+  }, [cleaned, follow]);
+
+  if (!cleaned.trim()) {
+    return (
+      <div className="p-4 text-sm text-txt-muted">Waiting for CSV…</div>
+    );
+  }
+
+  return (
+    <div className="h-full overflow-auto bg-void-800">
+      <pre className="m-0 p-3 text-[0.72rem] leading-relaxed font-mono text-txt whitespace-pre-wrap break-words">
+        {cleaned}
+        {follow ? (
+          <span className="inline-block w-1.5 h-3.5 ml-0.5 align-middle bg-neon/80 animate-pulse" />
+        ) : null}
+      </pre>
+      <div ref={endRef} />
+    </div>
+  );
+}
+
+export default function ArtifactSidePanel({
+  active,
+  title,
+  type = "text/html",
+  html,
+  csv,
+  savedPath,
+  onClose,
+}: ArtifactSidePanelProps) {
+  const streaming = !savedPath;
+  const [htmlView, setHtmlView] = useState<"code" | "preview">("code");
+  const [sheetView, setSheetView] = useState<"sheet" | "code">("sheet");
+  const [displayHtml, setDisplayHtml] = useState("");
+  const [hydratedHtml, setHydratedHtml] = useState("");
+  const [xlsxRows, setXlsxRows] = useState<string[][] | null>(null);
+  const [xlsxSheetName, setXlsxSheetName] = useState("Sheet1");
+  const [xlsxLoading, setXlsxLoading] = useState(false);
+  const throttleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const latestHtml = useRef(html ?? "");
+  const paintedOnce = useRef(false);
+  const prevSaved = useRef(savedPath);
+
+  useEffect(() => {
+    if (!savedPath && prevSaved.current) {
+      setHtmlView("code");
+      setSheetView("sheet");
+      setXlsxRows(null);
+      setHydratedHtml("");
+    }
+    if (savedPath && !prevSaved.current) {
+      setHtmlView("preview");
+      setSheetView("sheet");
+    }
+    prevSaved.current = savedPath;
+  }, [savedPath]);
+
+  // Load HTML from durable disk path when session was restored without the body.
+  useEffect(() => {
+    if (type !== "text/html" || !savedPath || !/\.html?$/i.test(savedPath)) {
+      return;
+    }
+    if ((html && html.trim().length > 0) || hydratedHtml.trim()) return;
+    let cancelled = false;
+    Api.readFileText(savedPath)
+      .then((text) => {
+        if (cancelled || !text?.trim()) return;
+        setHydratedHtml(text);
+        setDisplayHtml(prepareArtifactHtmlPreview(text));
+        paintedOnce.current = true;
+      })
+      .catch((err) => {
+        console.warn("Failed to reload HTML artifact from disk:", err);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [savedPath, type, html, hydratedHtml]);
+
+  // Load real .xlsx grid after save / restore.
+  useEffect(() => {
+    if (!savedPath || type !== "text/csv") {
+      return;
+    }
+    if (!/\.xlsx?$/i.test(savedPath)) {
+      setXlsxRows(null);
+      return;
+    }
+    let cancelled = false;
+    setXlsxLoading(true);
+    Api.parseSpreadsheetData(savedPath, 200)
+      .then((data) => {
+        if (cancelled) return;
+        setXlsxRows(data.rows ?? []);
+        setXlsxSheetName(data.sheet_name || title || "Sheet1");
+      })
+      .catch((err) => {
+        console.warn("Failed to parse spreadsheet for panel:", err);
+        if (!cancelled) setXlsxRows(null);
+      })
+      .finally(() => {
+        if (!cancelled) setXlsxLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [savedPath, type, title]);
+
+  const effectiveHtml = (html && html.trim() ? html : hydratedHtml) || "";
+
+  useEffect(() => {
+    if (type !== "text/html") return;
+    latestHtml.current = effectiveHtml;
+    if (!latestHtml.current) {
+      if (!savedPath) {
+        paintedOnce.current = false;
+        setDisplayHtml("");
+      }
+      return;
+    }
+
+    const apply = () => {
+      setDisplayHtml(prepareArtifactHtmlPreview(latestHtml.current));
+      paintedOnce.current = true;
+    };
+
+    if (!paintedOnce.current || savedPath) {
+      if (throttleRef.current) {
+        clearTimeout(throttleRef.current);
+        throttleRef.current = null;
+      }
+      apply();
+      return;
+    }
+
+    if (throttleRef.current) return;
+    throttleRef.current = setTimeout(() => {
+      throttleRef.current = null;
+      apply();
+    }, 250);
+
+    return undefined;
+  }, [effectiveHtml, type, savedPath]);
+
+  useEffect(() => {
+    return () => {
+      if (throttleRef.current) {
+        clearTimeout(throttleRef.current);
+        throttleRef.current = null;
+      }
+    };
+  }, []);
+
+  const csvGridRows = useMemo(() => {
+    const cleaned = sanitizeCsvArtifactBody(csv || "");
+    const { headers, rows } = parseCSV(cleaned);
+    if (!headers.length) return [] as string[][];
+    return [headers, ...rows];
+  }, [csv]);
+
+  const sheetRows = xlsxRows && xlsxRows.length > 0 ? xlsxRows : csvGridRows;
+  const sheetName =
+    xlsxRows && xlsxRows.length > 0
+      ? xlsxSheetName
+      : (title?.trim() || "Sheet1").slice(0, 31);
+
+  if (!active) return null;
+
+  const Icon =
+    type === "text/csv"
+      ? Table2
+      : title?.toLowerCase().includes("deck") ||
+          title?.toLowerCase().includes("slide")
+        ? Presentation
+        : FileCode;
+
+  const showHtmlChrome = type === "text/html";
+  const showSheetChrome = type === "text/csv";
+  const effectiveHtmlView =
+    showHtmlChrome && streaming && htmlView === "preview" && !displayHtml
+      ? "code"
+      : htmlView;
+
+  return (
+    <aside
+      className="flex flex-col min-w-0 w-full md:w-[42%] md:max-w-[560px] h-full border-l border-glass-border bg-void-800 shrink-0"
+      aria-label="Artifact preview"
+    >
+      <header className="flex items-center gap-2 px-3 py-2.5 border-b border-glass-border shrink-0 bg-void-900">
+        <Icon size={16} className="text-neon shrink-0" />
+        <div className="min-w-0 flex-1">
+          <div className="text-[0.82rem] font-medium text-txt truncate">
+            {title?.trim() || (type === "text/csv" ? "Spreadsheet" : "Artifact")}
+          </div>
+          <div className="text-[0.68rem] text-txt-muted truncate">
+            {type === "text/csv"
+              ? sheetView === "code"
+                ? "CSV source"
+                : "Sheet preview"
+              : effectiveHtmlView === "code"
+                ? "HTML source"
+                : "HTML preview"}
+            {savedPath ? " · saved" : " · streaming"}
+          </div>
+        </div>
+        {showHtmlChrome && (
+          <div className="flex items-center rounded-lg border border-glass-border overflow-hidden shrink-0">
+            <button
+              type="button"
+              className={`px-2 py-1 text-[0.68rem] flex items-center gap-1 ${
+                effectiveHtmlView === "code"
+                  ? "bg-void-600 text-txt"
+                  : "text-txt-muted hover:text-txt"
+              }`}
+              onClick={() => setHtmlView("code")}
+              title="Show HTML source"
+            >
+              <Code2 size={12} />
+              Code
+            </button>
+            <button
+              type="button"
+              className={`px-2 py-1 text-[0.68rem] flex items-center gap-1 ${
+                effectiveHtmlView === "preview"
+                  ? "bg-void-600 text-txt"
+                  : "text-txt-muted hover:text-txt"
+              }`}
+              onClick={() => setHtmlView("preview")}
+              title="Show rendered preview"
+              disabled={!displayHtml && !effectiveHtml.trim()}
+            >
+              <Eye size={12} />
+              Preview
+            </button>
+          </div>
+        )}
+        {showSheetChrome && (
+          <div className="flex items-center rounded-lg border border-glass-border overflow-hidden shrink-0">
+            <button
+              type="button"
+              className={`px-2 py-1 text-[0.68rem] flex items-center gap-1 ${
+                sheetView === "sheet"
+                  ? "bg-void-600 text-txt"
+                  : "text-txt-muted hover:text-txt"
+              }`}
+              onClick={() => setSheetView("sheet")}
+              title="Excel-like sheet"
+            >
+              <Table2 size={12} />
+              Sheet
+            </button>
+            <button
+              type="button"
+              className={`px-2 py-1 text-[0.68rem] flex items-center gap-1 ${
+                sheetView === "code"
+                  ? "bg-void-600 text-txt"
+                  : "text-txt-muted hover:text-txt"
+              }`}
+              onClick={() => setSheetView("code")}
+              title="Show CSV source"
+            >
+              <Code2 size={12} />
+              Code
+            </button>
+          </div>
+        )}
+        <button
+          type="button"
+          className="p-1.5 rounded-lg text-txt-muted hover:text-txt hover:bg-void-600"
+          onClick={onClose}
+          aria-label="Close artifact panel"
+        >
+          <X size={16} />
+        </button>
+      </header>
+      <div className="flex-1 min-h-0 bg-void-900">
+        {type === "text/csv" ? (
+          sheetView === "code" ? (
+            <CsvSourceStream csv={csv ?? ""} follow={streaming} />
+          ) : xlsxLoading && !sheetRows.length ? (
+            <div className="p-4 text-sm text-txt-muted flex items-center gap-2">
+              <span className="w-3.5 h-3.5 border-2 border-neon border-t-transparent rounded-full animate-spin" />
+              Opening workbook…
+            </div>
+          ) : (
+            <ExcelSheetGrid
+              rows={sheetRows}
+              sheetName={sheetName}
+              streaming={streaming && !savedPath}
+            />
+          )
+        ) : effectiveHtmlView === "code" ? (
+          <HtmlSourceStream html={effectiveHtml} follow={streaming && !savedPath} />
+        ) : displayHtml ? (
+          <iframe
+            title={title || "Artifact preview"}
+            className="w-full h-full border-0 bg-white"
+            sandbox="allow-scripts allow-same-origin"
+            srcDoc={displayHtml}
+          />
+        ) : (
+          <div className="p-4 text-sm text-txt-muted">Waiting for HTML…</div>
+        )}
+      </div>
+    </aside>
+  );
+}

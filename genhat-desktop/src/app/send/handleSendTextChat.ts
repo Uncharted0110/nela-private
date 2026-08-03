@@ -21,6 +21,15 @@ import {
   loadAmbientFileBody,
 } from "../ambientFileContent";
 import { NELA_CLOUD_SYSTEM_PROMPT, NELA_SYSTEM_PROMPT } from "../nelaSystemPrompt";
+import { NELA_AUTO_ARTIFACT_CRITERIA } from "../autoArtifactPrompt";
+import { canAutoStreamArtifacts } from "../cloudPresentationMode";
+import {
+  defaultArtifactFollowup,
+  defaultArtifactIntro,
+} from "../artifactChatCopy";
+import { StreamArtifactParser, scrubChatArtifactProtocol, stripPartialArtifactTags } from "../streamArtifactParser";
+import { saveStreamedArtifact } from "../streamArtifactSave";
+import { sanitizeCsvArtifactBody } from "../sanitizeCsvArtifact";
 import { useFileIndexerStore } from "../../stores/fileIndexerStore";
 import { useCloudStore } from "../../stores/cloudStore";
 import { parseCSV } from "./csvParse";
@@ -220,8 +229,14 @@ export async function handleSendTextChat(
     preferredMode === "cloud" || preferredMode === "auto"
       ? NELA_CLOUD_SYSTEM_PROMPT
       : NELA_SYSTEM_PROMPT;
+  const autoArtifacts = canAutoStreamArtifacts();
   let apiMessages = [
-    { role: "system" as const, content: identityPrompt },
+    {
+      role: "system" as const,
+      content: autoArtifacts
+        ? `${identityPrompt}\n\n${NELA_AUTO_ARTIFACT_CRITERIA}`
+        : identityPrompt,
+    },
     ...toContextMessages(fullSessionMessages),
   ];
 
@@ -301,12 +316,71 @@ export async function handleSendTextChat(
 
   const chunkFlusher = createStreamChunkFlusher((batched) => {
     ctx.updateSession(sid, (prev) => ({
-      streamingContent: prev.streamingContent + batched,
+      streamingContent: scrubChatArtifactProtocol(prev.streamingContent + batched),
     }));
   });
 
-  const finishOk = (response: string, thinking: string, web: WebSearchResult | null) => {
+  const streamParser = autoArtifacts ? new StreamArtifactParser() : null;
+  let streamedArtifactBody = "";
+  let streamedArtifactType: "text/html" | "text/csv" = "text/html";
+  let streamedArtifactTitle = "";
+  let chatProse = "";
+  let chatFollowup = "";
+  let artifactClosed = false;
+
+  const artifactUiFlusher = createStreamChunkFlusher(() => {
+    const displayBody =
+      streamedArtifactType === "text/csv"
+        ? sanitizeCsvArtifactBody(streamedArtifactBody)
+        : streamedArtifactBody;
+    ctx.updateSession(sid, {
+      artifactStreamActive: true,
+      artifactPanelOpen: true,
+      streamingArtifactType: streamedArtifactType,
+      streamingArtifactTitle: streamedArtifactTitle || undefined,
+      ...(streamedArtifactType === "text/csv"
+        ? { streamingArtifactCsv: displayBody }
+        : { streamingArtifactHtml: displayBody }),
+    });
+  });
+
+  const applyAutoArtifactEmit = (emit: {
+    chatDelta: string;
+    artifactDelta: string;
+    meta?: { type: "text/html" | "text/csv"; title: string };
+    closed?: boolean;
+  }) => {
+    if (emit.chatDelta) {
+      if (artifactClosed || emit.closed) {
+        chatFollowup += emit.chatDelta;
+        // Follow-up is not shown in the streaming bubble above the chip yet;
+        // keep streamingContent as intro-only until finish.
+      } else {
+        chatProse += emit.chatDelta;
+        fullResponse += emit.chatDelta;
+        chunkFlusher.push(emit.chatDelta);
+      }
+    }
+    if (emit.closed) artifactClosed = true;
+    if (emit.meta) {
+      streamedArtifactType = emit.meta.type;
+      streamedArtifactTitle = emit.meta.title;
+    }
+    if (emit.artifactDelta) {
+      streamedArtifactBody += emit.artifactDelta;
+      artifactUiFlusher.push("1");
+    }
+  };
+  const finishOk = async (
+    response: string,
+    thinking: string,
+    web: WebSearchResult | null
+  ) => {
     chunkFlusher.flushNow();
+    if (streamParser) {
+      applyAutoArtifactEmit(streamParser.finalize());
+      artifactUiFlusher.flushNow();
+    }
     useChatModeStore.getState().setLiveToolStatus(null);
     if (ctx.generalIntervalRef.current) clearInterval(ctx.generalIntervalRef.current);
     const totalTime = Math.floor((Date.now() - chatStartTime) / 100) / 10;
@@ -320,33 +394,130 @@ export async function handleSendTextChat(
     ctx.setGeneralGenerationTime(totalTime);
     ctx.setStreamingThinking("");
 
-    const content = response.trim()
-      ? response
-      : undefined;
-
-    // Always clear streaming state; persist whatever we generated (including
-    // partial streams that only lived in streamingContent).
-    ctx.updateSession(sid, (prev) => {
-      const streamed = (prev.streamingContent || "").trim();
-      const finalContent = content || streamed;
-      if (!finalContent) {
-        return { streamingContent: "", loading: false };
+    let artifactPath: string | null = null;
+    let artifactStage: string | null = null;
+    const body =
+      streamedArtifactType === "text/csv"
+        ? sanitizeCsvArtifactBody(streamedArtifactBody.trim())
+        : streamedArtifactBody.trim();
+    const asPresentation =
+      /slide|deck|presentation/i.test(streamedArtifactTitle) ||
+      (Boolean(body) && /class=["']slide/i.test(body));
+    if (autoArtifacts && body) {
+      try {
+        const saved = await saveStreamedArtifact({
+          type: streamedArtifactType,
+          rawBody: body,
+          topic: text,
+          title: streamedArtifactTitle || undefined,
+          asPresentation,
+        });
+        artifactPath = saved.path;
+        artifactStage = "LivePreview";
+      } catch (saveErr) {
+        console.warn("Auto artifact save failed:", saveErr);
       }
+    }
+
+    const title =
+      streamedArtifactTitle ||
+      (artifactPath
+        ? artifactPath.split(/[/\\]/).pop()?.replace(/\.(html?|xlsx|csv)$/i, "")
+        : undefined) ||
+      "Artifact";
+
+    const introFromModel = scrubChatArtifactProtocol(
+      (streamParser?.chatBeforeArtifact || chatProse).trim() ||
+        stripPartialArtifactTags(response).trim() ||
+        ""
+    );
+    const followupFromModel = scrubChatArtifactProtocol(
+      (streamParser?.chatAfterArtifact || chatFollowup).trim()
+    );
+
+    ctx.updateSession(sid, (prev) => {
+      const streamed = scrubChatArtifactProtocol(
+        (prev.streamingContent || "").trim()
+      );
+      let intro =
+        introFromModel ||
+        (streamed &&
+        !/<!DOCTYPE\s+html|<html[\s>]/i.test(streamed) &&
+        !/\bnela-artifact\b/i.test(streamed)
+          ? streamed
+          : "");
+      intro = scrubChatArtifactProtocol(intro);
+
+      // Prefer real model prose; never leave an artifact with an empty bubble.
+      if (body && !intro) {
+        intro = defaultArtifactIntro({
+          title,
+          type: streamedArtifactType,
+          asPresentation,
+        });
+      }
+      let followup = followupFromModel;
+      if (body && !followup) {
+        followup = defaultArtifactFollowup({
+          type: streamedArtifactType,
+          asPresentation,
+        });
+      }
+
+      if (!intro && !followup && !artifactPath && !body) {
+        return {
+          streamingContent: "",
+          loading: false,
+          artifactStreamActive: Boolean(body),
+        };
+      }
+
+      const filename = artifactPath
+        ? artifactPath.split(/[/\\]/).pop()?.replace(/\.(html?|xlsx|csv)$/i, "")
+        : undefined;
       return {
         messages: [
           ...prev.messages,
           {
             role: "assistant" as const,
-            content: finalContent,
+            content: intro,
+            ...(followup ? { artifactFollowup: followup } : {}),
             thinking: thinking || undefined,
             webSearchResult: web ?? undefined,
             generateTime: totalTime,
             firstTokenTime:
               timeToFirstToken !== null ? timeToFirstToken : undefined,
+            ...(artifactPath || body
+              ? {
+                  artifactPath: artifactPath ?? undefined,
+                  artifactStage: (artifactStage ??
+                    (body ? "Error" : undefined)) as
+                    | "LivePreview"
+                    | "Error"
+                    | undefined,
+                  artifactUseSidePanel: true,
+                  artifactTitle: title || filename || "Artifact",
+                  streamingArtifactType: streamedArtifactType,
+                }
+              : {}),
           },
         ],
         streamingContent: "",
         loading: false,
+        artifactPath: artifactPath ?? prev.artifactPath,
+        artifactStage: artifactStage ?? prev.artifactStage,
+        artifactPanelOpen: Boolean(body) ? true : prev.artifactPanelOpen,
+        artifactStreamActive: Boolean(body),
+        ...(body && streamedArtifactType === "text/csv"
+          ? { streamingArtifactCsv: streamedArtifactBody }
+          : body
+            ? { streamingArtifactHtml: streamedArtifactBody }
+            : {
+                streamingArtifactHtml: undefined,
+                streamingArtifactCsv: undefined,
+              }),
+        streamingArtifactType: body ? streamedArtifactType : undefined,
+        streamingArtifactTitle: title || filename || undefined,
       };
     });
   };
@@ -365,6 +536,7 @@ export async function handleSendTextChat(
       ],
       streamingContent: "",
       loading: false,
+      artifactStreamActive: false,
     }));
   };
 
@@ -372,8 +544,12 @@ export async function handleSendTextChat(
     if (textFirstTokenTimeMs === null) {
       textFirstTokenTimeMs = Date.now();
     }
-    fullResponse += chunk;
-    chunkFlusher.push(chunk);
+    if (streamParser) {
+      applyAutoArtifactEmit(streamParser.push(chunk));
+    } else {
+      fullResponse += chunk;
+      chunkFlusher.push(chunk);
+    }
   };
 
   const onThinking = (thinkingChunk: string) => {
@@ -385,7 +561,7 @@ export async function handleSendTextChat(
     runCloudAwareToolLoop({
       messages: apiMessages,
       webDepth: ctx.webDepth,
-      includeMcpTools: true,
+      includeMcpTools: !autoArtifacts,
       containsFileContext: Boolean(
         ambientFileContext && ambientFileContext !== "FILE_SEARCH_NO_RESULTS"
       ),
@@ -423,7 +599,11 @@ export async function handleSendTextChat(
             artifactStage: "LivePreview",
           }));
         }
-        finishOk(fullResponse || result.content, fullThinking || result.thinking, webSearchResult);
+        void finishOk(
+          fullResponse || result.content,
+          fullThinking || result.thinking,
+          webSearchResult
+        );
       })
       .catch((err) => {
         if (err instanceof DOMException && err.name === "AbortError") return;
@@ -448,7 +628,9 @@ export async function handleSendTextChat(
     generationOptions,
     onChunk,
     onThinking,
-    onFinish: () => finishOk(fullResponse, fullThinking, null),
+    onFinish: () => {
+      void finishOk(fullResponse, fullThinking, null);
+    },
     onError: finishErr,
   });
 }

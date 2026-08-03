@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use rust_xlsxwriter::{Format, Workbook};
+use rust_xlsxwriter::{Color, Format, FormatBorder, Url, Workbook, Worksheet};
 
 use crate::grammar::schema::{SpreadsheetOp, SpreadsheetPlan};
 
@@ -14,14 +14,23 @@ use crate::grammar::schema::{SpreadsheetOp, SpreadsheetPlan};
 pub fn write_spreadsheet_plan(plan: SpreadsheetPlan) -> Result<(PathBuf, Option<String>), String> {
     // ── Resolve output path first ────────────────────────────────────────────
     let output_name = plan.output_name.as_deref().unwrap_or("nela_artifact");
-    let out_dir = std::env::temp_dir().join("nela_artifacts");
+    let out_dir = crate::paths::artifacts_dir();
     std::fs::create_dir_all(&out_dir).map_err(|e| format!("Create output dir: {e}"))?;
     let path = out_dir.join(format!("{output_name}.xlsx"));
 
     let mut workbook = Workbook::new();
     let worksheet = workbook.add_worksheet();
 
-    let header_fmt = Format::new().set_bold();
+    let header_fmt = Format::new()
+        .set_bold()
+        .set_font_color(Color::White)
+        .set_background_color(Color::RGB(0x2173_46)) // Excel-green header
+        .set_border(FormatBorder::Thin)
+        .set_border_color(Color::RGB(0x1B5E_38));
+
+    let cell_fmt = Format::new()
+        .set_border(FormatBorder::Thin)
+        .set_border_color(Color::RGB(0xD0D0_D0));
 
     // ── Write source data ────────────────────────────────────────────────────
     let headers = plan.headers.as_deref().unwrap_or(&[]);
@@ -44,16 +53,13 @@ pub fn write_spreadsheet_plan(plan: SpreadsheetPlan) -> Result<(PathBuf, Option<
     // Write data rows.
     for (row_idx, row) in source_rows.iter().enumerate() {
         for (col_idx, cell) in row.iter().enumerate() {
-            // Try numeric, fall back to string.
-            if let Ok(n) = cell.parse::<f64>() {
-                worksheet
-                    .write(row_idx as u32 + 1, col_idx as u16, n)
-                    .map_err(|e| format!("Write cell: {e}"))?;
-            } else {
-                worksheet
-                    .write(row_idx as u32 + 1, col_idx as u16, cell.as_str())
-                    .map_err(|e| format!("Write cell: {e}"))?;
-            }
+            write_smart_cell(
+                worksheet,
+                row_idx as u32 + 1,
+                col_idx as u16,
+                cell,
+                &cell_fmt,
+            )?;
         }
     }
 
@@ -150,15 +156,7 @@ pub fn write_spreadsheet_plan(plan: SpreadsheetPlan) -> Result<(PathBuf, Option<
                 // Write data rows
                 for row in wd_rows {
                     for (col_idx, cell) in row.iter().enumerate() {
-                        if let Ok(n) = cell.parse::<f64>() {
-                            worksheet
-                                .write(next_row, col_idx as u16, n)
-                                .map_err(|e| format!("Write WRITE_DATA cell: {e}"))?;
-                        } else {
-                            worksheet
-                                .write(next_row, col_idx as u16, cell.as_str())
-                                .map_err(|e| format!("Write WRITE_DATA cell: {e}"))?;
-                        }
+                        write_smart_cell(worksheet, next_row, col_idx as u16, cell, &cell_fmt)?;
                     }
                     next_row += 1;
                 }
@@ -190,4 +188,73 @@ fn excel_col_letter(idx: Option<usize>) -> String {
         n /= 26;
     }
     result
+}
+
+/// First http(s) URL in a cell, if any.
+fn extract_http_url(text: &str) -> Option<&str> {
+    let lower = text.to_ascii_lowercase();
+    let start = lower.find("https://").or_else(|| lower.find("http://"))?;
+    let rest = &text[start..];
+    let end = rest
+        .find(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | ')' | ']' | '>' | ',' | ';'))
+        .unwrap_or(rest.len());
+    let url = rest[..end].trim_end_matches(['.', ',', ';', ':', ')', ']']);
+    if url.len() > 8 {
+        Some(url)
+    } else {
+        None
+    }
+}
+
+fn is_bare_url(text: &str) -> bool {
+    let t = text.trim();
+    (t.starts_with("http://") || t.starts_with("https://"))
+        && !t.chars().any(|c| c.is_whitespace())
+}
+
+/// Write a cell as number, Excel hyperlink, or plain string.
+fn write_smart_cell(
+    worksheet: &mut Worksheet,
+    row: u32,
+    col: u16,
+    cell: &str,
+    cell_fmt: &Format,
+) -> Result<(), String> {
+    let trimmed = cell.trim();
+    if trimmed.is_empty() {
+        worksheet
+            .write_with_format(row, col, "", cell_fmt)
+            .map_err(|e| format!("Write empty cell: {e}"))?;
+        return Ok(());
+    }
+
+    // Prefer real Excel hyperlinks so Source URL columns are clickable.
+    if is_bare_url(trimmed) {
+        let link = Url::new(trimmed).set_text(trimmed.to_string());
+        worksheet
+            .write_url_with_format(row, col, link, cell_fmt)
+            .map_err(|e| format!("Write url cell: {e}"))?;
+        return Ok(());
+    }
+
+    if let Some(url) = extract_http_url(trimmed) {
+        // Keep human-readable notes as the visible text; attach the URL as a hyperlink.
+        let link = Url::new(url).set_text(trimmed.to_string());
+        if worksheet.write_url_with_format(row, col, link, cell_fmt).is_ok() {
+            return Ok(());
+        }
+        // Fall through to plain text if URL type is rejected.
+    }
+
+    if let Ok(n) = trimmed.parse::<f64>() {
+        worksheet
+            .write_with_format(row, col, n, cell_fmt)
+            .map_err(|e| format!("Write numeric cell: {e}"))?;
+        return Ok(());
+    }
+
+    worksheet
+        .write_with_format(row, col, trimmed, cell_fmt)
+        .map_err(|e| format!("Write text cell: {e}"))?;
+    Ok(())
 }

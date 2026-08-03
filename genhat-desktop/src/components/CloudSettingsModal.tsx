@@ -167,21 +167,43 @@ const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
 
                 {quota && (
                   <div className="cloud-quota">
-                    <div className="cloud-quota-row">
-                      <span>Included</span>
-                      <strong>${quota.includedUsd.toFixed(2)}</strong>
-                    </div>
-                    <div className="cloud-quota-row">
-                      <span>Used</span>
-                      <strong>${quota.usedUsd.toFixed(2)}</strong>
-                    </div>
-                    <div className="cloud-quota-row">
-                      <span>Remaining</span>
-                      <strong>${quota.remainingUsd.toFixed(2)}</strong>
-                    </div>
+                    {entitlement?.credits ? (
+                      <>
+                        <div className="cloud-quota-row">
+                          <span>Credits</span>
+                          <strong>{entitlement.credits.balance}</strong>
+                        </div>
+                        {entitlement.credits.monthlyGrant > 0 && (
+                          <div className="cloud-quota-row">
+                            <span>Monthly grant</span>
+                            <strong>{entitlement.credits.monthlyGrant}</strong>
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        <div className="cloud-quota-row">
+                          <span>Included</span>
+                          <strong>${quota.includedUsd.toFixed(2)}</strong>
+                        </div>
+                        <div className="cloud-quota-row">
+                          <span>Used</span>
+                          <strong>${quota.usedUsd.toFixed(2)}</strong>
+                        </div>
+                        <div className="cloud-quota-row">
+                          <span>Remaining</span>
+                          <strong>${quota.remainingUsd.toFixed(2)}</strong>
+                        </div>
+                      </>
+                    )}
                     {entitlement?.fastFree && (
                       <div className="cloud-quota-row">
-                        <span>Fast free today</span>
+                        <span>
+                          Fast free
+                          {entitlement.fastFree.windowHours
+                            ? ` (${entitlement.fastFree.windowHours}h)`
+                            : ""}
+                        </span>
                         <strong>
                           {entitlement.fastFree.remaining}/{entitlement.fastFree.limit}
                         </strong>
@@ -197,7 +219,8 @@ const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                 )}
 
                 <div className="cloud-billing-actions">
-                  {!isPremium && (
+                  {(!entitlement?.paidCloud ||
+                    (entitlement.credits && entitlement.credits.balance <= 0)) && (
                     <button
                       type="button"
                       className="cloud-upgrade-btn"
@@ -209,7 +232,7 @@ const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                       ) : (
                         <Crown size={16} />
                       )}
-                      Upgrade to Premium
+                      {isPremium ? "Buy credits" : "Upgrade or buy credits"}
                     </button>
                   )}
                   {isPremium && (

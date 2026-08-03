@@ -374,8 +374,13 @@ export function streamChatByMode(args: StreamArgs): void {
       return;
     }
     const msg = err instanceof Error ? err.message : String(err);
-    if (/upgrade to premium|UPGRADE_REQUIRED/i.test(msg)) {
-      useCloudStore.getState().openUpgradeModal();
+    if (/upgrade to premium|UPGRADE_REQUIRED|buy a credit pack/i.test(msg)) {
+      useCloudStore.getState().openUpgradeModal("upgrade");
+      args.onError(err);
+      return;
+    }
+    if (/credit balance exhausted|QUOTA_EXHAUSTED|buy a pack/i.test(msg)) {
+      useCloudStore.getState().openUpgradeModal("credits");
       args.onError(err);
       return;
     }

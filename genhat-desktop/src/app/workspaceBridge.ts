@@ -23,6 +23,7 @@ import {
   type WorkspaceMutationContext,
 } from "./workspaceActions";
 import type { SetStateAction } from "react";
+import { sessionForPersistence } from "./sessionUtils";
 
 function resolveSetStateAction<T>(prevValue: T, action: SetStateAction<T>): T {
   return typeof action === "function"
@@ -188,7 +189,7 @@ export function buildWorkspaceFrontendState(safeActive: string): string {
   const modelStore = useModelStore.getState();
   
   return JSON.stringify({
-    sessions: sessionStore.sessions,
+    sessions: sessionStore.sessions.map(sessionForPersistence),
     activeSessionId: safeActive,
     openSessionIds: sessionStore.openSessionIds,
     mindmapsBySession: chatModeStore.mindmapsBySession,

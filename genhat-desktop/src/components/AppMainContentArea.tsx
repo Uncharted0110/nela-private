@@ -10,6 +10,9 @@ import MindMapOverlay from "./MindMapOverlay";
 import PdfViewer from "./PdfViewer";
 import DocumentViewer from "./DocumentViewer";
 import PlaygroundMode from "./PlaygroundMode";
+import ArtifactSidePanel from "./ArtifactSidePanel";
+import { useSessionStore } from "../stores/sessionStore";
+
 
 interface ModeOption {
   mode: ChatMode;
@@ -128,6 +131,27 @@ export default function AppMainContentArea({
   generalElapsedTime = 0,
   generalGenerationTime = null,
 }: AppMainContentAreaProps) {
+  const updateSession = useSessionStore((s) => s.updateSession);
+  const hasArtifactBody = Boolean(
+    activeSession?.streamingArtifactHtml || activeSession?.streamingArtifactCsv
+  );
+  const showArtifactPanel = Boolean(
+    activeSession &&
+      activeSession.artifactPanelOpen === true &&
+      (activeSession.artifactStreamActive ||
+        hasArtifactBody ||
+        (activeSession.artifactStage === "LivePreview" &&
+          activeSession.artifactPath))
+  );
+
+  const closeArtifactPanel = () => {
+    if (!activeSession) return;
+    // Keep streamed HTML/CSV so reopening the chip restores the preview.
+    updateSession(activeSession.id, {
+      artifactPanelOpen: false,
+    });
+  };
+
   return (
     <>
       {chatMode === "playground" ? (
@@ -147,6 +171,7 @@ export default function AppMainContentArea({
         </div>
       ) : (
         <div className="flex-1 flex min-w-0 h-full relative overflow-hidden">
+          <div className="flex-1 flex min-w-0 h-full relative overflow-hidden">
           <ChatWindow
             key={activeSession.id}
             messages={activeSession.messages}
@@ -196,6 +221,26 @@ export default function AppMainContentArea({
             generalGenerating={generalGenerating}
             generalElapsedTime={generalElapsedTime}
             generalGenerationTime={generalGenerationTime}
+          />
+          </div>
+          <ArtifactSidePanel
+            active={showArtifactPanel}
+            title={activeSession.streamingArtifactTitle}
+            type={
+              activeSession.streamingArtifactType ??
+              (activeSession.artifactPath &&
+              /\.xlsx?$/i.test(activeSession.artifactPath)
+                ? "text/csv"
+                : "text/html")
+            }
+            html={activeSession.streamingArtifactHtml}
+            csv={activeSession.streamingArtifactCsv}
+            savedPath={
+              activeSession.artifactStage === "LivePreview"
+                ? activeSession.artifactPath
+                : null
+            }
+            onClose={closeArtifactPanel}
           />
         </div>
       )}

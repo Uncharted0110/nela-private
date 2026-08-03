@@ -1,8 +1,36 @@
 /**
  * Structured HTML page plans — the model fills content; Rust renders the page.
+ * Cloud Smart/Deep use freeform HTML instead of the section template.
  */
 
 export const HTML_PLAN_MAX_TOKENS = 4096;
+/** Freeform HTML needs room for a full page (CSS + content). */
+export const HTML_FREEFORM_MAX_TOKENS = 12_000;
+
+/**
+ * Cloud freeform HTML for capable models (Smart/Deep on paid tiers).
+ * Do NOT force HERO/GRID/STATS templates — the model designs the page.
+ */
+export const HTML_CLOUD_FREEFORM_STATIC = `You generate a complete, self-contained HTML webpage wrapped in a NELA artifact tag.
+
+OUTPUT FORMAT (mandatory):
+1. BEFORE the tag: 2–4 sentences in plain text explaining what page you are building (never write the words "nela-artifact" here).
+2. Then open a tag exactly like:
+   <nela-artifact type="text/html" title="Short Page Title">
+3. Emit a complete HTML document starting with <!DOCTYPE html>.
+4. Close with </nela-artifact>.
+5. AFTER the tag: 2–4 sentences summarizing what is on the page and inviting edits.
+
+CRITICAL CONTENT RULES:
+- Do NOT return JSON. Do NOT use a fixed HERO / GRID / STATS / FAQ section schema.
+- Invent your own layout, typography, color system, and structure that fit the topic.
+- Put meaningful page content in the body before long CSS when possible.
+- Keep CSS reasonably compact; prefer one cohesive design over many competing effects.
+- Content must be rich and specific to the USER'S TOPIC (real places, offerings, tone).
+- Use web research only as supporting facts — never let off-topic search results replace the subject.
+- Set <title> to a short accurate page title.
+- Self-contained: inline <style> (and minimal <script> only if needed). No external frameworks required.
+- No markdown fences around the HTML.`;
 
 export const HTML_RENDERER_THEMES = [
   "midnight",
@@ -192,10 +220,30 @@ export type HtmlArtifactSystemParts = {
   dynamic: string;
 };
 
+export type CloudHtmlMode = "html" | "json" | "local";
+
 export function buildHtmlArtifactSystemParts(
   archetype: string,
-  options?: { hasSourceData?: boolean; hasImages?: boolean }
+  options?: {
+    hasSourceData?: boolean;
+    hasImages?: boolean;
+    /** Smart/Deep cloud freeform vs structured JSON plan. */
+    cloudMode?: CloudHtmlMode;
+  }
 ): HtmlArtifactSystemParts {
+  if (options?.cloudMode === "html") {
+    const imageHint = options.hasImages
+      ? "Image URLs/catalog entries may appear in the user message — use real ones when they fit; otherwise omit images."
+      : "";
+    const dataHint = options.hasSourceData
+      ? "Source spreadsheet data may be attached — visualize real columns when building charts/tables; do not invent numbers."
+      : "";
+    return {
+      cacheable: HTML_CLOUD_FREEFORM_STATIC,
+      dynamic: [imageHint, dataHint].filter(Boolean).join("\n\n"),
+    };
+  }
+
   const spec = ARCHETYPE_SECTIONS[archetype] ?? ARCHETYPE_SECTIONS.landing;
   const kindsList = spec.kinds.join(", ");
   const suggestedTheme = defaultThemeForArchetype(archetype);
@@ -240,8 +288,17 @@ export function buildHtmlArtifactSystemPrompt(
 export function htmlPlanRequest(
   text: string,
   archetype: string,
-  options?: { hasSourceData?: boolean }
+  options?: { hasSourceData?: boolean; cloudMode?: CloudHtmlMode }
 ): string {
+  if (options?.cloudMode === "html") {
+    return (
+      `Write a complete HTML webpage for: "${text}". ` +
+      `Stay on this exact subject. ` +
+      `Wrap the document in <nela-artifact type="text/html" title="...">...</nela-artifact>. ` +
+      `Invent your own design — do not use a JSON section template.`
+    );
+  }
+
   const spec = ARCHETYPE_SECTIONS[archetype] ?? ARCHETYPE_SECTIONS.landing;
   if (archetype === "interactive") {
     return `Build an interactive tool page for: "${text}".

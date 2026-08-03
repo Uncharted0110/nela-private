@@ -45,11 +45,18 @@ Content rules:
 /**
  * Cloud freeform HTML for capable models (Smart/Deep on paid tiers).
  */
-export const PRESENTATION_CLOUD_HTML_STATIC = `You generate a complete, self-contained HTML slide presentation. Output ONLY the HTML document — no markdown fences, no JSON, no commentary before or after.
+export const PRESENTATION_CLOUD_HTML_STATIC = `You generate a complete, self-contained HTML slide presentation wrapped in a NELA artifact tag.
 
-CRITICAL OUTPUT RULES:
-- Start with <!DOCTYPE html> and include <html>, <head>, and <body>. Never omit <body>.
-- Do NOT return JSON (no {"slides":...}). HTML only.
+OUTPUT FORMAT (mandatory):
+1. BEFORE the tag: 2–4 sentences in plain text explaining the deck (never write the words "nela-artifact" here).
+2. Then:
+   <nela-artifact type="text/html" title="Short Deck Title">
+3. Emit a complete HTML document starting with <!DOCTYPE html>.
+4. Close with </nela-artifact>.
+5. AFTER the tag: 2–4 sentences summarizing slide coverage and inviting edits.
+
+CRITICAL CONTENT RULES:
+- Do NOT return JSON (no {"slides":...}). HTML only inside the artifact tag.
 - WRITE ORDER (mandatory to avoid blank decks): put the full <body> with ALL slide markup and text FIRST, then a compact <style>, then <script>. Never write a long stylesheet before slide content.
 - Keep CSS under ~80 lines. Prefer simple layouts over elaborate gradients.
 - Build a multi-slide deck with arrow-key / button navigation and a slide counter.
@@ -57,7 +64,8 @@ CRITICAL OUTPUT RULES:
 - Complete creative freedom on colors/fonts — but content first, polish second.
 - Content must be RICH and specific. Prefer 6–10 slides unless the user asked for a count.
 - Stay on the USER'S TOPIC. Ignore off-topic web results (worksheets, crafts, product listings).
-- Set <title> to a short accurate deck title.`;
+- Set <title> to a short accurate deck title.
+- No markdown fences around the HTML.`;
 
 export type PresentationSystemParts = {
   cacheable: string;
