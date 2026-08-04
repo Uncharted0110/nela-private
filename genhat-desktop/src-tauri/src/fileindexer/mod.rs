@@ -161,12 +161,22 @@ fn save_config(data_dir: &Path, cfg: &FileIndexerConfig) -> Result<(), String> {
 /// Install layout (preferred):
 ///   `{GENHAT_MODEL_PATH|INSTDIR/models}/fileindexer/models--Qdrant--all-MiniLM-L6-v2-onnx/`
 ///
+/// Installer may also write `%APPDATA%\…\fileindexer\model_path.txt`.
 /// Dev fallback: `C:\Users\assas\CODEBASES` if the model was dropped there for local testing.
 pub fn resolve_cache_dir(app_data_dir: &Path) -> PathBuf {
     if let Ok(val) = std::env::var("FILEINDEXER_CACHE_DIR") {
         let p = PathBuf::from(val);
         if p.is_dir() {
-            return p;
+            return normalize_cache_dir(&p);
+        }
+    }
+
+    // Installer-written path (POSTINSTALL).
+    let marker = app_data_dir.join("fileindexer").join("model_path.txt");
+    if let Ok(raw) = std::fs::read_to_string(&marker) {
+        let p = PathBuf::from(raw.trim());
+        if p.is_dir() {
+            return normalize_cache_dir(&p);
         }
     }
 
@@ -176,7 +186,7 @@ pub fn resolve_cache_dir(app_data_dir: &Path) -> PathBuf {
     let installed = models_root.join("fileindexer");
     if model_onnx_present(&installed) || installed.is_dir() {
         let _ = std::fs::create_dir_all(&installed);
-        return installed;
+        return normalize_cache_dir(&installed);
     }
 
     // Dev convenience: model dropped next to CODEBASES workspace.
@@ -188,12 +198,28 @@ pub fn resolve_cache_dir(app_data_dir: &Path) -> PathBuf {
     // Fresh install / first configure: create the canonical install-relative path.
     let _ = std::fs::create_dir_all(&installed);
     if installed.exists() {
-        return installed;
+        return normalize_cache_dir(&installed);
     }
 
     let local = app_data_dir.join("fileindexer").join("models");
     let _ = std::fs::create_dir_all(&local);
     local
+}
+
+/// If the zip extracted with an extra wrapper folder, use the child that holds the model.
+fn normalize_cache_dir(cache_dir: &Path) -> PathBuf {
+    if model_onnx_present(cache_dir) {
+        return cache_dir.to_path_buf();
+    }
+    if let Ok(rd) = std::fs::read_dir(cache_dir) {
+        for entry in rd.flatten() {
+            let p = entry.path();
+            if p.is_dir() && model_onnx_present(&p) {
+                return p;
+            }
+        }
+    }
+    cache_dir.to_path_buf()
 }
 
 fn model_dir(cache_dir: &Path) -> PathBuf {
@@ -439,6 +465,16 @@ fn spawn_sidecar(app: &AppHandle, state: &FileIndexerState) -> Result<(), String
         .map_err(|e| format!("app_data_dir: {e}"))?;
     let cache_dir = resolve_cache_dir(&app_data);
     if !model_onnx_present(&cache_dir) {
+        let mut guard = state.inner.lock().map_err(|e| e.to_string())?;
+        guard.status.setup_done = true;
+        guard.status.running = false;
+        guard.status.phase = "model_missing".into();
+        guard.status.message =
+            "Embedding model not installed — download it during install or place it under models\\fileindexer"
+                .into();
+        let status = guard.status.clone();
+        drop(guard);
+        let _ = app.emit("fileindexer:status", &status);
         return Err(format!(
             "Embedding model missing under {}. Expected {MODEL_DIR_NAME}/snapshots/*/model.onnx",
             cache_dir.display()
@@ -678,13 +714,40 @@ pub fn fileindexer_complete_setup(
 }
 
 #[tauri::command]
-pub fn fileindexer_get_status(state: State<'_, FileIndexerState>) -> Result<FileIndexerStatus, String> {
-    Ok(state
+pub fn fileindexer_get_status(
+    state: State<'_, FileIndexerState>,
+    app: AppHandle,
+) -> Result<FileIndexerStatus, String> {
+    let app_data = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("app_data_dir: {e}"))?;
+    let cache_dir = resolve_cache_dir(&app_data);
+    let mut status = state
         .inner
         .lock()
         .map_err(|e| e.to_string())?
         .status
-        .clone())
+        .clone();
+    if status.setup_done && !model_onnx_present(&cache_dir) {
+        // Don't clobber an in-flight error from a failed embed, but always surface
+        // missing model when the sidecar is not actively working.
+        let working = matches!(
+            status.phase.as_str(),
+            "scanning" | "embedding" | "loading_model" | "starting" | "configured"
+        );
+        if !working {
+            status.phase = "model_missing".into();
+            status.message =
+                "Embedding model not installed — download it during install or place it under models\\fileindexer"
+                    .into();
+            status.running = false;
+            if let Ok(mut g) = state.inner.lock() {
+                g.status = status.clone();
+            }
+        }
+    }
+    Ok(status)
 }
 
 #[tauri::command]

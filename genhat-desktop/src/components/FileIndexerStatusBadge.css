@@ -27,6 +27,11 @@
   color: #ff8f8f;
 }
 
+.fi-badge.missing {
+  border-color: rgba(255, 196, 86, 0.5);
+  color: #ffc456;
+}
+
 .fi-dot {
   width: 0.4rem;
   height: 0.4rem;
