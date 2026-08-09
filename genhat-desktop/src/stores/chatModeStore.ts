@@ -91,15 +91,9 @@ export const useChatModeStore = create<ChatModeState & ChatModeActions>((set) =>
   ragDocs: [],
   ragIngesting: false,
   enrichmentStatus: null,
-  // Match persisted preferred mode so Cloud sessions start with web search on.
-  webEnabled: (() => {
-    try {
-      const raw = localStorage.getItem("nela.cloud.preferredMode");
-      return raw === "cloud" || raw === "auto";
-    } catch {
-      return false;
-    }
-  })(),
+  // Match preferred mode: web search stays OFF until the user enables it.
+  // Searching only runs when the LLM calls web_search (never auto-forced).
+  webEnabled: false,
   fileIndexerEnabled: false,
   liveToolStatus: null,
   imagePath: null,

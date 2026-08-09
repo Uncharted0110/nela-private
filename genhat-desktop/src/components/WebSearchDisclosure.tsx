@@ -1,7 +1,12 @@
 import React, { useState } from "react";
-import { ChevronDown, Globe } from "lucide-react";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { ChevronDown, FileText, Globe } from "lucide-react";
+import { openPath, openUrl } from "@tauri-apps/plugin-opener";
+import { Api } from "../api";
 import type { WebSearchResult } from "../types";
+import {
+  fileUrlToPath,
+  isLocalFileHitUrl,
+} from "../app/send/fileSearchCitations";
 import "./WebSearchDisclosure.css";
 
 interface WebSearchDisclosureProps {
@@ -11,6 +16,7 @@ interface WebSearchDisclosureProps {
 }
 
 function hostOf(url: string): string {
+  if (isLocalFileHitUrl(url)) return "Local file";
   try {
     return new URL(url).hostname.replace(/^www\./, "");
   } catch {
@@ -18,10 +24,25 @@ function hostOf(url: string): string {
   }
 }
 
+async function openHit(url: string): Promise<void> {
+  if (isLocalFileHitUrl(url)) {
+    const path = fileUrlToPath(url);
+    try {
+      await openPath(path);
+    } catch (openErr) {
+      console.error("Failed to open local file:", openErr);
+      await Api.revealInExplorer(path).catch((err) =>
+        console.error("Failed to reveal local path:", err)
+      );
+    }
+    return;
+  }
+  await openUrl(url);
+}
+
 /**
- * Collapsible “Searched the web” line with shaded sources panel —
- * Gemini-style: favicon stack when collapsed, image strip + favicon
- * source cards when expanded.
+ * Collapsible sources line with shaded panel — web and/or local file hits
+ * from tool rounds (web_search + search_knowledge_base).
  */
 const WebSearchDisclosure: React.FC<WebSearchDisclosureProps> = ({
   result,
@@ -34,12 +55,22 @@ const WebSearchDisclosure: React.FC<WebSearchDisclosureProps> = ({
     result.queries?.filter((q) => q.trim()) ??
     (result.query ? [result.query] : []);
   const count = result.results.length;
-  const summary =
-    queries.length === 1
+  const localCount = result.results.filter((h) => isLocalFileHitUrl(h.url)).length;
+  const webCount = count - localCount;
+  const onlyLocal = localCount > 0 && webCount === 0;
+  const onlyWeb = webCount > 0 && localCount === 0;
+
+  const summary = onlyLocal
+    ? queries.length === 1
+      ? `Searched files for “${queries[0]}”`
+      : `Searched your files · ${count} source${count === 1 ? "" : "s"}`
+    : queries.length === 1
       ? `Searched “${queries[0]}”`
       : queries.length > 1
-        ? `Searched the web · ${queries.length} queries`
-        : `Searched the web · ${count} source${count === 1 ? "" : "s"}`;
+        ? `Searched · ${queries.length} queries`
+        : onlyWeb
+          ? `Searched the web · ${count} source${count === 1 ? "" : "s"}`
+          : `Sources · ${count}`;
 
   const favicons = result.results
     .map((h) => h.favicon)
@@ -47,6 +78,7 @@ const WebSearchDisclosure: React.FC<WebSearchDisclosureProps> = ({
     .slice(0, 5);
 
   const images = (result.images ?? []).slice(0, 8);
+  const SummaryIcon = onlyLocal ? FileText : Globe;
 
   return (
     <div className={`web-search-disclosure ${open ? "is-open" : ""}`}>
@@ -56,7 +88,7 @@ const WebSearchDisclosure: React.FC<WebSearchDisclosureProps> = ({
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
       >
-        <Globe size={13} strokeWidth={2} className="web-search-disclosure__icon" />
+        <SummaryIcon size={13} strokeWidth={2} className="web-search-disclosure__icon" />
         <span className="web-search-disclosure__label">{summary}</span>
         {favicons.length > 0 && (
           <span className="web-search-disclosure__favicons" aria-hidden>
@@ -118,50 +150,60 @@ const WebSearchDisclosure: React.FC<WebSearchDisclosureProps> = ({
             </ul>
           )}
           <ul className="web-search-disclosure__hits">
-            {result.results.map((hit, i) => (
-              <li key={`${hit.url}-${i}`}>
-                <button
-                  type="button"
-                  className="web-search-disclosure__hit"
-                  title={hit.url}
-                  onClick={() => {
-                    void openUrl(hit.url);
-                  }}
-                >
-                  <span className="web-search-disclosure__hit-head">
-                    {hit.favicon ? (
-                      <img
-                        className="web-search-disclosure__hit-favicon"
-                        src={hit.favicon}
-                        alt=""
-                        loading="lazy"
-                        onError={(e) => {
-                          (e.target as HTMLImageElement).style.visibility =
-                            "hidden";
-                        }}
-                      />
-                    ) : (
-                      <Globe
-                        size={12}
-                        strokeWidth={2}
-                        className="web-search-disclosure__hit-favicon-fallback"
-                      />
-                    )}
-                    <span className="web-search-disclosure__hit-title">
-                      {hit.title || hit.url}
+            {result.results.map((hit, i) => {
+              const local = isLocalFileHitUrl(hit.url);
+              const display = local ? fileUrlToPath(hit.url) : hit.url;
+              return (
+                <li key={`${hit.url}-${i}`}>
+                  <button
+                    type="button"
+                    className="web-search-disclosure__hit"
+                    title={display}
+                    onClick={() => {
+                      void openHit(hit.url);
+                    }}
+                  >
+                    <span className="web-search-disclosure__hit-head">
+                      {hit.favicon ? (
+                        <img
+                          className="web-search-disclosure__hit-favicon"
+                          src={hit.favicon}
+                          alt=""
+                          loading="lazy"
+                          onError={(e) => {
+                            (e.target as HTMLImageElement).style.visibility =
+                              "hidden";
+                          }}
+                        />
+                      ) : local ? (
+                        <FileText
+                          size={12}
+                          strokeWidth={2}
+                          className="web-search-disclosure__hit-favicon-fallback"
+                        />
+                      ) : (
+                        <Globe
+                          size={12}
+                          strokeWidth={2}
+                          className="web-search-disclosure__hit-favicon-fallback"
+                        />
+                      )}
+                      <span className="web-search-disclosure__hit-title">
+                        {hit.title || display}
+                      </span>
+                      <span className="web-search-disclosure__hit-host">
+                        {hostOf(hit.url)}
+                      </span>
                     </span>
-                    <span className="web-search-disclosure__hit-host">
-                      {hostOf(hit.url)}
-                    </span>
-                  </span>
-                  {hit.snippet ? (
-                    <span className="web-search-disclosure__hit-snippet">
-                      {hit.snippet}
-                    </span>
-                  ) : null}
-                </button>
-              </li>
-            ))}
+                    {hit.snippet ? (
+                      <span className="web-search-disclosure__hit-snippet">
+                        {hit.snippet}
+                      </span>
+                    ) : null}
+                  </button>
+                </li>
+              );
+            })}
           </ul>
         </div>
       )}

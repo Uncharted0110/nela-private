@@ -296,6 +296,31 @@ async function gatherFacets(
   return { webSearchResult, covered };
 }
 
+/**
+ * Plan + gather only (no synthesis). Used when the LLM calls `web_search`
+ * with depth=standard|deep so tool results can continue in the tool loop.
+ */
+export async function gatherFacetResearchContext(
+  opts: Omit<FacetResearchOptions, "onChunk" | "onThinking" | "generationOptions" | "disableThinking">
+): Promise<WebSearchResult | null> {
+  const plan = await planFacets({
+    ...opts,
+    onChunk: () => {},
+    onThinking: () => {},
+    disableThinking: true,
+  });
+  const { webSearchResult } = await gatherFacets(
+    plan,
+    {
+      ...opts,
+      onChunk: () => {},
+      onThinking: () => {},
+      disableThinking: true,
+    }
+  );
+  return webSearchResult;
+}
+
 // ── Step 3: synthesize (our LLM writes the answer) ────────────────────────────
 
 function buildSynthesisBrief(

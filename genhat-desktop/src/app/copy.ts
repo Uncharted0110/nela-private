@@ -11,7 +11,8 @@ export const COPY = {
   toolSearchWebHint:
     "Look things up online for this question. On by default in Cloud mode; optional in Private.",
   toolSearchFiles: "Search my files",
-  toolSearchFilesHint: "Search from the chat bar; matching files open in the File search results panel.",
+  toolSearchFilesHint:
+    "Let the model call search_knowledge_base on your indexed document graph (hybrid BM25 + embeddings).",
   toolShowReasoning: "Show reasoning", // advanced-only; see Task 12
   toolShowReasoningHint: "Show the assistant's step-by-step thinking.",
 

@@ -4,7 +4,7 @@ pub mod indexer;
 pub mod schema;
 
 pub use embeddings::{cosine_similarity, Embedder, SharedEmbedder, EMBED_BATCH_SIZE};
-pub use hybrid::{hybrid_search, rrf_fuse, HybridHit};
+pub use hybrid::{hybrid_search, rrf_fuse, HybridHit, RRF_CANDIDATE_POOL};
 pub use indexer::{
     expand_query_terms, SharedTantivyIndex, TantivyIndex, BOOST_CONTENT, BOOST_FILE_NAME,
     BOOST_TITLE,

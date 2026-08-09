@@ -9,7 +9,7 @@ pub struct TxtParser;
 
 impl DocumentParser for TxtParser {
     fn can_parse(&self, extension: &str) -> bool {
-        matches!(extension, "txt" | "md" | "markdown")
+        matches!(extension, "txt" | "md" | "markdown" | "json")
     }
 
     fn parse(&self, path: &Path) -> Result<ParsedDocument, ParserError> {

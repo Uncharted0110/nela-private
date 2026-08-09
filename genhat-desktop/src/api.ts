@@ -503,8 +503,11 @@ export const Api = {
   },
 
   /** Hybrid RRF + subgraph expansion → Markdown context. */
-  async queryKnowledgeBase(query: string): Promise<string> {
-    return invoke<string>("query_knowledge_base", { query });
+  async queryKnowledgeBase(query: string, topK?: number): Promise<string> {
+    return invoke<string>("query_knowledge_base", {
+      query,
+      topK: topK ?? null,
+    });
   },
 
   async getKnowledgeBaseStats(): Promise<import("./types").DocGraphStats> {

@@ -182,10 +182,11 @@ impl TantivyIndex {
     }
 }
 
-/// Expand known single-word document-type synonyms for BM25.
+/// Expand known document-type synonyms for **single-term** BM25 queries only.
 ///
-/// Example: a query containing `resume` also matches `cv` / `curriculum vitae`
-/// so CV-named files surface alongside `*_resume.pdf`.
+/// Example: query `resume` → `(resume OR cv OR "curriculum vitae")` so
+/// CV-named files surface alongside `*_resume.pdf`. Multi-word queries are
+/// left unchanged (aside from alphanumeric token cleaning).
 pub fn expand_query_terms(query: &str) -> String {
     let tokens: Vec<String> = query
         .split_whitespace()
@@ -201,21 +202,18 @@ pub fn expand_query_terms(query: &str) -> String {
         return query.to_string();
     }
 
-    let mut parts: Vec<String> = Vec::new();
-    for tok in &tokens {
+    // Synonym expansion only when the whole query is a single term.
+    if tokens.len() == 1 {
+        let tok = &tokens[0];
         let lower = tok.to_ascii_lowercase();
-        match lower.as_str() {
-            "resume" | "resumes" => {
-                // OR-group: original + CV synonyms (phrase kept quoted).
-                parts.push(format!("({tok} OR cv OR \"curriculum vitae\")"));
-            }
-            "cv" => {
-                parts.push(format!("({tok} OR resume OR \"curriculum vitae\")"));
-            }
-            _ => parts.push(tok.clone()),
-        }
+        return match lower.as_str() {
+            "resume" | "resumes" => format!("({tok} OR cv OR \"curriculum vitae\")"),
+            "cv" => format!("({tok} OR resume OR \"curriculum vitae\")"),
+            _ => tok.clone(),
+        };
     }
-    parts.join(" ")
+
+    tokens.join(" ")
 }
 
 fn escape_query(q: &str) -> String {
@@ -237,11 +235,18 @@ mod tests {
     use super::expand_query_terms;
 
     #[test]
-    fn expands_resume_synonyms() {
-        let q = expand_query_terms("amogh kalasapura's resume");
+    fn expands_single_word_resume_synonyms() {
+        let q = expand_query_terms("resume");
         assert!(q.to_ascii_lowercase().contains("cv"));
         assert!(q.to_ascii_lowercase().contains("curriculum vitae"));
+    }
+
+    #[test]
+    fn does_not_expand_multi_word_queries() {
+        let q = expand_query_terms("amogh kalasapura resume");
+        assert!(!q.to_ascii_lowercase().contains("curriculum vitae"));
         assert!(q.to_ascii_lowercase().contains("amogh"));
+        assert!(q.to_ascii_lowercase().contains("resume"));
     }
 
     #[test]

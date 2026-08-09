@@ -33,7 +33,8 @@ impl ParserRegistry {
     pub fn supported_extension(ext: &str) -> bool {
         matches!(
             ext.to_lowercase().as_str(),
-            "pdf" | "docx" | "pptx" | "xlsx" | "xls" | "ods" | "html" | "htm" | "txt" | "md" | "markdown"
+            "pdf" | "docx" | "pptx" | "xlsx" | "xls" | "ods" | "html" | "htm" | "txt" | "md"
+                | "markdown" | "json"
         )
     }
 }

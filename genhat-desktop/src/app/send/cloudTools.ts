@@ -10,11 +10,10 @@ export const WEB_SEARCH_TOOL: CloudToolDefinition = {
   function: {
     name: "web_search",
     description:
-      "Search the live public web (Tavily). Call this for current events, news, prices, sports, flights, travel facts, documentation, or any question that needs up-to-date information. " +
-      "Break complex questions into multiple focused queries instead of one long query. Pass short, specific keyword queries — never the full user prompt. " +
-      "Follow-ups must stay on the prior topic: include the destination, product, or entity from earlier turns (e.g. after a Spain itinerary, search 'flights Spain 1 week' not just 'flights'). " +
-      "Profiles: 'simple' for quick factual lookups (default); 'news' for current events and anything time-sensitive; 'research' for comparisons, summaries, or multi-facet questions (returns full page content). " +
-      "Results include titles, URLs, relevant excerpts, relevance scores, and images.",
+      "Search the live public web (Tavily). Call this ONLY when you need current or external facts (news, prices, sports, flights, docs, travel). " +
+      "Do not call it for the user's local files — use search_knowledge_base instead. " +
+      "Pass a short keyword query (never the full user prompt) and a depth that matches how thorough the answer needs to be. " +
+      "Follow-ups must stay on the prior topic (include place/product/entity from earlier turns).",
     parameters: {
       type: "object",
       properties: {
@@ -22,24 +21,17 @@ export const WEB_SEARCH_TOOL: CloudToolDefinition = {
           type: "string",
           description: "Concise search query (keywords, not a full sentence)",
         },
-        profile: {
+        depth: {
           type: "string",
-          enum: ["simple", "news", "research"],
+          enum: ["snippet", "full", "standard", "deep"],
           description:
-            "simple = quick lookup; news = time-sensitive/current events; research = deep content for analysis",
-        },
-        site: {
-          type: "string",
-          description:
-            "Optional: restrict results to one domain, e.g. 'booking.com' or 'wikipedia.org'",
-        },
-        time_range: {
-          type: "string",
-          enum: ["day", "week", "month", "year"],
-          description: "Optional recency filter (use with news profile)",
+            "snippet = quick factual lookup (titles/snippets); " +
+            "full = single search with fuller page content; " +
+            "standard = multi-facet research gather for composite questions; " +
+            "deep = broader multi-facet research for exhaustive answers",
         },
       },
-      required: ["query"],
+      required: ["query", "depth"],
     },
   },
 };
@@ -74,6 +66,42 @@ export const WEB_EXTRACT_TOOL: CloudToolDefinition = {
     },
   },
 };
+
+/** Local Doc Graph / knowledge-base search (structural + hybrid BM25/vector). */
+export const SEARCH_KNOWLEDGE_BASE_TOOL: CloudToolDefinition = {
+  type: "function",
+  function: {
+    name: "search_knowledge_base",
+    description:
+      "Searches the user's indexed local document graph (doc_graph) for relevant slides, sections, spreadsheets, notes, and files. " +
+      "Uses hybrid BM25 + dense vector embeddings over a structural knowledge graph, then expands hits into Markdown chunk windows with source file paths. " +
+      "Prefer a higher top_k (20–40) so graph/vector retrieval can surface multiple related chunks before expansion — low top_k under-uses the embedding graph. " +
+      "Call this for the user's own files, resumes, notes, PDFs, slides, or on-device documents. Do NOT use this for live public-web facts. " +
+      "After results, cite matched files with inline [n] markers (clickable in the UI).",
+    parameters: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description:
+            "The search query, keyphrase, or document type (e.g., 'Q3 ARR growth', 'resume', 'system architecture', 'tax statement').",
+        },
+        top_k: {
+          type: "integer",
+          description:
+            "Candidate hits before graph expansion. Default 25. Prefer 25–40 for synthesis/multi-doc answers (graph + vector embeddings benefit from a wider pool). Use 10–15 only for pinpoint lookups. Max 50.",
+          default: 25,
+          minimum: 1,
+          maximum: 50,
+        },
+      },
+      required: ["query"],
+    },
+  },
+};
+
+/** @deprecated Use SEARCH_KNOWLEDGE_BASE_TOOL */
+export const FILE_SEARCH_TOOL = SEARCH_KNOWLEDGE_BASE_TOOL;
 
 /** MCP / native artifact writers exposed as OpenAI tools (executed on desktop). */
 export const MCP_SPREADSHEET_TOOL: CloudToolDefinition = {
@@ -154,23 +182,43 @@ export const MCP_CLOUD_TOOLS: CloudToolDefinition[] = [
   MCP_HTML_TOOL,
 ];
 
-export function cloudToolsForChat(options?: {
+export function buildCloudChatTools(options?: {
   webEnabled?: boolean;
+  fileSearchEnabled?: boolean;
   mcpEnabled?: boolean;
 }): CloudToolDefinition[] {
   const tools: CloudToolDefinition[] = [];
-  if (options?.webEnabled !== false) {
-    // caller decides; default include when building web loop
-  }
   if (options?.webEnabled) tools.push(WEB_SEARCH_TOOL, WEB_EXTRACT_TOOL);
-  if (options?.mcpEnabled !== false) tools.push(...MCP_CLOUD_TOOLS);
+  if (options?.fileSearchEnabled) tools.push(SEARCH_KNOWLEDGE_BASE_TOOL);
+  if (options?.mcpEnabled) tools.push(...MCP_CLOUD_TOOLS);
   return tools;
 }
 
-export function cloudToolsWebOnly(): CloudToolDefinition[] {
-  return [WEB_SEARCH_TOOL, WEB_EXTRACT_TOOL];
+/** @deprecated Prefer buildCloudChatTools — kept for call-site compatibility. */
+export function cloudToolsForChat(options?: {
+  webEnabled?: boolean;
+  mcpEnabled?: boolean;
+  fileSearchEnabled?: boolean;
+}): CloudToolDefinition[] {
+  return buildCloudChatTools({
+    webEnabled: Boolean(options?.webEnabled),
+    fileSearchEnabled: Boolean(options?.fileSearchEnabled),
+    mcpEnabled: options?.mcpEnabled !== false,
+  });
 }
 
-export function cloudToolsWebAndMcp(): CloudToolDefinition[] {
-  return [WEB_SEARCH_TOOL, WEB_EXTRACT_TOOL, ...MCP_CLOUD_TOOLS];
+export function cloudToolsWebOnly(fileSearchEnabled = false): CloudToolDefinition[] {
+  return buildCloudChatTools({
+    webEnabled: true,
+    fileSearchEnabled,
+    mcpEnabled: false,
+  });
+}
+
+export function cloudToolsWebAndMcp(fileSearchEnabled = false): CloudToolDefinition[] {
+  return buildCloudChatTools({
+    webEnabled: true,
+    fileSearchEnabled,
+    mcpEnabled: true,
+  });
 }

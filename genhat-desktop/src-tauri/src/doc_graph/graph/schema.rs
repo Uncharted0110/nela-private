@@ -48,7 +48,7 @@ impl FileType {
             "pptx" => Some(Self::PPTX),
             "xlsx" | "xls" | "ods" => Some(Self::XLSX),
             "html" | "htm" => Some(Self::HTML),
-            "txt" | "md" | "markdown" => Some(Self::TXT),
+            "txt" | "md" | "markdown" | "json" => Some(Self::TXT),
             _ => None,
         }
     }

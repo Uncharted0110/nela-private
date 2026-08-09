@@ -1,8 +1,13 @@
 import React, { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ExternalLink, Link2 } from "lucide-react";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { ExternalLink, FileText, Link2 } from "lucide-react";
+import { openPath, openUrl } from "@tauri-apps/plugin-opener";
+import { Api } from "../api";
 import type { SearchHit } from "../types";
+import {
+  fileUrlToPath,
+  isLocalFileHitUrl,
+} from "../app/send/fileSearchCitations";
 import "./SourceCitation.css";
 
 const CARD_WIDTH = 288;
@@ -10,6 +15,7 @@ const CARD_GAP = 12;
 const CLOSE_DELAY_MS = 160;
 
 function hostOf(url: string): string {
+  if (isLocalFileHitUrl(url)) return "Local file";
   try {
     return new URL(url).hostname.replace(/^www\./, "");
   } catch {
@@ -62,7 +68,7 @@ export interface SourceCitationProps {
 
 /**
  * Link-icon citation: hover shows a side preview (title / URL / snippet / image);
- * click opens the source in the system browser.
+ * click opens the web source in the browser, or the local file in the OS.
  */
 export const SourceCitation: React.FC<SourceCitationProps> = ({
   hit,
@@ -75,7 +81,9 @@ export const SourceCitation: React.FC<SourceCitationProps> = ({
   const anchorRef = useRef<HTMLSpanElement>(null);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const title = hit.title?.trim() || hostOf(hit.url) || hit.url;
+  const local = isLocalFileHitUrl(hit.url);
+  const displayPath = local ? fileUrlToPath(hit.url) : hit.url;
+  const title = hit.title?.trim() || (local ? displayPath.split(/[/\\]/).pop() : null) || hostOf(hit.url) || hit.url;
   const snippet = (hit.snippet ?? "").replace(/\s+/g, " ").trim().slice(0, 220);
   const previewImg = hit.image_url ?? undefined;
 
@@ -126,13 +134,24 @@ export const SourceCitation: React.FC<SourceCitationProps> = ({
   const openSource = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    if (hit.url) void openUrl(hit.url);
+    if (!hit.url) return;
+    if (local) {
+      const path = fileUrlToPath(hit.url);
+      void openPath(path).catch((openErr) => {
+        console.error("Failed to open local file:", openErr);
+        void Api.revealInExplorer(path).catch((err) =>
+          console.error("Failed to reveal local path:", err)
+        );
+      });
+      return;
+    }
+    void openUrl(hit.url);
   };
 
   return (
     <span
       ref={anchorRef}
-      className={`source-cite source-cite--${variant}`}
+      className={`source-cite source-cite--${variant}${local ? " source-cite--local" : ""}`}
       onMouseEnter={show}
       onMouseLeave={hideSoon}
       onFocus={show}
@@ -141,11 +160,15 @@ export const SourceCitation: React.FC<SourceCitationProps> = ({
       <button
         type="button"
         className="source-cite__btn"
-        aria-label={`Source: ${title}`}
+        aria-label={local ? `Open local file: ${title}` : `Source: ${title}`}
         aria-describedby={open ? tipId : undefined}
         onClick={openSource}
       >
-        <Link2 size={11} strokeWidth={2.25} aria-hidden />
+        {local ? (
+          <FileText size={11} strokeWidth={2.25} aria-hidden />
+        ) : (
+          <Link2 size={11} strokeWidth={2.25} aria-hidden />
+        )}
       </button>
 
       {open &&
@@ -177,12 +200,16 @@ export const SourceCitation: React.FC<SourceCitationProps> = ({
               <div className="source-cite__card-title">{title}</div>
               <div className="source-cite__card-host">
                 {hostOf(hit.url)}
-                <ExternalLink size={10} strokeWidth={2} aria-hidden />
+                {local ? (
+                  <FileText size={10} strokeWidth={2} aria-hidden />
+                ) : (
+                  <ExternalLink size={10} strokeWidth={2} aria-hidden />
+                )}
               </div>
               {snippet ? (
                 <div className="source-cite__card-snippet">{snippet}</div>
               ) : null}
-              <div className="source-cite__card-url">{hit.url}</div>
+              <div className="source-cite__card-url">{displayPath}</div>
             </div>
           </div>,
           document.body

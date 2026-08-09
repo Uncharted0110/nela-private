@@ -238,6 +238,7 @@ function looksAlreadyFriendly(lower: string): boolean {
     lower.startsWith("that took too long") ||
     lower.startsWith("too many requests") ||
     lower.startsWith("nela cloud is having") ||
+    lower.startsWith("nela cloud is busy") ||
     lower.startsWith("nela is still") ||
     lower.startsWith("your computer ran low") ||
     lower.startsWith("your plan doesn't") ||

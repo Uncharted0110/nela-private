@@ -95,7 +95,7 @@ export const SLASH_COMMANDS: SlashCommandDef[] = [
     id: "files",
     token: "files",
     label: "/files",
-    description: "Search files on this device",
+    description: "Let the model call search_knowledge_base on your indexed documents",
     aliases: ["file", "search", "find", "locate", "lookup"],
     files: true,
   },

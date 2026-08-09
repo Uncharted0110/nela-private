@@ -4,7 +4,8 @@
 //! Concept / CrossDocLink expansion is intentionally disabled.
 
 use crate::doc_graph::graph::schema::{
-    estimate_tokens, make_chunk_id, EdgeData, EdgeType, FileType, KnowledgeBase, NodeType,
+    estimate_tokens, make_chunk_id, BlockType, ContainerType, EdgeData, EdgeType, FileType,
+    KnowledgeBase, NodeType,
 };
 use crate::doc_graph::parsers::ParsedDocument;
 use crate::doc_graph::search::indexer::TantivyIndex;
@@ -20,6 +21,10 @@ pub struct AssembledChunk {
     pub node_index: u32,
 }
 
+/// Reserved ordinal for the metadata-first Document chunk (basename + path).
+/// Body blocks use `container.ordinal * 10_000 + bi` and never collide with this.
+pub const METADATA_CHUNK_ORDINAL: usize = usize::MAX / 2;
+
 /// Lightweight chunk descriptor used for parallel Tantivy indexing
 /// before petgraph node indices are known.
 #[derive(Debug, Clone)]
@@ -31,10 +36,30 @@ pub struct PreparedChunk {
     pub ordinal: usize,
 }
 
+/// Always-indexed Document metadata so truncated / empty bodies stay findable by name.
+pub fn metadata_chunk(path: &Path) -> PreparedChunk {
+    let path_str = path.to_string_lossy().to_string();
+    let file_name = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("document")
+        .to_string();
+    let content = format!("{file_name}\n{path_str}");
+    PreparedChunk {
+        chunk_id: make_chunk_id(&path_str, METADATA_CHUNK_ORDINAL, &content),
+        content,
+        title: file_name,
+        file_path: path_str,
+        ordinal: METADATA_CHUNK_ORDINAL,
+    }
+}
+
 /// Flatten a parsed document into chunk records (deterministic chunk_ids).
+/// Always starts with a metadata chunk (`file_name` + `file_path`) so Tantivy
+/// can find the Document even when body extraction is truncated or empty.
 pub fn prepare_chunks(path: &Path, parsed: &ParsedDocument) -> Vec<PreparedChunk> {
     let path_str = path.to_string_lossy().to_string();
-    let mut out = Vec::new();
+    let mut out = vec![metadata_chunk(path)];
     for container in &parsed.containers {
         for (bi, block) in container.blocks.iter().enumerate() {
             let ordinal = container.ordinal * 10_000 + bi;
@@ -91,7 +116,7 @@ pub fn assemble_graph_only(
     let path_str = path.to_string_lossy().to_string();
 
     let doc_idx = kb.graph.add_node(NodeType::Document {
-        file_name,
+        file_name: file_name.clone(),
         file_path: path.to_path_buf(),
         file_type,
         file_size_bytes: file_size,
@@ -99,7 +124,47 @@ pub fn assemble_graph_only(
     });
 
     let mut chunks = Vec::new();
-    let mut prev_container: Option<NodeIndex> = None;
+
+    // Metadata-first container so basename/path stay findable when body is truncated.
+    let meta = metadata_chunk(path);
+    let meta_container = kb.graph.add_node(NodeType::Container {
+        title: file_name.clone(),
+        container_type: ContainerType::DocumentRoot,
+        ordinal: 0,
+    });
+    kb.graph.add_edge(
+        doc_idx,
+        meta_container,
+        EdgeData {
+            edge_type: EdgeType::ParentOf,
+            weight: 1.0,
+        },
+    );
+    let meta_idx = kb.graph.add_node(NodeType::ContentBlock {
+        content: meta.content.clone(),
+        block_type: BlockType::Paragraph,
+        token_count: estimate_tokens(&meta.content),
+        chunk_id: meta.chunk_id.clone(),
+    });
+    kb.graph.add_edge(
+        meta_container,
+        meta_idx,
+        EdgeData {
+            edge_type: EdgeType::ParentOf,
+            weight: 1.0,
+        },
+    );
+    let meta_u32 = meta_idx.index() as u32;
+    kb.chunk_to_node.insert(meta.chunk_id.clone(), meta_u32);
+    chunks.push(AssembledChunk {
+        chunk_id: meta.chunk_id,
+        content: meta.content,
+        title: file_name,
+        file_path: path_str.clone(),
+        node_index: meta_u32,
+    });
+
+    let mut prev_container: Option<NodeIndex> = Some(meta_container);
 
     for container in &parsed.containers {
         let container_idx = kb.graph.add_node(NodeType::Container {

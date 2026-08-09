@@ -37,8 +37,11 @@ fn api_url_for(base: &str, path: &str) -> String {
 }
 
 fn http_client() -> Result<reqwest::Client, String> {
+    // No total-body timeout: artifact SSE can run several minutes.
+    // Idle gaps are enforced in the stream loop + desktop idle watchdog.
     reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(120))
+        .connect_timeout(std::time::Duration::from_secs(30))
+        .pool_idle_timeout(std::time::Duration::from_secs(90))
         .tcp_nodelay(true)
         .pool_max_idle_per_host(2)
         .build()
@@ -59,6 +62,7 @@ fn friendly_http_error(status: StatusCode) -> String {
         404 => "We couldn't find what you were looking for. Please try again.".to_string(),
         408 | 504 => "That took too long. Please try again.".to_string(),
         429 => "Too many requests. Please wait a moment and try again.".to_string(),
+        503 => "NELA Cloud is busy right now. Wait a moment, then try again.".to_string(),
         400..=499 => "Something went wrong with that request. Please try again.".to_string(),
         500..=599 => "NELA Cloud is having trouble right now. Please try again in a moment.".to_string(),
         _ => "Something went wrong. Please try again.".to_string(),
@@ -101,11 +105,25 @@ fn friendly_api_body_message(body: &str, status: StatusCode) -> String {
                     return "Monthly cloud quota exhausted. Upgrade or wait for the next period."
                         .to_string();
                 }
+                "CLOUD_BUSY" | "OPENROUTER_FAILED" | "OPENROUTER_NOT_CONFIGURED" => {
+                    return "NELA Cloud is busy right now. Wait a moment, then try again."
+                        .to_string();
+                }
                 _ => {}
             }
         }
         if let Some(message) = value.get("message").and_then(|v| v.as_str()) {
             let m = message.to_lowercase();
+            if m.contains("cloud is busy") || m.contains("try again shortly") {
+                return "NELA Cloud is busy right now. Wait a moment, then try again."
+                    .to_string();
+            }
+            if m.contains("rate-limited")
+                || m.contains("rate limited")
+                || m.contains("too many requests")
+            {
+                return "Too many requests. Please wait a moment and try again.".to_string();
+            }
             if m.contains("password") || m.contains("credential") || m.contains("invalid email") {
                 return "That email or password doesn't look right. Please try again.".to_string();
             }
@@ -610,8 +628,36 @@ pub async fn chat_stream(
         let mut buffer = String::new();
         let mut tool_acc = ToolCallAccumulator::default();
         let mut emitted_done = false;
+        // Abort if the upstream sends nothing for this long (half-open hangs).
+        const IDLE_SECS: u64 = 60;
 
-        while let Some(item) = stream.next().await {
+        loop {
+            let next = tokio::time::timeout(
+                std::time::Duration::from_secs(IDLE_SECS),
+                stream.next(),
+            )
+            .await;
+
+            let item = match next {
+                Ok(Some(item)) => item,
+                Ok(None) => break,
+                Err(_) => {
+                    if !emitted_done {
+                        emitted_done = true;
+                        let _ = app.emit(
+                            "cloud-chat-stream",
+                            serde_json::json!({
+                                "chunk": "",
+                                "done": true,
+                                "error": "NELA Cloud stopped sending tokens. Please try again."
+                            }),
+                        );
+                    }
+                    // Already notified the UI; don't emit a second error via spawn.
+                    return Ok(());
+                }
+            };
+
             let chunk = item.map_err(|_| {
                 "The connection dropped while NELA was answering. Please try again.".to_string()
             })?;

@@ -412,25 +412,35 @@ export async function handleArtifactGeneration(
             1,
             Math.ceil(maxResults / Math.max(queries.length, 1))
           );
-          for (const searchQuery of queries) {
-            if (!searchQuery.trim()) continue;
-            try {
-              useChatModeStore
-                .getState()
-                .setLiveToolStatus(
-                  `Searching the web: ${searchQuery.slice(0, 80)}`
-                );
-              const result = await Api.webSearch(searchQuery, perQuery, {
-                profile: fetchContent ? "research" : "simple",
-              });
-              merged = mergeWebSearchResults(merged, result);
-              if (merged) {
-                artifactWebSearchResult = merged;
-                updateArtifactMsg("CrunchingMetrics");
+          const trimmedQueries = queries
+            .map((q) => q.trim())
+            .filter(Boolean)
+            .slice(0, MAX_ARTIFACT_HOST_QUERIES);
+          useChatModeStore
+            .getState()
+            .setLiveToolStatus(
+              `Searching the web (${trimmedQueries.length} queries)…`
+            );
+          // Run host queries in parallel (same count as before).
+          const settled = await Promise.all(
+            trimmedQueries.map(async (searchQuery) => {
+              try {
+                return await Api.webSearch(searchQuery, perQuery, {
+                  profile: fetchContent ? "research" : "simple",
+                });
+              } catch (err) {
+                console.warn("Web search query failed:", searchQuery, err);
+                return null;
               }
-            } catch (err) {
-              console.warn("Web search query failed:", searchQuery, err);
-            }
+            })
+          );
+          for (const result of settled) {
+            if (!result) continue;
+            merged = mergeWebSearchResults(merged, result);
+          }
+          if (merged) {
+            artifactWebSearchResult = merged;
+            updateArtifactMsg("CrunchingMetrics");
           }
         }
 

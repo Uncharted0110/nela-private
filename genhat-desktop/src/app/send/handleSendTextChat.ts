@@ -9,12 +9,6 @@ import {
   resolveReservedOutputTokens,
   toContextMessages,
 } from "../contextCompaction";
-import {
-  extractAmbientSearchQuery,
-  hasDocumentFileIntent,
-  hasSearchKeywords,
-} from "../ambientSearch";
-import { hasLocalFilePathReference } from "../ambientFileContent";
 import { NELA_CLOUD_SYSTEM_PROMPT, NELA_SYSTEM_PROMPT } from "../nelaSystemPrompt";
 import { NELA_AUTO_ARTIFACT_CRITERIA } from "../autoArtifactPrompt";
 import { canAutoStreamArtifacts } from "../cloudPresentationMode";
@@ -25,16 +19,10 @@ import {
 import { StreamArtifactParser, scrubChatArtifactProtocol, stripPartialArtifactTags } from "../streamArtifactParser";
 import { saveStreamedArtifact } from "../streamArtifactSave";
 import { sanitizeCsvArtifactBody } from "../sanitizeCsvArtifact";
-import { useDocGraphStore } from "../../stores/docGraphStore";
 import { useCloudStore } from "../../stores/cloudStore";
 import { streamChatByMode } from "./cloudOrLocalStream";
 import type { SendHandlerContext } from "./types";
 import { runCloudAwareToolLoop } from "./cloudNativeToolLoop";
-import { runFacetResearchLoop } from "./facetPlanner";
-import {
-  resolveWebResearchRoute,
-  webResearchRouteStatus,
-} from "./webResearchRouter";
 import { useChatModeStore } from "../../stores/chatModeStore";
 
 export async function handleSendTextChat(
@@ -44,50 +32,15 @@ export async function handleSendTextChat(
   session: import("../../types").ChatSession,
   newMsg: ChatMessage,
   effectiveWebEnabled: boolean,
-  resolvedIntentKind: string,
+  _resolvedIntentKind: string,
   slashFileSearch: boolean
 ): Promise<void> {
   const sid = ctx.activeSessionId;
 
-  // ── Local file search via structural knowledge graph ────────────────────
-  let ambientFileContext = "";
-  let attachedFile = ctx.directDocumentPaths.length > 0 ? ctx.directDocumentPaths[0] : null;
-
-  const explicitFileSearch =
-    resolvedIntentKind === "FileSearch" ||
-    slashFileSearch ||
-    hasSearchKeywords(text) ||
-    hasDocumentFileIntent(text) ||
-    hasLocalFilePathReference(text);
+  // ── Local file search (Doc Graph) as an LLM tool, like web_search ────────
+  // When "Search my files" / /files is on, the model calls `file_search`
+  // inside the tool loop — do not pre-inject ambient KB context here.
   const fileSearchEnabled = ctx.fileIndexerEnabled || slashFileSearch;
-
-  if (fileSearchEnabled && !attachedFile && text.trim()) {
-    const searchQuery = extractAmbientSearchQuery(text).trim() || text.trim();
-    try {
-      // Same Markdown the LLM receives — also shown in the query dialog.
-      useDocGraphStore.getState().openQuery(searchQuery);
-      const md = await Api.queryKnowledgeBase(searchQuery);
-      useDocGraphStore.setState({ queryResult: md, queryText: searchQuery });
-
-      if (md.trim() && md !== "No relevant structural context found.") {
-        ambientFileContext =
-          `The following local structural knowledge-graph context was retrieved for the user's query.\n` +
-          `Use these expanded sources as the primary source of truth when answering.\n\n` +
-          md;
-        const pathMatch = md.match(/\(File:\s*([^)]+)\)/);
-        if (pathMatch?.[1]) {
-          attachedFile = pathMatch[1].trim();
-        }
-      } else if (explicitFileSearch) {
-        ambientFileContext = "FILE_SEARCH_NO_RESULTS";
-      }
-    } catch (err) {
-      console.warn("Doc-graph file search in standard chat failed:", err);
-      if (explicitFileSearch) {
-        ambientFileContext = "FILE_SEARCH_NO_RESULTS";
-      }
-    }
-  }
 
   ctx.setGeneralGenerating(true);
   ctx.setGeneralElapsedTime(0);
@@ -125,48 +78,6 @@ export async function handleSendTextChat(
     },
     ...toContextMessages(fullSessionMessages),
   ];
-
-  // Ambient file instructions AFTER the stable NELA identity so OpenRouter
-  // can cache the identity prefix. Document text still goes in the user turn.
-  if (ambientFileContext === "FILE_SEARCH_NO_RESULTS") {
-    apiMessages = [
-      ...apiMessages.slice(0, 1),
-      {
-        role: "system",
-        content:
-          "The user asked about a specific local file, but it could not be located in Documents, Desktop, Downloads, or indexed workspaces. " +
-          "Tell them you could not find that file on their system. Do NOT claim you lack the ability to access local files — this app can search them, but this particular file was not found. " +
-          "Suggest they verify the path, wait for indexing to finish after restart, or attach the file directly.",
-      },
-      ...apiMessages.slice(1),
-    ];
-  } else if (ambientFileContext) {
-    apiMessages = [
-      ...apiMessages.slice(0, 1),
-      {
-        role: "system",
-        content:
-          "The user's message includes text retrieved from their computer. " +
-          "You ALREADY have the file contents below — answer directly from that text. " +
-          "NEVER say you cannot access local files, paths, or the user's system. " +
-          "Summarize or explain the document in clear prose. If the excerpt is incomplete, say what you can from the provided text.",
-      },
-      ...apiMessages.slice(1),
-    ];
-    // Fold the document text into the last user message so the model reads it as part
-    // of the current request rather than as background context it might ignore.
-    for (let i = apiMessages.length - 1; i >= 0; i--) {
-      if (apiMessages[i].role === "user") {
-        apiMessages[i] = {
-          ...apiMessages[i],
-          content:
-            `${apiMessages[i].content}\n\n` +
-            `--- Retrieved document text (source of truth) ---\n${ambientFileContext}\n--- End of document text ---`,
-        };
-        break;
-      }
-    }
-  }
 
   const generationOptions = ctx.getChatGenerationOptions(ctx.selectedModel);
 
@@ -443,74 +354,23 @@ export async function handleSendTextChat(
     ctx.setStreamingThinking(fullThinking);
   };
 
-  // Auto-route web depth: facets (standard/deep) vs tool loop (snippets/full).
-  const webRoute =
-    effectiveWebEnabled && !autoArtifacts
-      ? resolveWebResearchRoute(text, apiMessages)
-      : null;
-
-  if (webRoute?.mode === "facets") {
-    useChatModeStore.getState().setLiveToolStatus(webResearchRouteStatus(webRoute));
-    runFacetResearchLoop({
-      messages: apiMessages,
-      userText: text,
-      budget: webRoute.budget,
-      containsFileContext: Boolean(
-        ambientFileContext && ambientFileContext !== "FILE_SEARCH_NO_RESULTS"
-      ),
-      userConfirmedCloudContext: Boolean(
-        ctx.fileIndexerEnabled || slashFileSearch
-      ),
-      contextSource:
-        ambientFileContext && ambientFileContext !== "FILE_SEARCH_NO_RESULTS"
-          ? "ambient_file"
-          : undefined,
-      modelId: ctx.selectedModel || undefined,
-      signal: ctrl.signal,
-      disableThinking: !ctx.thinkingEnabled,
-      generationOptions,
-      onChunk,
-      onThinking,
-      onToolStatus: (status) => {
-        useChatModeStore.getState().setLiveToolStatus(status);
-      },
-    })
-      .then((result) => {
-        webSearchResult = result.webSearchResult;
-        if (result.thinking && !fullThinking) {
-          fullThinking = result.thinking;
-        }
-        void finishOk(
-          fullResponse || result.content,
-          fullThinking || result.thinking,
-          webSearchResult
-        );
-      })
-      .catch((err) => {
-        if (err instanceof DOMException && err.name === "AbortError") return;
-        finishErr(err);
-      });
-    return;
-  }
-
-  if (effectiveWebEnabled) {
-    if (webRoute) {
-      useChatModeStore.getState().setLiveToolStatus(webResearchRouteStatus(webRoute));
+  // Tool loop when web and/or knowledge-base search is enabled.
+  // Do NOT auto-route to facet research — web search runs only when the model
+  // calls web_search(query, depth).
+  if (effectiveWebEnabled || fileSearchEnabled) {
+    if (fileSearchEnabled && !effectiveWebEnabled) {
+      useChatModeStore.getState().setLiveToolStatus("Ready to search your files…");
     }
     runCloudAwareToolLoop({
       messages: apiMessages,
-      webDepth: webRoute?.mode === "tools" ? webRoute.depth : "full",
+      webDepth: "full",
+      webEnabled: effectiveWebEnabled,
+      fileSearchEnabled,
       includeMcpTools: !autoArtifacts,
-      containsFileContext: Boolean(
-        ambientFileContext && ambientFileContext !== "FILE_SEARCH_NO_RESULTS"
-      ),
-      // Tools → "Search my files" (or /files) is explicit consent to ground on local
-      // hits — do not force the local-model path when the user is in Cloud mode.
-      userConfirmedCloudContext: Boolean(ctx.fileIndexerEnabled || slashFileSearch),
-      contextSource:
-        ambientFileContext && ambientFileContext !== "FILE_SEARCH_NO_RESULTS"
-          ? "ambient_file"
-          : undefined,
+      containsFileContext: false,
+      // "Search my files" / /files is explicit consent to ground on local hits.
+      userConfirmedCloudContext: Boolean(fileSearchEnabled),
+      contextSource: undefined,
       modelId: ctx.selectedModel || undefined,
       signal: ctrl.signal,
       disableThinking: !ctx.thinkingEnabled,
@@ -551,16 +411,12 @@ export async function handleSendTextChat(
     return;
   }
 
-  const containsFileContext = Boolean(
-    ambientFileContext && ambientFileContext !== "FILE_SEARCH_NO_RESULTS"
-  );
-
   streamChatByMode({
     messages: apiMessages,
     intent: "quick_chat",
-    containsFileContext,
-    userConfirmedCloudContext: Boolean(ctx.fileIndexerEnabled || slashFileSearch),
-    contextSource: containsFileContext ? "ambient_file" : undefined,
+    containsFileContext: false,
+    userConfirmedCloudContext: false,
+    contextSource: undefined,
     modelId: ctx.selectedModel || undefined,
     signal: ctrl.signal,
     disableThinking: !ctx.thinkingEnabled,

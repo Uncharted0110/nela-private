@@ -12,7 +12,6 @@ use crate::doc_graph::graph::builder::{
     assemble_graph_only, index_prepared_chunks, prepare_chunks, remove_document_by_path,
 };
 use crate::doc_graph::graph::schema::KnowledgeBase;
-use crate::doc_graph::graph::traversal::expand_context;
 use crate::doc_graph::manifest::{plan_sync, FileFingerprint, IndexManifest};
 use crate::doc_graph::parsers::{ParsedDocument, ParserRegistry};
 use crate::doc_graph::search::embeddings::Embedder;
@@ -27,12 +26,22 @@ use std::sync::mpsc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-/// Max file size accepted during discovery (2 MB).
-pub const MAX_FILE_BYTES: u64 = 2_000_000;
+/// Legacy flat cap (kept for callers); discovery uses [`max_file_bytes_for_ext`].
+pub const MAX_FILE_BYTES: u64 = 3_000_000;
 /// Truncate individual content blocks before graph storage.
 pub const MAX_BLOCK_CHARS: usize = 1_500;
-/// Max content blocks retained per document.
-pub const MAX_BLOCKS_PER_DOC: usize = 40;
+/// Max content blocks retained per document (large manuals / books).
+pub const MAX_BLOCKS_PER_DOC: usize = 250;
+
+/// Extension-aware discovery size limits (bytes).
+pub fn max_file_bytes_for_ext(ext: &str) -> u64 {
+    match ext.to_ascii_lowercase().as_str() {
+        "pdf" => 35 * 1024 * 1024,
+        "docx" | "pptx" | "xlsx" | "xls" | "ods" => 20 * 1024 * 1024,
+        "md" | "markdown" | "txt" | "html" | "htm" | "json" => 3 * 1024 * 1024,
+        _ => 3 * 1024 * 1024,
+    }
+}
 /// Pass 1 per-file parse timeout (fast scan).
 pub const PARSE_TIMEOUT_PASS1: Duration = Duration::from_millis(500);
 /// Pass 2 per-file parse timeout (background retry).
@@ -42,6 +51,7 @@ const MAX_ERRORS: usize = 50;
 
 const SUPPORTED_EXTS: &[&str] = &[
     "pdf", "docx", "pptx", "xlsx", "xls", "ods", "html", "htm", "txt", "md", "markdown",
+    "json",
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -145,26 +155,10 @@ pub fn discover_files(root: &Path, max_files: Option<usize>) -> Vec<PathBuf> {
         .follow_links(false)
         .filter_entry(|entry| {
             let name = entry.file_name().to_string_lossy();
-            let skip = [
-                "node_modules",
-                "AppData",
-                "Library",
-                "target",
-                "build",
-                "vendor",
-                "venv",
-                ".venv",
-                ".cargo",
-                ".rustup",
-                ".cache",
-                ".git",
-                ".svn",
-                ".hg",
-                "knowledge_base",
-                "knowledge_base_bench",
-            ];
             if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-                return !skip.iter().any(|s| name.eq_ignore_ascii_case(s));
+                return !EXCLUDED_DIR_NAMES
+                    .iter()
+                    .any(|s| name.eq_ignore_ascii_case(s));
             }
             true
         })
@@ -185,7 +179,11 @@ pub fn discover_files(root: &Path, max_files: Option<usize>) -> Vec<PathBuf> {
         let Ok(meta) = dent.metadata() else {
             continue;
         };
-        if meta.len() > MAX_FILE_BYTES {
+        let ext = path
+            .extension()
+            .and_then(|s| s.to_str())
+            .unwrap_or("");
+        if meta.len() > max_file_bytes_for_ext(ext) {
             continue;
         }
         files.push(path.to_path_buf());
@@ -751,25 +749,50 @@ pub fn query_kb(
     kb: &KnowledgeBase,
     index: &TantivyIndex,
     embedder: &Embedder,
+    top_k: Option<usize>,
 ) -> Result<String, EngineError> {
-    let hits = hybrid_search(query, kb, index, embedder, 100, 100)?;
-    let top = hits.into_iter().take(5);
-    let mut sources = Vec::new();
-    for hit in top {
-        if let Some(expanded) = expand_context(kb, &hit.chunk_id) {
-            sources.push(expanded);
-        }
-    }
-    Ok(assemble_markdown(&sources))
+    // Expand up to `top_k` RRF hits (default 25); hybrid already caps the pool at 50.
+    let top_k = top_k.unwrap_or(25).clamp(1, 50);
+    let hits = hybrid_search(query, kb, index, embedder, 50, 50)?;
+    let hit_ids: Vec<String> = hits
+        .into_iter()
+        .take(top_k)
+        .map(|h| h.chunk_id)
+        .collect();
+    Ok(assemble_markdown(kb, &hit_ids))
 }
 
+/// Directories skipped during discovery (coding projects, caches, VCS, etc.).
 pub const EXCLUDED_DIR_NAMES: &[&str] = &[
     "node_modules",
+    "__pycache__",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".tox",
+    ".eggs",
+    "site-packages",
+    "Pods",
+    "DerivedData",
+    ".gradle",
+    ".idea",
+    ".vscode",
+    "dist",
+    ".next",
+    ".nuxt",
+    "coverage",
     "AppData",
     "Library",
     "target",
     "build",
     "vendor",
     "venv",
+    ".venv",
     ".cargo",
+    ".rustup",
+    ".cache",
+    ".git",
+    ".svn",
+    ".hg",
+    "knowledge_base",
+    "knowledge_base_bench",
 ];

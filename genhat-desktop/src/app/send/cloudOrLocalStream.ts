@@ -5,6 +5,10 @@ import { useModelStore } from "../../stores/modelStore";
 import { cloudQualityModeForIntelligence } from "../intelligenceModes";
 import { friendlyError } from "../friendlyError";
 import { prepareMessagesForCloudCaching } from "./prepareCloudMessages";
+import {
+  CLOUD_STREAM_ABSOLUTE_TIMEOUT_MS,
+  CLOUD_STREAM_IDLE_TIMEOUT_MS,
+} from "./webSearchLimits";
 import type {
   CloudChatMessage,
   CloudChatRequest,
@@ -229,12 +233,43 @@ async function runCloudStream(args: StreamArgs): Promise<void> {
 
   await new Promise<void>((resolve, reject) => {
     let settled = false;
+    let idleTimer: ReturnType<typeof setTimeout> | null = null;
+    let absoluteTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const clearTimers = () => {
+      if (idleTimer) {
+        clearTimeout(idleTimer);
+        idleTimer = null;
+      }
+      if (absoluteTimer) {
+        clearTimeout(absoluteTimer);
+        absoluteTimer = null;
+      }
+    };
 
     const finish = (fn: () => void) => {
       if (settled) return;
       settled = true;
+      clearTimers();
       fn();
     };
+
+    const armIdle = () => {
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => {
+        finish(() => {
+          unlistenFn?.();
+          args.onError(
+            new Error(
+              "NELA Cloud stopped sending tokens. Please try again."
+            )
+          );
+          resolve();
+        });
+      }, CLOUD_STREAM_IDLE_TIMEOUT_MS);
+    };
+
+    let unlistenFn: (() => void) | null = null;
 
     void (async () => {
       const unlisten = await listen<{
@@ -255,7 +290,10 @@ async function runCloudStream(args: StreamArgs): Promise<void> {
           });
           return;
         }
-        if (chunk) args.onChunk(chunk);
+        if (chunk) {
+          armIdle();
+          args.onChunk(chunk);
+        }
         if (done) {
           finish(() => {
             unlisten();
@@ -264,6 +302,7 @@ async function runCloudStream(args: StreamArgs): Promise<void> {
           });
         }
       });
+      unlistenFn = unlisten;
 
       if (args.signal) {
         const onAbort = () => {
@@ -279,6 +318,19 @@ async function runCloudStream(args: StreamArgs): Promise<void> {
         }
         args.signal.addEventListener("abort", onAbort, { once: true });
       }
+
+      absoluteTimer = setTimeout(() => {
+        finish(() => {
+          unlisten();
+          args.onError(
+            new Error(
+              "That took too long. Please try again with a shorter request."
+            )
+          );
+          resolve();
+        });
+      }, CLOUD_STREAM_ABSOLUTE_TIMEOUT_MS);
+      armIdle();
 
       try {
         // Returns immediately (stream runs in a Rust background task) so

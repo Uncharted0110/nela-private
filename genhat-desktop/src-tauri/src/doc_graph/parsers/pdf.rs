@@ -9,8 +9,8 @@ use std::path::Path;
 pub struct PdfParser;
 
 /// Hard caps to keep PDF extraction bounded during bulk indexing.
-const MAX_PDF_PAGES: usize = 20;
-const MAX_PDF_TEXT_BYTES: usize = 1_000_000;
+const MAX_PDF_PAGES: usize = 100;
+const MAX_PDF_TEXT_BYTES: usize = 5_000_000;
 
 impl DocumentParser for PdfParser {
     fn can_parse(&self, extension: &str) -> bool {

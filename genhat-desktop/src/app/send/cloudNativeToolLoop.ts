@@ -18,17 +18,24 @@ import {
   streamChatByMode,
   willRouteToCloud,
 } from "./cloudOrLocalStream";
-import { cloudToolsWebAndMcp, cloudToolsWebOnly } from "./cloudTools";
+import { buildCloudChatTools } from "./cloudTools";
 import { groundWebSearchQuery, resolveFollowUpSearchQuery } from "./followUpSearchQuery";
 import { mergeWebSearchResults, runWebSearchToolLoop } from "./webSearchToolLoop";
+import { normalizeWebToolDepth, runWebSearchWithDepth } from "./webSearchDepth";
+import { knowledgeBaseToSearchResult, fileUrlToPath, isLocalFileHitUrl } from "./fileSearchCitations";
 import type { GenerationOptions } from "./types";
 import { MAX_WEB_SEARCH_TOOL_ROUNDS } from "./webSearchLimits";
+import { useDocGraphStore } from "../../stores/docGraphStore";
 
 const MAX_TOOL_ROUNDS = MAX_WEB_SEARCH_TOOL_ROUNDS;
 
 export interface CloudNativeToolLoopOptions {
   messages: ChatContextMessage[];
   webDepth: "snippets" | "full";
+  /** When false, omit web_search / web_extract (file-search-only turns). Default true. */
+  webEnabled?: boolean;
+  /** Expose local Doc Graph `file_search` tool (Search my files / /files). */
+  fileSearchEnabled?: boolean;
   /** Include MCP spreadsheet/presentation/html tools alongside web_search. */
   includeMcpTools?: boolean;
   containsFileContext?: boolean;
@@ -167,12 +174,7 @@ async function executeToolCall(
     } catch (e) {
       if (e instanceof DOMException && e.name === "AbortError") throw e;
     }
-    const profile =
-      args.profile === "news" || args.profile === "research"
-        ? args.profile
-        : args.depth === "full" || opts.webDepth === "full"
-          ? "research"
-          : "simple";
+    const depth = normalizeWebToolDepth(args.depth ?? args.web_depth);
     const site =
       typeof args.site === "string" && args.site.trim()
         ? args.site.trim()
@@ -184,11 +186,17 @@ async function executeToolCall(
       args.time_range === "year"
         ? args.time_range
         : undefined;
-    const maxResults = profile === "research" ? 8 : 5;
-    opts.onToolStatus?.(`Searching “${query}”`);
     try {
-      const result = await Api.webSearch(query, maxResults, {
-        profile,
+      const result = await runWebSearchWithDepth({
+        query,
+        depth,
+        messages: opts.messages,
+        modelId: opts.modelId,
+        signal: opts.signal,
+        containsFileContext: opts.containsFileContext,
+        userConfirmedCloudContext: opts.userConfirmedCloudContext,
+        contextSource: opts.contextSource,
+        onToolStatus: opts.onToolStatus,
         site,
         timeRange,
       });
@@ -209,6 +217,63 @@ async function executeToolCall(
       opts.onToolStatus?.(null);
       return {
         content: `web_search failed: ${e}`,
+        webSearchResult,
+      };
+    }
+  }
+
+  if (name === "search_knowledge_base" || name === "file_search") {
+    const query = typeof args.query === "string" ? args.query.trim() : "";
+    if (!query) {
+      return {
+        content: "search_knowledge_base requires a query",
+        webSearchResult,
+      };
+    }
+    const topKRaw = args.top_k ?? args.topK;
+    const topK =
+      typeof topKRaw === "number" && Number.isFinite(topKRaw)
+        ? Math.max(1, Math.min(50, Math.floor(topKRaw)))
+        : 25;
+    opts.onToolStatus?.(`Searching knowledge base for “${query}”`);
+    try {
+      useDocGraphStore.getState().openQuery(query);
+      const md = await Api.queryKnowledgeBase(query, topK);
+      useDocGraphStore.setState({ queryResult: md, queryText: query });
+      opts.onToolStatus?.(null);
+      if (!md.trim() || md === "No relevant structural context found.") {
+        return {
+          content: `No local documents matched query: ${query}`,
+          webSearchResult,
+        };
+      }
+      const asSearchResult = knowledgeBaseToSearchResult(query, md);
+      const merged = asSearchResult
+        ? mergeWebSearchResults(webSearchResult, asSearchResult)
+        : webSearchResult;
+      const citeLines = (merged?.results ?? [])
+        .map((h, i) =>
+          isLocalFileHitUrl(h.url)
+            ? `[${i + 1}] ${h.title} — ${fileUrlToPath(h.url)}`
+            : null
+        )
+        .filter(Boolean)
+        .join("\n");
+      const citeHint = citeLines
+        ? `Cite these local sources with inline [n] markers from this list only:\n${citeLines}\n` +
+          `Place [n] after the sentence period. Do NOT paste raw file paths or add a Sources list — citations render as clickable icons in the UI.`
+        : `Mention file names in prose.`;
+      return {
+        content:
+          `Local knowledge-graph results for "${query}" (top_k=${topK}):\n\n${md}\n\n` +
+          `Use these expanded sources as the primary source of truth for local-file questions. ` +
+          `${citeHint} Do not claim you cannot access the user's files.`,
+        webSearchResult: merged,
+      };
+    } catch (e) {
+      opts.onToolStatus?.(null);
+      return {
+        content: `search_knowledge_base failed: ${e}`,
         webSearchResult,
       };
     }
@@ -377,12 +442,15 @@ export async function runCloudAwareToolLoop(
     const local = await runWebSearchToolLoop({
       messages: opts.messages,
       webDepth: opts.webDepth,
+      webEnabled: opts.webEnabled !== false,
+      fileSearchEnabled: Boolean(opts.fileSearchEnabled),
       modelId: opts.modelId,
       signal: opts.signal,
       disableThinking: opts.disableThinking,
       generationOptions: opts.generationOptions,
       onChunk,
       onThinking: opts.onThinking,
+      onToolStatus: opts.onToolStatus,
     });
     return {
       content: notice ? `${notice}${local.content}` : local.content,
@@ -413,19 +481,38 @@ export async function runCloudAwareToolLoop(
 export async function runCloudNativeToolLoop(
   opts: CloudNativeToolLoopOptions
 ): Promise<CloudNativeToolLoopResult> {
-  const tools =
-    opts.includeMcpTools === false
-      ? cloudToolsWebOnly()
-      : cloudToolsWebAndMcp();
+  const webEnabled = opts.webEnabled !== false;
+  const fileSearchEnabled = Boolean(opts.fileSearchEnabled);
+  const tools = buildCloudChatTools({
+    webEnabled,
+    fileSearchEnabled,
+    mcpEnabled: opts.includeMcpTools !== false,
+  });
 
   let messages = toCloudMessages(opts.messages);
-  // Dynamic (non-cached) reminder so the model actually uses web_search when available.
-  if (tools.some((t) => t.function.name === "web_search")) {
-    const hint =
-      "You have a web_search tool for this turn. Use it for current events, news, prices, sports, documentation, travel, flights, or any factual question that needs up-to-date information before answering. " +
-      "Follow-ups inherit the prior topic: if the user previously planned a Spain trip and now asks about flights, search for flights related to that Spain trip — never a bare query like \"flights\" alone. " +
-      "Every web_search query must be self-contained (include place, product, dates, or other entities from the conversation). " +
-      "When answering from web results, cite with inline [n] markers only (after the sentence period). Never paste raw URLs or a Sources list.";
+  // Dynamic (non-cached) reminder so the model actually uses available tools.
+  const hasWebSearch = tools.some((t) => t.function.name === "web_search");
+  const hasFileSearch = tools.some(
+    (t) => t.function.name === "search_knowledge_base"
+  );
+  if (hasWebSearch || hasFileSearch) {
+    const parts: string[] = [];
+    if (hasWebSearch) {
+      parts.push(
+        "You have a web_search tool. Call it ONLY when you need live web facts — never automatically. " +
+          "Every call MUST include query and depth (snippet | full | standard | deep). " +
+          "snippet = quick facts; full = richer page content; standard = multi-facet research; deep = exhaustive multi-facet research. " +
+          "Follow-ups inherit the prior topic. Cite web results with inline [n] markers only (no raw URLs)."
+      );
+    }
+    if (hasFileSearch) {
+      parts.push(
+        "You have a search_knowledge_base tool for the user's local indexed document graph (hybrid BM25 + vector embeddings). " +
+          "Call it for their files/notes/PDFs/slides. Prefer higher top_k (25–40) so graph retrieval can surface related chunks; use 10–15 only for pinpoint lookups. " +
+          "Cite local sources with inline [n] markers only (no raw file paths or Sources list)."
+      );
+    }
+    const hint = parts.join(" ");
     const firstSystem = messages.findIndex((m) => m.role === "system");
     if (firstSystem >= 0) {
       messages = [
@@ -443,17 +530,15 @@ export async function runCloudNativeToolLoop(
   let thinking = "";
   let lastContent = "";
 
-  const hasWebSearch = tools.some((t) => t.function.name === "web_search");
-
   try {
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-      // When web search is enabled, force the first round to call web_search.
-      // Models often answer from memory with tool_choice=auto and never hit /v1/search.
+      // Never force web_search — only run when the model calls it.
+      // File-only turns may gently prefer search_knowledge_base on round 0.
       const toolChoice =
-        hasWebSearch && round === 0
+        round === 0 && hasFileSearch && !hasWebSearch
           ? ({
               type: "function" as const,
-              function: { name: "web_search" },
+              function: { name: "search_knowledge_base" },
             })
           : ("auto" as const);
 
@@ -478,36 +563,23 @@ export async function runCloudNativeToolLoop(
 
       let toolCalls = decision.tool_calls ?? [];
 
-      // Host-side guarantee: if the model still skipped tools on round 0, inject
-      // a web_search grounded in conversation context (follow-ups included).
-      if (hasWebSearch && round === 0 && toolCalls.length === 0) {
+      // Host-side guarantee for file-only turns: if the model skipped tools on
+      // round 0, inject search_knowledge_base. Never auto-force web_search.
+      if (
+        round === 0 &&
+        toolCalls.length === 0 &&
+        hasFileSearch &&
+        !hasWebSearch
+      ) {
         const rawQ = lastUserQuery(messages);
         if (rawQ) {
-          let q = rawQ;
-          try {
-            q = await resolveFollowUpSearchQuery({
-              messages: opts.messages,
-              userText: rawQ,
-              modelId: opts.modelId,
-              signal: opts.signal,
-              containsFileContext: opts.containsFileContext,
-              userConfirmedCloudContext: opts.userConfirmedCloudContext,
-              contextSource: opts.contextSource,
-            });
-          } catch (e) {
-            if (e instanceof DOMException && e.name === "AbortError") throw e;
-          }
           toolCalls = [
             {
-              id: `forced_web_search_${Date.now()}`,
+              id: `forced_search_knowledge_base_${Date.now()}`,
               type: "function",
               function: {
-                name: "web_search",
-                arguments: JSON.stringify({
-                  query: q,
-                  profile:
-                    opts.webDepth === "full" ? "research" : "news",
-                }),
+                name: "search_knowledge_base",
+                arguments: JSON.stringify({ query: rawQ.slice(0, 200), top_k: 25 }),
               },
             },
           ];
@@ -561,13 +633,27 @@ export async function runCloudNativeToolLoop(
 
       if (round + 1 < MAX_TOOL_ROUNDS) {
         const remaining = MAX_TOOL_ROUNDS - (round + 1);
+        const nextHintParts: string[] = [
+          `You have ~${remaining} tool rounds left.`,
+        ];
+        if (hasWebSearch) {
+          nextHintParts.push(
+            "If you still need more web facts, call web_search again with a NEW query and an explicit depth (snippet|full|standard|deep)."
+          );
+        }
+        if (hasFileSearch) {
+          nextHintParts.push(
+            "If you need more local-file context, call search_knowledge_base with a refined query (prefer higher top_k)."
+          );
+        }
+        nextHintParts.push(
+          "Otherwise answer in prose with inline [n] citations only (no raw URLs/paths or Sources list)."
+        );
         messages = [
           ...messages,
           {
             role: "user",
-            content:
-              `You have ~${remaining} tool rounds left. ` +
-              "If you still need more web facts, call web_search again with a NEW query; otherwise answer in prose with inline [n] citations only (no raw URLs or Sources list).",
+            content: nextHintParts.join(" "),
           },
         ];
       }
@@ -664,14 +750,18 @@ export async function runCloudArtifactWebResearch(opts: {
     onToolStatus: opts.onStatus,
   };
 
-  const tools = cloudToolsWebOnly();
+  const tools = buildCloudChatTools({
+    webEnabled: true,
+    fileSearchEnabled: false,
+    mcpEnabled: false,
+  });
   let messages = toCloudMessages(researchOpts.messages);
   messages = [
     messages[0]!,
     {
       role: "system",
       content:
-        "You MUST call the web_search tool at least once with a concise keyword query before finishing.",
+        "You MUST call the web_search tool at least once with a concise keyword query and depth (snippet|full|standard|deep) before finishing.",
     },
     ...messages.slice(1),
   ];

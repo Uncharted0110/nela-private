@@ -79,6 +79,7 @@ pub async fn start_indexing_directory(
 pub async fn query_knowledge_base(
     state: State<'_, DocGraphState>,
     query: String,
+    top_k: Option<usize>,
 ) -> Result<String, String> {
     let engine = state.0.clone();
     let q = query.trim().to_string();
@@ -89,7 +90,7 @@ pub async fn query_knowledge_base(
     tauri::async_runtime::spawn_blocking(move || {
         let embedder = engine.embedder().map_err(|e| e.to_string())?;
         let kb = engine.kb.read();
-        query_kb(&q, &kb, &engine.index, &embedder).map_err(|e| e.to_string())
+        query_kb(&q, &kb, &engine.index, &embedder, top_k).map_err(|e| e.to_string())
     })
     .await
     .map_err(|e| format!("query task join error: {e}"))?

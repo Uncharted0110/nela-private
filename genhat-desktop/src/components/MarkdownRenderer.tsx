@@ -50,6 +50,18 @@ function normalizeLocalPath(href: string): string {
 }
 
 function normalizeUrlKey(url: string): string {
+  if (
+    url.startsWith("file://") ||
+    /^[a-zA-Z]:[/\\]/.test(url) ||
+    (url.startsWith("/") && !url.startsWith("//"))
+  ) {
+    let path = url;
+    if (path.startsWith("file://")) {
+      path = decodeURIComponent(path.replace(/^file:\/\//, ""));
+      if (/^\/[a-zA-Z]:/.test(path)) path = path.slice(1);
+    }
+    return path.replace(/\\/g, "/").toLowerCase();
+  }
   try {
     const u = new URL(url.trim());
     u.hash = "";

@@ -1,8 +1,9 @@
 /**
- * OpenAI-style host-mediated web_search tool loop.
+ * OpenAI-style host-mediated tool loop for local models.
  *
- * When web is enabled the model may emit a JSON tool call; the host runs
- * Api.webSearch and continues until a final prose answer (up to 20 tool rounds).
+ * When web and/or file search are enabled the model may emit a JSON tool call;
+ * the host runs Api.webSearch / Api.queryKnowledgeBase and continues until a
+ * final prose answer (up to 20 tool rounds).
  */
 
 import { Api } from "../../api";
@@ -14,37 +15,39 @@ import type {
   ExtractedWebTable,
 } from "../../types";
 import { extractWebSearchQuery } from "../webSearchQuery";
-import { groundWebSearchQuery, resolveFollowUpSearchQuery } from "./followUpSearchQuery";
+import { groundWebSearchQuery } from "./followUpSearchQuery";
+import { normalizeWebToolDepth, runWebSearchWithDepth } from "./webSearchDepth";
+import type { WebToolDepth } from "./webSearchDepth";
 import type { GenerationOptions } from "./types";
 import { MAX_WEB_SEARCH_TOOL_ROUNDS } from "./webSearchLimits";
+import { useDocGraphStore } from "../../stores/docGraphStore";
+import {
+  knowledgeBaseToSearchResult,
+  fileUrlToPath,
+  isLocalFileHitUrl,
+} from "./fileSearchCitations";
 
-export const WEB_SEARCH_TOOL_SYSTEM = `You have web tools for current, factual, or external information.
-When the user asks about news, prices, sports, docs, trips, flights, or anything that needs up-to-date facts, call a tool before answering.
-You may call tools multiple times (different queries) until you have enough coverage — up to ${MAX_WEB_SEARCH_TOOL_ROUNDS} rounds.
+export const WEB_SEARCH_TOOL_SYSTEM = `You have a web_search tool for live public-web facts.
+Call it ONLY when you need current/external information — never by default.
+Reply with ONLY this JSON (no markdown):
+{"tool":"web_search","query":"concise keyword query","depth":"snippet|full|standard|deep"}
+depth meanings: snippet = quick facts; full = richer page content; standard = multi-facet research; deep = exhaustive multi-facet research.
+Optional after web_search: {"tool":"web_extract","urls":["https://..."],"query":"what you need"}
+Cite web results with inline [n] markers only (no raw URLs).`;
 
-Treat follow-ups as continuing the prior topic. If they planned a Spain trip and then ask about flights/hotels/food, include Spain (and any dates/constraints) in every search query. Never search a bare word like "flights" alone when the conversation already established a destination or product.
-
-To search the web, reply with ONLY this JSON (no markdown, no other text):
-{"tool":"web_search","query":"concise self-contained search query"}
-Optional fields: "profile" ("simple" for quick lookups, "news" for current events, "research" for comparisons/summaries with full page content), "site" (restrict to one domain, e.g. "wikipedia.org"), "time_range" ("day"|"week"|"month"|"year").
-
-To read specific pages in full after a search, reply with ONLY:
-{"tool":"web_extract","urls":["https://..."],"query":"what you are looking for"}
-
-To answer without searching, reply with normal prose (not JSON).
-After you receive tool results, answer using those sources.
-Cite with inline [n] markers matching the numbered web sources (e.g. "…in 1899.[1]"), placed AFTER the sentence period.
-Do NOT paste raw URLs, 【url】 brackets, or a trailing Sources list — the UI shows link icons for citations.
-Do not invent facts that are not in the results.`;
+export const FILE_SEARCH_TOOL_SYSTEM = `You have a search_knowledge_base tool for the user's local indexed document graph (hybrid BM25 + dense vector embeddings + structural expansion).
+Call it for their files, resumes, notes, PDFs, slides, or on-device documents.
+Reply with ONLY this JSON (no markdown):
+{"tool":"search_knowledge_base","query":"keyphrase","top_k":25}
+Prefer higher top_k (25–40) so graph/vector retrieval can surface related chunks; use 10–15 only for pinpoint lookups (max 50).
+After tool results, answer from those sources with inline [n] citations only (no raw file paths or Sources list).`;
 
 const MAX_TOOL_ROUNDS = MAX_WEB_SEARCH_TOOL_ROUNDS;
 
 export interface WebSearchToolCall {
   tool: "web_search";
   query: string;
-  profile?: "simple" | "news" | "research";
-  site?: string;
-  timeRange?: "day" | "week" | "month" | "year";
+  depth: WebToolDepth;
 }
 
 export interface WebExtractToolCall {
@@ -53,17 +56,30 @@ export interface WebExtractToolCall {
   query?: string;
 }
 
-export type HostWebToolCall = WebSearchToolCall | WebExtractToolCall;
+export interface FileSearchToolCall {
+  tool: "search_knowledge_base";
+  query: string;
+  topK?: number;
+}
+
+export type HostWebToolCall =
+  | WebSearchToolCall
+  | WebExtractToolCall
+  | FileSearchToolCall;
 
 export interface WebSearchToolLoopOptions {
   messages: ChatContextMessage[];
   webDepth: "snippets" | "full";
+  /** Default true for backward compatibility. */
+  webEnabled?: boolean;
+  fileSearchEnabled?: boolean;
   modelId?: string | null;
   signal?: AbortSignal;
   disableThinking?: boolean;
   generationOptions?: GenerationOptions;
   onChunk: (chunk: string) => void;
   onThinking: (thinking: string) => void;
+  onToolStatus?: (status: string | null) => void;
 }
 
 export interface WebSearchToolLoopResult {
@@ -72,17 +88,17 @@ export interface WebSearchToolLoopResult {
   webSearchResult: WebSearchResult | null;
 }
 
-function asProfile(v: unknown): WebSearchToolCall["profile"] {
-  return v === "simple" || v === "news" || v === "research" ? v : undefined;
+function buildHostToolSystem(opts: {
+  webEnabled: boolean;
+  fileSearchEnabled: boolean;
+}): string {
+  const parts: string[] = [];
+  if (opts.webEnabled) parts.push(WEB_SEARCH_TOOL_SYSTEM);
+  if (opts.fileSearchEnabled) parts.push(FILE_SEARCH_TOOL_SYSTEM);
+  return parts.join("\n\n");
 }
 
-function asTimeRange(v: unknown): WebSearchToolCall["timeRange"] {
-  return v === "day" || v === "week" || v === "month" || v === "year"
-    ? v
-    : undefined;
-}
-
-/** Try to parse a web_search / web_extract tool call from model output. */
+/** Try to parse a web_search / web_extract / search_knowledge_base tool call. */
 export function parseWebSearchToolCall(text: string): HostWebToolCall | null {
   const trimmed = text.trim();
   if (!trimmed) return null;
@@ -102,7 +118,6 @@ export function parseWebSearchToolCall(text: string): HostWebToolCall | null {
         (typeof obj.tool === "string" && obj.tool) ||
         (typeof obj.name === "string" && obj.name) ||
         "";
-      // Some models nest fields under "arguments".
       const args: Record<string, unknown> =
         obj.arguments && typeof obj.arguments === "object"
           ? (obj.arguments as Record<string, unknown>)
@@ -126,23 +141,33 @@ export function parseWebSearchToolCall(text: string): HostWebToolCall | null {
         };
       }
 
+      if (
+        tool === "search_knowledge_base" ||
+        tool === "file_search" ||
+        tool === "search_files"
+      ) {
+        const query = typeof args.query === "string" ? args.query.trim() : "";
+        if (!query) continue;
+        const topKRaw = args.top_k ?? args.topK;
+        const topK =
+          typeof topKRaw === "number" && Number.isFinite(topKRaw)
+            ? Math.max(1, Math.min(50, Math.floor(topKRaw)))
+            : 25;
+        return {
+          tool: "search_knowledge_base",
+          query: query.slice(0, 200),
+          topK,
+        };
+      }
+
       if (tool !== "web_search") continue;
 
       const query = typeof args.query === "string" ? args.query.trim() : "";
       if (!query) continue;
-      // Legacy depth mapping: "full" used to mean fetch page content.
-      const profile =
-        asProfile(args.profile) ??
-        (args.depth === "full" ? "research" : undefined);
       return {
         tool: "web_search",
         query: query.slice(0, 200),
-        profile,
-        site:
-          typeof args.site === "string" && args.site.trim()
-            ? args.site.trim()
-            : undefined,
-        timeRange: asTimeRange(args.time_range ?? args.timeRange),
+        depth: normalizeWebToolDepth(args.depth ?? args.web_depth),
       };
     } catch {
       // try next candidate
@@ -155,6 +180,11 @@ export function mergeWebSearchResults(
   a: WebSearchResult | null,
   b: WebSearchResult
 ): WebSearchResult {
+  const hitKey = (url: string) =>
+    isLocalFileHitUrl(url)
+      ? fileUrlToPath(url).replace(/\\/g, "/").toLowerCase()
+      : url;
+
   if (!a) {
     return {
       ...b,
@@ -162,11 +192,12 @@ export function mergeWebSearchResults(
     };
   }
 
-  const seen = new Set(a.results.map((r) => r.url));
+  const seen = new Set(a.results.map((r) => hitKey(r.url)));
   const mergedHits: SearchHit[] = [...a.results];
   for (const hit of b.results) {
-    if (!seen.has(hit.url)) {
-      seen.add(hit.url);
+    const key = hitKey(hit.url);
+    if (!seen.has(key)) {
+      seen.add(key);
       mergedHits.push(hit);
     }
   }
@@ -201,14 +232,18 @@ export function mergeWebSearchResults(
   };
 }
 
-function withWebToolSystem(messages: ChatContextMessage[]): LlmMessage[] {
-  const out: LlmMessage[] = [{ role: "system", content: WEB_SEARCH_TOOL_SYSTEM }];
+function withWebToolSystem(
+  messages: ChatContextMessage[],
+  opts: { webEnabled: boolean; fileSearchEnabled: boolean }
+): LlmMessage[] {
+  const toolSystem = buildHostToolSystem(opts);
+  const out: LlmMessage[] = [{ role: "system", content: toolSystem }];
   for (const m of messages) {
     if (m.role === "system") {
       // Fold extra system into the tool system message (llama templates want one system).
       out[0] = {
         role: "system",
-        content: `${WEB_SEARCH_TOOL_SYSTEM}\n\n---\n\n${m.content}`,
+        content: `${toolSystem}\n\n---\n\n${m.content}`,
       };
     } else {
       out.push({ role: m.role, content: m.content });
@@ -268,236 +303,242 @@ function streamChatPromise(
 }
 
 /**
- * Run the agentic web_search loop, then stream the final answer via onChunk.
+ * Run the agentic host tool loop (web and/or file search), then stream the final answer.
  */
 export async function runWebSearchToolLoop(
   opts: WebSearchToolLoopOptions
 ): Promise<WebSearchToolLoopResult> {
-  let messages = withWebToolSystem(opts.messages);
+  const webEnabled = opts.webEnabled !== false;
+  const fileSearchEnabled = Boolean(opts.fileSearchEnabled);
+  let messages = withWebToolSystem(opts.messages, {
+    webEnabled,
+    fileSearchEnabled,
+  });
   let webSearchResult: WebSearchResult | null = null;
   let thinking = "";
 
-  for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-    const decision = await Api.completeChat(messages, {
-      modelId: opts.modelId,
-      signal: opts.signal,
-      disableThinking: opts.disableThinking,
-      maxTokens: Math.min(opts.generationOptions?.maxTokens ?? 512, 512),
-      temperature: 0.2,
-      topP: opts.generationOptions?.topP,
-      topK: opts.generationOptions?.topK,
-      repeatPenalty: opts.generationOptions?.repeatPenalty,
-      idSlot: opts.generationOptions?.idSlot,
-      sessionId: opts.generationOptions?.sessionId,
-      workspaceId: opts.generationOptions?.workspaceId,
-    });
+  try {
+    for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+      const decision = await Api.completeChat(messages, {
+        modelId: opts.modelId,
+        signal: opts.signal,
+        disableThinking: opts.disableThinking,
+        maxTokens: Math.min(opts.generationOptions?.maxTokens ?? 512, 512),
+        temperature: 0.2,
+        topP: opts.generationOptions?.topP,
+        topK: opts.generationOptions?.topK,
+        repeatPenalty: opts.generationOptions?.repeatPenalty,
+        idSlot: opts.generationOptions?.idSlot,
+        sessionId: opts.generationOptions?.sessionId,
+        workspaceId: opts.generationOptions?.workspaceId,
+      });
 
-    if (decision.thinking) thinking += decision.thinking;
+      if (decision.thinking) thinking += decision.thinking;
 
-    const call = parseWebSearchToolCall(decision.content);
-    // When web is on, don't let the model answer from memory on round 0 —
-    // force a search using the user's last message.
-    if (!call) {
-      if (round === 0) {
+      let call = parseWebSearchToolCall(decision.content);
+
+      // Disable tools the host didn't enable for this turn.
+      if (call?.tool === "web_search" || call?.tool === "web_extract") {
+        if (!webEnabled) call = null;
+      }
+      if (call?.tool === "search_knowledge_base" && !fileSearchEnabled) {
+        call = null;
+      }
+
+      // Never auto-force web_search. File-only turns may inject KB search once.
+      if (!call && round === 0 && fileSearchEnabled && !webEnabled) {
         const lastUser = [...opts.messages]
           .reverse()
           .find((m) => m.role === "user" && m.content.trim());
         const rawQ = (lastUser?.content ?? "").trim().slice(0, 200);
         if (rawQ) {
-          let q = rawQ;
+          call = { tool: "search_knowledge_base", query: rawQ, topK: 25 };
+        }
+      }
+
+      if (!call) {
+        if (decision.content.trim()) {
+          opts.onChunk(decision.content);
+          return {
+            content: decision.content,
+            thinking,
+            webSearchResult,
+          };
+        }
+        break;
+      }
+
+      const canSearchAgain = round + 1 < MAX_TOOL_ROUNDS;
+      const toolName = call.tool;
+
+      messages = [
+        ...messages,
+        {
+          role: "assistant",
+          content: JSON.stringify(call),
+          name: toolName,
+        },
+      ];
+
+      try {
+        let toolBody: string;
+
+        if (call.tool === "search_knowledge_base") {
+          opts.onToolStatus?.(`Searching knowledge base for “${call.query}”`);
+          useDocGraphStore.getState().openQuery(call.query);
+          const md = await Api.queryKnowledgeBase(call.query, call.topK ?? 25);
+          useDocGraphStore.setState({
+            queryResult: md,
+            queryText: call.query,
+          });
+          opts.onToolStatus?.(null);
+          if (!md.trim() || md === "No relevant structural context found.") {
+            toolBody = `No local documents matched query: ${call.query}`;
+          } else {
+            const asSearchResult = knowledgeBaseToSearchResult(call.query, md);
+            if (asSearchResult) {
+              webSearchResult = mergeWebSearchResults(
+                webSearchResult,
+                asSearchResult
+              );
+            }
+            const citeLines = (webSearchResult?.results ?? [])
+              .map((h, i) =>
+                isLocalFileHitUrl(h.url)
+                  ? `[${i + 1}] ${h.title} — ${fileUrlToPath(h.url)}`
+                  : null
+              )
+              .filter(Boolean)
+              .join("\n");
+            toolBody =
+              `Local knowledge-graph results for "${call.query}":\n\n${md}\n\n` +
+              (citeLines
+                ? `Cite these local sources with inline [n] markers from this list only:\n${citeLines}\n` +
+                  `Do not paste raw paths or add a Sources list.`
+                : `Cite file names in prose.`);
+          }
+        } else if (call.tool === "web_extract") {
+          opts.onToolStatus?.(
+            `Reading ${call.urls.length} page${call.urls.length > 1 ? "s" : ""}`
+          );
+          const result = await Api.webExtract(call.urls, call.query, "basic");
+          opts.onToolStatus?.(null);
+          if (result.results.length > 0) {
+            const asSearchResult: WebSearchResult = {
+              query: call.query ?? call.urls[0]!,
+              results: result.results.map((p) => ({
+                title: p.url,
+                snippet: p.content.slice(0, 600),
+                url: p.url,
+                image_url: p.images?.[0] ?? null,
+              })),
+              formatted_context: "",
+              extracted_tables: result.extracted_tables,
+              images: result.results.flatMap((p) => p.images ?? []).slice(0, 8),
+            };
+            webSearchResult = mergeWebSearchResults(
+              webSearchResult,
+              asSearchResult
+            );
+          }
+          toolBody =
+            result.formatted_context?.trim() ||
+            "No content could be extracted from the provided URLs.";
+        } else {
+          let searchQuery = call.query;
           try {
-            q = await resolveFollowUpSearchQuery({
+            searchQuery = await groundWebSearchQuery(call.query, {
               messages: opts.messages,
-              userText: rawQ,
+              userText: call.query,
               modelId: opts.modelId,
               signal: opts.signal,
             });
           } catch (e) {
             if (e instanceof DOMException && e.name === "AbortError") throw e;
           }
-          // Fall through into the search path with a synthetic call.
-          const forced = {
-            tool: "web_search" as const,
-            query: q,
-            profile:
-              opts.webDepth === "full"
-                ? ("research" as const)
-                : ("news" as const),
-          };
-          const canSearchAgain = round + 1 < MAX_TOOL_ROUNDS;
-          messages = [
-            ...messages,
-            {
-              role: "assistant",
-              content: JSON.stringify(forced),
-              name: "web_search",
-            },
-          ];
-          try {
-            const maxResults = forced.profile === "research" ? 8 : 5;
-            const result = await Api.webSearch(forced.query, maxResults, {
-              profile: forced.profile,
-            });
-            if (result.results.length > 0 || result.formatted_context?.trim()) {
-              webSearchResult = mergeWebSearchResults(webSearchResult, result);
-            }
-            const toolBody =
-              result.formatted_context?.trim() ||
-              (result.results.length === 0
-                ? `No web results found for query: ${forced.query}`
-                : result.results
-                    .map((h, i) => `${i + 1}. ${h.title}\n${h.snippet}\n${h.url}`)
-                    .join("\n\n"));
-            messages = [
-              ...messages,
-              {
-                role: "tool",
-                name: "web_search",
-                tool_call_id: `web_search_${round}`,
-                content: toolBody,
-              },
-              {
-                role: "user",
-                content: canSearchAgain
-                  ? `Using the tool results above, continue. You have ${MAX_TOOL_ROUNDS - (round + 1)} tool rounds left — ` +
-                    "call web_search with a NEW focused query if needed; otherwise answer in prose with inline [n] citations (no raw URLs)."
-                  : "Using the tool results above, answer the user's question in prose now with inline [n] citations only (no raw URLs, no Sources list). Do not call tools again.",
-              },
-            ];
-            if (!canSearchAgain) break;
-            continue;
-          } catch (e) {
-            console.warn("[web_search tool] Forced search failed:", e);
-          }
-        }
-      }
-      // Model answered without a tool call — deliver prose to the UI.
-      if (decision.content.trim()) {
-        opts.onChunk(decision.content);
-        return {
-          content: decision.content,
-          thinking,
-          webSearchResult,
-        };
-      }
-      break;
-    }
-
-    const canSearchAgain = round + 1 < MAX_TOOL_ROUNDS;
-    const toolName = call.tool;
-
-    messages = [
-      ...messages,
-      {
-        role: "assistant",
-        content: JSON.stringify(call),
-        name: toolName,
-      },
-    ];
-
-    try {
-      let toolBody: string;
-
-      if (call.tool === "web_extract") {
-        const result = await Api.webExtract(call.urls, call.query, "basic");
-        if (result.results.length > 0) {
-          const asSearchResult: WebSearchResult = {
-            query: call.query ?? call.urls[0]!,
-            results: result.results.map((p) => ({
-              title: p.url,
-              snippet: p.content.slice(0, 600),
-              url: p.url,
-              image_url: p.images?.[0] ?? null,
-            })),
-            formatted_context: "",
-            extracted_tables: result.extracted_tables,
-            images: result.results.flatMap((p) => p.images ?? []).slice(0, 8),
-          };
-          webSearchResult = mergeWebSearchResults(
-            webSearchResult,
-            asSearchResult
-          );
-        }
-        toolBody =
-          result.formatted_context?.trim() ||
-          "No content could be extracted from the provided URLs.";
-      } else {
-        let searchQuery = call.query;
-        try {
-          searchQuery = await groundWebSearchQuery(call.query, {
+          const result = await runWebSearchWithDepth({
+            query: searchQuery,
+            depth: call.depth,
             messages: opts.messages,
-            userText: call.query,
             modelId: opts.modelId,
             signal: opts.signal,
+            onToolStatus: opts.onToolStatus,
           });
-        } catch (e) {
-          if (e instanceof DOMException && e.name === "AbortError") throw e;
+          opts.onToolStatus?.(null);
+          if (result.results.length > 0 || result.formatted_context?.trim()) {
+            webSearchResult = mergeWebSearchResults(webSearchResult, result);
+          }
+          toolBody =
+            result.formatted_context?.trim() ||
+            (result.results.length === 0
+              ? `No web results found for query: ${searchQuery}`
+              : result.results
+                  .map((h, i) => `${i + 1}. ${h.title}\n${h.snippet}\n${h.url}`)
+                  .join("\n\n"));
         }
-        const profile =
-          call.profile ?? (opts.webDepth === "full" ? "research" : "simple");
-        const maxResults = profile === "research" ? 8 : 5;
-        const result = await Api.webSearch(searchQuery, maxResults, {
-          profile,
-          site: call.site,
-          timeRange: call.timeRange,
-        });
-        if (result.results.length > 0 || result.formatted_context?.trim()) {
-          webSearchResult = mergeWebSearchResults(webSearchResult, result);
-        }
-        toolBody =
-          result.formatted_context?.trim() ||
-          (result.results.length === 0
-            ? `No web results found for query: ${searchQuery}`
-            : result.results
-                .map((h, i) => `${i + 1}. ${h.title}\n${h.snippet}\n${h.url}`)
-                .join("\n\n"));
+
+        const continueHint = canSearchAgain
+          ? `Using the tool results above, continue. You have ${MAX_TOOL_ROUNDS - (round + 1)} tool rounds left — ` +
+            [
+              webEnabled
+                ? "call web_search (with depth) / web_extract if more web facts are needed"
+                : null,
+              fileSearchEnabled
+                ? "call search_knowledge_base with a refined query (prefer higher top_k) if more local context is needed"
+                : null,
+              "otherwise answer in prose with inline [n] citations only (no raw URLs/paths or Sources list)",
+            ]
+              .filter(Boolean)
+              .join("; ") +
+            "."
+          : "Using the tool results above, answer the user's question in prose now with inline [n] citations only (no raw URLs/paths, no Sources list). Do not call tools again.";
+
+        messages = [
+          ...messages,
+          {
+            role: "tool",
+            name: toolName,
+            tool_call_id: `${toolName}_${round}`,
+            content: toolBody,
+          },
+          {
+            role: "user",
+            content: continueHint,
+          },
+        ];
+
+        if (!canSearchAgain) break;
+      } catch (e) {
+        opts.onToolStatus?.(null);
+        console.warn(`[${toolName} tool] Failed:`, e);
+        messages = [
+          ...messages,
+          {
+            role: "tool",
+            name: toolName,
+            tool_call_id: `${toolName}_${round}`,
+            content: `${toolName} failed: ${e}. Answer from your knowledge and note that the tool was unavailable.`,
+          },
+          {
+            role: "user",
+            content:
+              "A tool call failed. Answer the user's question as best you can without those results.",
+          },
+        ];
+        break;
       }
-
-      messages = [
-        ...messages,
-        {
-          role: "tool",
-          name: toolName,
-          tool_call_id: `${toolName}_${round}`,
-          content: toolBody,
-        },
-        {
-          role: "user",
-          content: canSearchAgain
-            ? `Using the tool results above, continue. You have ${MAX_TOOL_ROUNDS - (round + 1)} tool rounds left — ` +
-              "call web_search with a NEW focused query (or web_extract on promising URLs) if more facets are needed; otherwise answer in prose with inline [n] citations (no raw URLs)."
-            : "Using the tool results above, answer the user's question in prose now with inline [n] citations only (no raw URLs, no Sources list). Do not call tools again.",
-        },
-      ];
-
-      if (!canSearchAgain) break;
-    } catch (e) {
-      console.warn(`[${toolName} tool] Failed:`, e);
-      messages = [
-        ...messages,
-        {
-          role: "tool",
-          name: toolName,
-          tool_call_id: `${toolName}_${round}`,
-          content: `${toolName} failed: ${e}. Answer from your knowledge and note that live search was unavailable.`,
-        },
-        {
-          role: "user",
-          content:
-            "Web search failed. Answer the user's question as best you can without live results.",
-        },
-      ];
-      break;
     }
-  }
 
-  // Final streamed answer after tool rounds (or empty decision).
-  const streamed = await streamChatPromise(messages, opts);
-  return {
-    content: streamed.content,
-    thinking: thinking + (streamed.thinking || ""),
-    webSearchResult,
-  };
+    // Final streamed answer after tool rounds (or empty decision).
+    const streamed = await streamChatPromise(messages, opts);
+    return {
+      content: streamed.content,
+      thinking: thinking + (streamed.thinking || ""),
+      webSearchResult,
+    };
+  } finally {
+    opts.onToolStatus?.(null);
+  }
 }
 
 /**

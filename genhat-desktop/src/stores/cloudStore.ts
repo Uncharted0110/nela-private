@@ -8,16 +8,9 @@ import {
 } from "../api";
 import type { CloudRoutingPreference, EntitlementResponse } from "../types";
 import { friendlyError } from "../app/friendlyError";
-import { useChatModeStore } from "./chatModeStore";
 
 const PREFERRED_MODE_KEY = "nela.cloud.preferredMode";
 const ENTITLEMENT_CACHE_KEY = "nela.cloud.entitlementDisplay";
-
-export function preferredModeEnablesWebSearch(
-  mode: CloudRoutingPreference
-): boolean {
-  return mode !== "local";
-}
 
 function readPreferredMode(): CloudRoutingPreference {
   try {
@@ -114,10 +107,8 @@ export const useCloudStore = create<CloudStoreState>((set) => ({
   setPreferredMode: (mode) => {
     persistPreferredMode(mode);
     set({ preferredMode: mode });
-    // Cloud / Auto: web search on by default. Private: off (user can re-enable in Tools).
-    useChatModeStore
-      .getState()
-      .setWebEnabled(preferredModeEnablesWebSearch(mode));
+    // Do not auto-enable web search — the LLM must call web_search explicitly
+    // when the user has turned the Web tool on.
   },
 
   refreshEntitlement: async () => {

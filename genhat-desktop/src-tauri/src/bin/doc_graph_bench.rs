@@ -246,7 +246,13 @@ fn main() {
 
     if total_parsed > 0 {
         let kb = engine.kb.read();
-        match query_kb("revenue growth metrics", &kb, &engine.index, &embedder) {
+        match query_kb(
+            "revenue growth metrics",
+            &kb,
+            &engine.index,
+            &embedder,
+            Some(15),
+        ) {
             Ok(md) => {
                 println!("\n=== Sample query preview ===");
                 for line in md.lines().take(20) {
