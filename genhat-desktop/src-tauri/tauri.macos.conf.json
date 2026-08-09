@@ -7,8 +7,7 @@
       "bin/espeak-ng-mac/espeak-ng-data/lang/gmw/*": "bin/espeak-ng-mac/espeak-ng-data/lang/gmw/",
       "bin/espeak-ng-mac/espeak-ng-data/voices/!v/*": "bin/espeak-ng-mac/espeak-ng-data/voices/!v/",
       "bin/espeak-ng-mac/espeak-ng-data/voices/mb/*": "bin/espeak-ng-mac/espeak-ng-data/voices/mb/",
-      "bin/espeak-ng-mac/espeak-ng-data/mbrola_ph/*": "bin/espeak-ng-mac/espeak-ng-data/mbrola_ph/",
-      "resources/fileindexer_sidecar": "fileindexer_sidecar"
+      "bin/espeak-ng-mac/espeak-ng-data/mbrola_ph/*": "bin/espeak-ng-mac/espeak-ng-data/mbrola_ph/"
     }
   }
 }

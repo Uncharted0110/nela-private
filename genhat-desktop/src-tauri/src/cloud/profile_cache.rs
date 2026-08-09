@@ -80,6 +80,9 @@ pub fn dto_to_cached_profile(dto: &UserProfileDto) -> UserProfile {
         entitlement_status: Some(map_entitlement_status(&dto.entitlement_status)),
         auth_provider: map_auth_provider(&dto.auth_provider),
         updated_at: dto.updated_at.clone(),
+        occupation: dto.occupation.clone(),
+        field: dto.field.clone(),
+        onboarding_completed: dto.onboarding_completed,
     }
 }
 

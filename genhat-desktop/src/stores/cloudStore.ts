@@ -2,8 +2,8 @@ import { create } from "zustand";
 import {
   getCloudEntitlement,
   createCloudCheckout,
-  createBillingManage,
   openCloudPricing,
+  openCloudBilling,
   confirmCloudCheckout,
 } from "../api";
 import type { CloudRoutingPreference, EntitlementResponse } from "../types";
@@ -88,7 +88,7 @@ export interface CloudStoreState {
   setPreferredMode: (mode: CloudRoutingPreference) => void;
   refreshEntitlement: () => Promise<void>;
   openCheckout: (plan: "starter" | "pro") => Promise<void>;
-  openBillingManage: () => Promise<void>;
+  openBillingPage: () => Promise<void>;
   openPricingPage: () => Promise<void>;
   openUpgradeModal: (reason?: "upgrade" | "credits") => void;
   closeUpgradeModal: () => void;
@@ -188,10 +188,10 @@ export const useCloudStore = create<CloudStoreState>((set) => ({
     }
   },
 
-  openBillingManage: async () => {
+  openBillingPage: async () => {
     set({ loading: true, error: null });
     try {
-      await createBillingManage();
+      await openCloudBilling();
       set({ loading: false });
     } catch (err) {
       const message = toFriendly(err);

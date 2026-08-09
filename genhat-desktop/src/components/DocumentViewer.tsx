@@ -4,6 +4,7 @@ import hljs from "highlight.js";
 import JSZip from "jszip";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { friendlyErrorFromUnknown } from "../app/friendlyError";
 import {
   X,
   ZoomIn,
@@ -132,7 +133,7 @@ export default function DocumentViewer({ filePath, title, onClose }: DocumentVie
           if (!cancelled) setTextContent(text);
         }
       } catch (e) {
-        if (!cancelled) setError(`Failed to load file: ${e}`);
+        if (!cancelled) setError(friendlyErrorFromUnknown(e));
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -174,7 +175,7 @@ export default function DocumentViewer({ filePath, title, onClose }: DocumentVie
       renderFootnotes: true,
       renderEndnotes: true,
     }).catch((err: unknown) => {
-      if (!cancelled) setError(`Failed to render DOCX: ${err}`);
+      if (!cancelled) setError(friendlyErrorFromUnknown(err));
     });
 
     return () => { cancelled = true; };

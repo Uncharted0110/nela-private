@@ -57,7 +57,7 @@ const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
   const setPreferredMode = useCloudStore((s) => s.setPreferredMode);
   const refreshEntitlement = useCloudStore((s) => s.refreshEntitlement);
   const openPricingPage = useCloudStore((s) => s.openPricingPage);
-  const openBillingManage = useCloudStore((s) => s.openBillingManage);
+  const openBillingPage = useCloudStore((s) => s.openBillingPage);
   const clearError = useCloudStore((s) => s.clearError);
 
   useEffect(() => {
@@ -238,10 +238,10 @@ const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                       type="button"
                       className="cloud-manage-btn"
                       disabled={loading}
-                      onClick={() => void openBillingManage()}
+                      onClick={() => void openBillingPage()}
                     >
                       <CreditCard size={16} />
-                      Manage billing
+                      Open billing
                     </button>
                   )}
                 </div>

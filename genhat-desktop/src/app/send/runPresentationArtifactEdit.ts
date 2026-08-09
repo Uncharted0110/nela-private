@@ -16,6 +16,7 @@ import { inferPresentationTheme } from "./presentationTheme";
 import { repairNestedKeys } from "./repairNestedKeys";
 import { streamChatByMode, willRouteToCloud } from "./cloudOrLocalStream";
 import type { GenerationOptions, SendHandlerContext } from "./types";
+import { friendlyErrorFromUnknown } from "../friendlyError";
 
 export async function runPresentationArtifactEdit(
   text: string,
@@ -121,22 +122,14 @@ Produce an updated presentation plan that applies these edits. Use the "${themeH
             const message =
               execErr instanceof Error ? execErr.message : String(execErr);
             ctx.updateSession(sid, { loading: false });
-            updateEditMsg(
-              "Error",
-              null,
-              `Failed to apply presentation edits: ${message}`
-            );
+            updateEditMsg("Error", null, friendlyErrorFromUnknown(`Failed to apply presentation edits: ${message}`));
             resolve();
           }
         })();
       },
       onError: (err) => {
         ctx.updateSession(sid, { loading: false });
-        updateEditMsg(
-          "Error",
-          null,
-          `Failed to generate presentation edit plan: ${err}`
-        );
+        updateEditMsg("Error", null, friendlyErrorFromUnknown(`Failed to generate presentation edit plan: ${err}`));
         reject(err);
       },
     });

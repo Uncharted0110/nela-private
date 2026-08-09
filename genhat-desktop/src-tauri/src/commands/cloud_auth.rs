@@ -5,7 +5,7 @@ use crate::cloud::client;
 use crate::cloud::profile_cache;
 use crate::cloud::token_store;
 use crate::cloud::types::{
-    BillingManageResponse, CheckoutResponse, DeviceStartResponse, EntitlementResponse,
+    CheckoutResponse, DeviceStartResponse, EntitlementResponse,
 };
 use serde::Serialize;
 use tauri::{AppHandle, Manager};
@@ -131,6 +131,28 @@ pub async fn cloud_get_profile(app: AppHandle) -> Result<Option<UserProfile>, St
 }
 
 #[tauri::command]
+pub async fn cloud_patch_profile(
+    app: AppHandle,
+    occupation: Option<String>,
+    field: Option<String>,
+    complete_onboarding: Option<bool>,
+) -> Result<UserProfile, String> {
+    let dir = app_data_dir(&app)?;
+    let mut body = serde_json::Map::new();
+    if let Some(occupation) = occupation {
+        body.insert("occupation".into(), serde_json::Value::String(occupation));
+    }
+    if let Some(field) = field {
+        body.insert("field".into(), serde_json::Value::String(field));
+    }
+    if complete_onboarding == Some(true) {
+        body.insert("completeOnboarding".into(), serde_json::Value::Bool(true));
+    }
+    let dto = client::patch_me(&dir, serde_json::Value::Object(body)).await?;
+    profile_cache::cache_cloud_profile(&dir, &dto)
+}
+
+#[tauri::command]
 pub async fn cloud_get_entitlement(app: AppHandle) -> Result<EntitlementResponse, String> {
     let dir = app_data_dir(&app)?;
     client::get_entitlement(&dir).await
@@ -151,25 +173,27 @@ pub async fn cloud_create_checkout(
     Ok(response)
 }
 
-#[tauri::command]
-pub async fn cloud_create_billing_manage(app: AppHandle) -> Result<BillingManageResponse, String> {
-    let dir = app_data_dir(&app)?;
-    let response = client::create_billing_manage(&dir).await?;
-    open_url(&app, &response.manage_url)?;
-    Ok(response)
-}
-
-/// Confirm latest paid Razorpay checkout and refresh Premium entitlement.
-#[tauri::command]
-pub async fn cloud_confirm_checkout(app: AppHandle) -> Result<crate::cloud::types::ConfirmCheckoutResponse, String> {
-    let dir = app_data_dir(&app)?;
-    client::confirm_checkout(&dir).await
-}
-
 /// Open the public pricing page so users can upgrade to Premium.
 #[tauri::command]
 pub async fn cloud_open_pricing(app: AppHandle) -> Result<(), String> {
     let base = crate::cloud::web_base_url();
     let url = format!("{}/pricing", base.trim_end_matches('/'));
     open_url(&app, &url)
+}
+
+/// Open the website billing dashboard in the system browser.
+#[tauri::command]
+pub async fn cloud_open_billing(app: AppHandle) -> Result<(), String> {
+    let base = crate::cloud::web_base_url();
+    let url = format!("{}/account/billing", base.trim_end_matches('/'));
+    open_url(&app, &url)
+}
+
+/// Confirm latest paid Razorpay checkout and refresh Premium entitlement.
+#[tauri::command]
+pub async fn cloud_confirm_checkout(
+    app: AppHandle,
+) -> Result<crate::cloud::types::ConfirmCheckoutResponse, String> {
+    let dir = app_data_dir(&app)?;
+    client::confirm_checkout(&dir).await
 }

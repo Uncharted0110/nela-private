@@ -15,6 +15,7 @@ import { handleSendVision } from "./handleSendVision";
 import { handleSendTextChat } from "./handleSendTextChat";
 import { handleArtifactGeneration } from "./handleArtifactGeneration";
 import { handleArtifactEdit } from "./handleArtifactEdit";
+import { friendlyErrorFromUnknown } from "../friendlyError";
 import type { SendHandlerContext } from "./types";
 import { buildSendHandlerContext } from "./buildContext";
 
@@ -239,7 +240,7 @@ export async function executeHandleSend(
     ctx.updateSession(sid, (prev) => ({
       messages: [
         ...prev.messages,
-        { role: "assistant" as const, content: "An unexpected error occurred." },
+        { role: "assistant" as const, content: friendlyErrorFromUnknown(err) },
       ],
       loading: false,
     }));

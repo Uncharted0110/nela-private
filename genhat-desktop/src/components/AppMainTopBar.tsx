@@ -3,7 +3,7 @@ import type { WorkspaceRecord } from "../types";
 import { COPY } from "../app/copy";
 import { useCloudStore } from "../stores/cloudStore";
 import WorkspaceSelector from "./WorkspaceSelector";
-import FileIndexerStatusBadge from "./FileIndexerStatusBadge";
+import DocGraphStatusBadge from "./DocGraphStatusBadge";
 import "./ModeBanner.css";
 
 interface AppMainTopBarProps {
@@ -88,7 +88,7 @@ export default function AppMainTopBar({
       </div>
 
       <div className="flex items-center gap-3">
-        <FileIndexerStatusBadge />
+        <DocGraphStatusBadge />
         {modeControls}
       </div>
     </header>

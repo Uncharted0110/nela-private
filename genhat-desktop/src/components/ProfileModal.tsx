@@ -58,6 +58,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) => {
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
   const [authName, setAuthName] = useState("");
+  const [authConfirmPassword, setAuthConfirmPassword] = useState("");
   const [showAvatarPicker, setShowAvatarPicker] = useState(false);
   const [saveNotice, setSaveNotice] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -102,6 +103,12 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) => {
 
   const handleEmailAuth = async () => {
     clearError();
+    if (authMode === "register" && authPassword !== authConfirmPassword) {
+      useAuthStore.setState({
+        error: "Passwords do not match. Check them and try again.",
+      });
+      return;
+    }
     try {
       if (authMode === "register") {
         await registerWithEmail({
@@ -294,6 +301,19 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) => {
                   minLength={8}
                 />
               </label>
+              {authMode === "register" ? (
+                <label className="profile-field">
+                  <span>Confirm password</span>
+                  <input
+                    type="password"
+                    value={authConfirmPassword}
+                    onChange={(e) => setAuthConfirmPassword(e.target.value)}
+                    disabled={loading || loginPending}
+                    autoComplete="new-password"
+                    minLength={8}
+                  />
+                </label>
+              ) : null}
               <button
                 type="button"
                 className="profile-save-btn"
@@ -302,7 +322,9 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) => {
                   loading ||
                   loginPending ||
                   !authEmail.trim() ||
-                  authPassword.length < 8
+                  authPassword.length < 8 ||
+                  (authMode === "register" &&
+                    authConfirmPassword.length < 8)
                 }
               >
                 {loading ? (

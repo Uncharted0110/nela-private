@@ -43,6 +43,12 @@ pub struct UserProfileDto {
     pub is_premium: Option<bool>,
     pub entitlement_status: EntitlementStatus,
     pub updated_at: String,
+    #[serde(default)]
+    pub occupation: Option<String>,
+    #[serde(default)]
+    pub field: Option<String>,
+    #[serde(default)]
+    pub onboarding_completed: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -133,12 +139,6 @@ pub struct EntitlementResponse {
 #[serde(rename_all = "camelCase")]
 pub struct CheckoutResponse {
     pub checkout_url: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BillingManageResponse {
-    pub manage_url: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

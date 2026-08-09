@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import * as pdfjsLib from "pdfjs-dist";
+import { friendlyErrorFromUnknown } from "../app/friendlyError";
 import {
   ZoomIn, ZoomOut, ChevronLeft, ChevronRight, X, Minimize2,
 } from "lucide-react";
@@ -58,7 +59,7 @@ export default function PdfViewer({ pdfData, title, onClose }: PdfViewerProps) {
         }
       } catch (e) {
         if (!cancelled) {
-          setError(e instanceof Error ? e.message : "Failed to load PDF");
+          setError(friendlyErrorFromUnknown(e));
           setLoading(false);
         }
       }

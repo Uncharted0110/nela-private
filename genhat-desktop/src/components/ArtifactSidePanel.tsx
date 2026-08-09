@@ -1,10 +1,25 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { X, FileCode, Table2, Presentation, Code2, Eye } from "lucide-react";
 import { prepareArtifactHtmlPreview } from "../app/artifactHtmlPreview";
 import { parseCSV } from "../app/send/csvParse";
 import { sanitizeCsvArtifactBody } from "../app/sanitizeCsvArtifact";
 import { Api } from "../api";
 import ExcelSheetGrid from "./ExcelSheetGrid";
+
+const PANEL_WIDTH_KEY = "nela.artifactPanelWidthPx";
+const PANEL_MIN_WIDTH = 320;
+const PANEL_DEFAULT_WIDTH = 480;
+
+function loadPanelWidth(): number {
+  try {
+    const raw = localStorage.getItem(PANEL_WIDTH_KEY);
+    const n = raw ? Number(raw) : NaN;
+    if (Number.isFinite(n) && n >= PANEL_MIN_WIDTH) return Math.round(n);
+  } catch {
+    /* ignore */
+  }
+  return PANEL_DEFAULT_WIDTH;
+}
 
 export interface ArtifactSidePanelProps {
   active: boolean;
@@ -99,10 +114,77 @@ export default function ArtifactSidePanel({
   const [xlsxRows, setXlsxRows] = useState<string[][] | null>(null);
   const [xlsxSheetName, setXlsxSheetName] = useState("Sheet1");
   const [xlsxLoading, setXlsxLoading] = useState(false);
+  const [panelWidth, setPanelWidth] = useState(loadPanelWidth);
+  const [resizing, setResizing] = useState(false);
+  const panelRef = useRef<HTMLElement>(null);
+  const dragRef = useRef<{ startX: number; startWidth: number } | null>(null);
   const throttleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latestHtml = useRef(html ?? "");
   const paintedOnce = useRef(false);
   const prevSaved = useRef(savedPath);
+
+  const clampWidth = useCallback((width: number) => {
+    const parentWidth =
+      panelRef.current?.parentElement?.clientWidth ?? window.innerWidth;
+    const maxWidth = Math.max(PANEL_MIN_WIDTH, Math.floor(parentWidth * 0.85));
+    return Math.min(maxWidth, Math.max(PANEL_MIN_WIDTH, Math.round(width)));
+  }, []);
+
+  const onResizePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    dragRef.current = { startX: e.clientX, startWidth: panelWidth };
+    setResizing(true);
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+
+  const onResizePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current;
+    if (!drag) return;
+    // Panel is on the right — dragging the left edge leftward grows width.
+    const next = clampWidth(drag.startWidth + (drag.startX - e.clientX));
+    setPanelWidth(next);
+  };
+
+  const endResize = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!dragRef.current) return;
+    dragRef.current = null;
+    setResizing(false);
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch {
+      /* already released */
+    }
+    setPanelWidth((w) => {
+      const clamped = clampWidth(w);
+      try {
+        localStorage.setItem(PANEL_WIDTH_KEY, String(clamped));
+      } catch {
+        /* ignore */
+      }
+      return clamped;
+    });
+  };
+
+  useEffect(() => {
+    if (!active) return;
+    const onWinResize = () => setPanelWidth((w) => clampWidth(w));
+    window.addEventListener("resize", onWinResize);
+    return () => window.removeEventListener("resize", onWinResize);
+  }, [active, clampWidth]);
+
+  useEffect(() => {
+    if (!resizing) return;
+    const prevCursor = document.body.style.cursor;
+    const prevSelect = document.body.style.userSelect;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    return () => {
+      document.body.style.cursor = prevCursor;
+      document.body.style.userSelect = prevSelect;
+    };
+  }, [resizing]);
 
   useEffect(() => {
     if (!savedPath && prevSaved.current) {
@@ -246,9 +328,58 @@ export default function ArtifactSidePanel({
 
   return (
     <aside
-      className="flex flex-col min-w-0 w-full md:w-[42%] md:max-w-[560px] h-full border-l border-glass-border bg-void-800 shrink-0"
+      ref={panelRef}
+      className="relative flex flex-col min-w-0 h-full border-l border-glass-border bg-void-800 shrink-0"
+      style={{ width: panelWidth, maxWidth: "85%" }}
       aria-label="Artifact preview"
     >
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize artifact panel"
+        aria-valuenow={panelWidth}
+        aria-valuemin={PANEL_MIN_WIDTH}
+        tabIndex={0}
+        className={`absolute left-0 top-0 bottom-0 z-20 w-1.5 -ml-0.5 cursor-col-resize touch-none group ${
+          resizing ? "bg-neon/50" : "bg-transparent hover:bg-neon/35"
+        }`}
+        onPointerDown={onResizePointerDown}
+        onPointerMove={onResizePointerMove}
+        onPointerUp={endResize}
+        onPointerCancel={endResize}
+        onKeyDown={(e) => {
+          if (e.key === "ArrowLeft") {
+            e.preventDefault();
+            setPanelWidth((w) => {
+              const next = clampWidth(w + 24);
+              try {
+                localStorage.setItem(PANEL_WIDTH_KEY, String(next));
+              } catch {
+                /* ignore */
+              }
+              return next;
+            });
+          } else if (e.key === "ArrowRight") {
+            e.preventDefault();
+            setPanelWidth((w) => {
+              const next = clampWidth(w - 24);
+              try {
+                localStorage.setItem(PANEL_WIDTH_KEY, String(next));
+              } catch {
+                /* ignore */
+              }
+              return next;
+            });
+          }
+        }}
+      >
+        <span
+          className={`absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 h-10 w-1 rounded-full transition-opacity ${
+            resizing ? "bg-neon opacity-100" : "bg-neon/70 opacity-0 group-hover:opacity-100"
+          }`}
+          aria-hidden
+        />
+      </div>
       <header className="flex items-center gap-2 px-3 py-2.5 border-b border-glass-border shrink-0 bg-void-900">
         <Icon size={16} className="text-neon shrink-0" />
         <div className="min-w-0 flex-1">

@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, type ElementType } from "react";
 import { MessageSquare, Eye, Volume2, Mic, FileText, Share2, ChevronDown, Workflow } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { Api } from "../api";
+import { friendlyErrorFromUnknown } from "../app/friendlyError";
 import type {
   PodcastRequest,
   PodcastResult,
@@ -143,7 +144,7 @@ const PodcastTab: React.FC<PodcastTabProps> = ({
       onPodcastGenerated?.({ query: trimmedQuery, result: podcast });
     } catch (e: unknown) {
       const msg = typeof e === "string" ? e : (e as Error)?.message || "Unknown error";
-      setError(msg);
+      setError(friendlyErrorFromUnknown(msg));
     } finally {
       setIsGenerating(false);
     }

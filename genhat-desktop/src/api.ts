@@ -24,7 +24,6 @@ import type {
   HtmlPlan,
   ArtifactResult,
   ArtifactImageAsset,
-  FileRecord,
   LlmMessage,
   UserProfile,
   AvatarSource,
@@ -488,6 +487,41 @@ export const Api = {
   /** Query the RAG pipeline (non-streaming). */
   async queryRag(query: string, topK?: number): Promise<RagResult> {
     return invoke<RagResult>("query_rag", { query, topK });
+  },
+
+  /**
+   * Start structural knowledge-graph indexing for a directory.
+   * Progress arrives on the `indexing-progress` event.
+   */
+  async startIndexingDirectory(
+    path: string
+  ): Promise<import("./types").DocGraphPipelineReport> {
+    return invoke<import("./types").DocGraphPipelineReport>(
+      "start_indexing_directory",
+      { path }
+    );
+  },
+
+  /** Hybrid RRF + subgraph expansion → Markdown context. */
+  async queryKnowledgeBase(query: string): Promise<string> {
+    return invoke<string>("query_knowledge_base", { query });
+  },
+
+  async getKnowledgeBaseStats(): Promise<import("./types").DocGraphStats> {
+    return invoke<import("./types").DocGraphStats>("get_knowledge_base_stats");
+  },
+
+  /** Pass 2 background retry status (deferred timeouts / retriable parse errors). */
+  async getBackgroundIndexStatus(): Promise<
+    import("./types").DocGraphBackgroundStatus
+  > {
+    return invoke<import("./types").DocGraphBackgroundStatus>(
+      "get_background_index_status"
+    );
+  },
+
+  async clearKnowledgeBase(): Promise<void> {
+    await invoke("clear_knowledge_base");
   },
 
   /**
@@ -1244,46 +1278,8 @@ export const Api = {
   },
 
   /**
-   * Search ambient files. Returns up to 5 records ranked best-first
-   * (BM25 + cross-encoder rerank). Each record may include `score` (0–1 relevance)
-   * and `snippet` (query-relevant excerpt). An empty array means "no relevant file found".
+   * Apply a unified diff patch to a file (revamp P5)
    */
-  async searchAmbientFiles(query: string): Promise<FileRecord[]> {
-    return invoke<FileRecord[]>("search_ambient_files", { query });
-  },
-
-  /** Get cached index content of an ambient file (revamp P4) */
-  async getAmbientFileContent(path: string): Promise<string | null> {
-    return invoke<string | null>("get_ambient_file_content", { path });
-  },
-
-  async fileindexerGetSetup(): Promise<Record<string, unknown>> {
-    return invoke<Record<string, unknown>>("fileindexer_get_setup");
-  },
-
-  async fileindexerCompleteSetup(mode: string, roots: string[]): Promise<Record<string, unknown>> {
-    return invoke<Record<string, unknown>>("fileindexer_complete_setup", { mode, roots });
-  },
-
-  async fileindexerGetStatus(): Promise<Record<string, unknown>> {
-    return invoke<Record<string, unknown>>("fileindexer_get_status");
-  },
-
-  async fileindexerStart(): Promise<Record<string, unknown>> {
-    return invoke<Record<string, unknown>>("fileindexer_start");
-  },
-
-  async fileindexerStop(): Promise<Record<string, unknown>> {
-    return invoke<Record<string, unknown>>("fileindexer_stop");
-  },
-
-  async fileindexerSearch(
-    query: string,
-  ): Promise<Array<{ path: string; score: number; fields: string[] }>> {
-    return invoke("fileindexer_search", { query });
-  },
-
-  /** Apply a unified diff patch to a file (revamp P5) */
   async applyDiffPatch(path: string, patch: string): Promise<string> {
     return invoke<string>("apply_diff_patch", { path, patch });
   },
@@ -1374,7 +1370,6 @@ export type {
   DevicePollResponse,
   EntitlementResponse,
   CheckoutResponse,
-  BillingManageResponse,
   CloudChatRequest,
 } from "./types";
 
@@ -1430,6 +1425,18 @@ export async function emailRegisterCloud(input: {
   return invoke<UserProfile>("cloud_auth_email_register", input);
 }
 
+export async function patchCloudProfile(input: {
+  occupation?: string;
+  field?: string;
+  completeOnboarding?: boolean;
+}): Promise<UserProfile> {
+  return invoke<UserProfile>("cloud_patch_profile", {
+    occupation: input.occupation,
+    field: input.field,
+    completeOnboarding: input.completeOnboarding,
+  });
+}
+
 export async function refreshCloudToken(): Promise<void> {
   return invoke<void>("cloud_refresh_token");
 }
@@ -1456,17 +1463,14 @@ export async function createCloudCheckout(
   });
 }
 
-export async function createBillingManage(): Promise<
-  import("./types").BillingManageResponse
-> {
-  return invoke<import("./types").BillingManageResponse>(
-    "cloud_create_billing_manage"
-  );
-}
-
 /** Open the public website pricing page in the system browser. */
 export async function openCloudPricing(): Promise<void> {
   return invoke<void>("cloud_open_pricing");
+}
+
+/** Open the website billing dashboard in the system browser. */
+export async function openCloudBilling(): Promise<void> {
+  return invoke<void>("cloud_open_billing");
 }
 
 /** Confirm latest Razorpay payment and activate Premium entitlement. */

@@ -14,8 +14,6 @@ use app_lib::commands::workspace::WorkspaceState;
 use app_lib::commands::download::DownloadState;
 use app_lib::governor::{Governor, GovernorState};
 use app_lib::intent::{IntentResolver, IntentResolverState};
-use app_lib::indexer::{AmbientIndexer, AmbientIndexerState};
-use app_lib::fileindexer::FileIndexerState;
 use app_lib::mcp::coordinator::{McpCoordinator, McpCoordinatorState};
 use app_lib::process::ProcessManager;
 use app_lib::rag::pipeline::RagPipeline;
@@ -230,7 +228,7 @@ fn main() {
                 });
             }
 
-            // P4: Initialize Ambient Indexer
+            // App cache (telemetry)
             let app_cache_dir = app
                 .path()
                 .app_cache_dir()
@@ -241,24 +239,6 @@ fn main() {
 
             // P6: Initialize TelemetryLogger
             app_lib::telemetry::TelemetryLogger::init(&app_cache_dir).ok();
-            let home_dir = app.path().home_dir().expect("Failed to resolve home directory");
-            
-            let workspaces = workspace_manager.list_workspaces().unwrap_or_default();
-            let mut workspace_paths = Vec::new();
-            for ws in workspaces {
-                if let Some(ref p) = ws.nela_path {
-                    if let Some(parent) = std::path::Path::new(p).parent() {
-                        workspace_paths.push(parent.to_path_buf());
-                    }
-                }
-            }
-
-            let indexer = AmbientIndexer::start(
-                &app_cache_dir,
-                home_dir,
-                governor.clone(),
-                workspace_paths,
-            ).expect("Failed to start Ambient Indexer");
 
             // 9. Register state for Tauri commands
             app.manage(ProcessManagerState(process_manager));
@@ -271,23 +251,38 @@ fn main() {
             app.manage(GovernorState(governor));
             app.manage(McpCoordinatorState(mcp_coordinator));
             app.manage(IntentResolverState(intent_resolver));
-            app.manage(AmbientIndexerState(indexer));
 
-            // FileIndexer sidecar host (folder config + background semantic index)
-            let fileindexer_dir = app_data_dir.join("fileindexer");
-            app.manage(FileIndexerState::new(fileindexer_dir));
-            {
-                let handle = app.handle().clone();
-                tauri::async_runtime::spawn(async move {
-                    tokio::time::sleep(std::time::Duration::from_millis(800)).await;
-                    match app_lib::fileindexer::try_autostart(&handle) {
-                        Ok(()) => log::info!("FileIndexer sidecar auto-start ok"),
-                        Err(e) => log::info!("FileIndexer sidecar not auto-started: {e}"),
+            // Structural knowledge-graph engine (filesystem index replacement)
+            let kb_dir = app_data_dir.join("knowledge_base");
+            match app_lib::doc_graph::DocGraphState::open(kb_dir) {
+                Ok(state) => {
+                    let engine = state.0.clone();
+                    app.manage(state);
+                    log::info!("Doc-graph knowledge base ready");
+                    // Autostart incremental sync of $HOME (diff-only on later launches).
+                    let handle = app.handle().clone();
+                    tauri::async_runtime::spawn(async move {
+                        tokio::time::sleep(std::time::Duration::from_millis(1_200)).await;
+                        engine.spawn_home_autostart(Some(handle));
+                    });
+                }
+                Err(e) => {
+                    log::error!("Failed to open doc-graph knowledge base: {e}");
+                    let fallback = app_data_dir.join("knowledge_base");
+                    let _ = std::fs::create_dir_all(&fallback);
+                    if let Ok(state) = app_lib::doc_graph::DocGraphState::open(fallback) {
+                        let engine = state.0.clone();
+                        app.manage(state);
+                        let handle = app.handle().clone();
+                        tauri::async_runtime::spawn(async move {
+                            tokio::time::sleep(std::time::Duration::from_millis(1_200)).await;
+                            engine.spawn_home_autostart(Some(handle));
+                        });
                     }
-                });
+                }
             }
 
-            // Pre-warm the cross-encoder so the first ambient search stays within budget.
+            // Pre-warm the cross-encoder so the first grade request stays within budget.
             let router_for_warm = router.clone();
             tauri::async_runtime::spawn(async move {
                 let req = app_lib::router::tasks::grade_request("warm up", "warm up passage");
@@ -394,6 +389,12 @@ fn main() {
             app_lib::commands::rag::query_rag_stream,
             app_lib::commands::rag::query_rag_with_raptor_stream,
             app_lib::commands::rag::prepare_direct_document_prompt,
+            // Structural knowledge-graph engine
+            app_lib::commands::doc_graph::start_indexing_directory,
+            app_lib::commands::doc_graph::query_knowledge_base,
+            app_lib::commands::doc_graph::get_knowledge_base_stats,
+            app_lib::commands::doc_graph::get_background_index_status,
+            app_lib::commands::doc_graph::clear_knowledge_base,
             // Media retrieval commands
             app_lib::commands::rag::retrieve_media_for_response,
             app_lib::commands::rag::get_media_for_document,
@@ -431,9 +432,10 @@ fn main() {
             app_lib::commands::cloud_auth::cloud_refresh_token,
             app_lib::commands::cloud_auth::cloud_sign_out,
             app_lib::commands::cloud_auth::cloud_get_profile,
+            app_lib::commands::cloud_auth::cloud_patch_profile,
             app_lib::commands::cloud_auth::cloud_get_entitlement,
             app_lib::commands::cloud_auth::cloud_create_checkout,
-            app_lib::commands::cloud_auth::cloud_create_billing_manage,
+            app_lib::commands::cloud_auth::cloud_open_billing,
             app_lib::commands::cloud_auth::cloud_confirm_checkout,
             app_lib::commands::cloud_auth::cloud_open_pricing,
             // NELA Cloud inference
@@ -464,26 +466,12 @@ fn main() {
             app_lib::commands::artifact::get_schema_grammar,
             app_lib::commands::artifact::apply_diff_patch,
             app_lib::commands::artifact::save_binary_file,
-            // Ambient FTS5 Indexer command (revamp P4)
-            app_lib::commands::indexer::search_ambient_files,
-            app_lib::commands::indexer::get_ambient_file_content,
-            // FileIndexer sidecar
-            app_lib::fileindexer::fileindexer_get_setup,
-            app_lib::fileindexer::fileindexer_complete_setup,
-            app_lib::fileindexer::fileindexer_get_status,
-            app_lib::fileindexer::fileindexer_start,
-            app_lib::fileindexer::fileindexer_stop,
-            app_lib::fileindexer::fileindexer_search,
         ])
         .build(tauri::generate_context!())
         .expect("error building tauri app")
         .run(|app_handle, event| {
             if let tauri::RunEvent::Exit = event {
-                log::info!("App exiting — stopping all models and indexer...");
-                if let Some(indexer) = app_handle.try_state::<AmbientIndexerState>() {
-                    indexer.0.stop();
-                }
-                app_lib::fileindexer::stop_from_app(app_handle);
+                log::info!("App exiting — stopping all models...");
                 let pm = app_handle.state::<ProcessManagerState>();
                 let pm = pm.0.clone();
                 // Block on stopping all processes before exit

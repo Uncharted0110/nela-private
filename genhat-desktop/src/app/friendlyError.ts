@@ -1,8 +1,9 @@
 import { COPY } from "./copy";
 
 /**
- * Convert raw backend/error strings into calm, non-technical messages.
- * Keep the original text for Advanced mode / logs (caller decides).
+ * Convert raw backend/error strings into calm, non-technical messages
+ * with a clear next step. Keep the original text for Advanced mode / logs
+ * (caller decides).
  */
 export function friendlyError(raw: string | undefined | null): string {
   const text = (raw ?? "").trim();
@@ -10,28 +11,10 @@ export function friendlyError(raw: string | undefined | null): string {
 
   const lower = text.toLowerCase();
 
-  // Already friendly (from Rust cloud client / COPY) — pass through.
-  if (
-    lower.startsWith("we couldn't") ||
-    lower.startsWith("something went wrong") ||
-    lower.startsWith("please sign in") ||
-    lower.startsWith("you're not signed") ||
-    lower.startsWith("your nela cloud session") ||
-    lower.startsWith("that email or password") ||
-    lower.startsWith("an account with that email") ||
-    lower.startsWith("that sign-in") ||
-    lower.startsWith("that took too long") ||
-    lower.startsWith("too many requests") ||
-    lower.startsWith("nela cloud is having") ||
-    lower.startsWith("nela is still") ||
-    lower.startsWith("your computer ran low") ||
-    lower.startsWith("your plan doesn't") ||
-    lower.startsWith("check your internet") ||
-    lower.includes("please try again")
-  ) {
-    // Strip technical suffixes if a friendly sentence was prefixed.
+  // Already friendly (from Rust cloud client / COPY) — pass through first sentence.
+  if (looksAlreadyFriendly(lower) && !looksTechnical(text)) {
     const firstSentence = text.split(/(?<=\.)\s+/)[0] ?? text;
-    if (!looksTechnical(firstSentence)) return firstSentence;
+    if (!looksTechnical(firstSentence)) return ensureNextStep(firstSentence);
   }
 
   if (
@@ -44,9 +27,58 @@ export function friendlyError(raw: string | undefined | null): string {
     lower.includes("device auth") ||
     lower.includes("localhost") ||
     lower.includes("tcp connect") ||
+    lower.includes("econnrefused") ||
+    lower.includes("enotfound") ||
     (lower.includes("timed out") && lower.includes("url"))
   ) {
     return COPY.errorCloudUnreachable;
+  }
+
+  if (
+    lower.includes("fast_quota") ||
+    lower.includes("fast free") ||
+    lower.includes("fast limit") ||
+    (lower.includes("fast") && lower.includes("limit reached"))
+  ) {
+    return COPY.errorFastQuota;
+  }
+
+  if (
+    lower.includes("quota_exhausted") ||
+    lower.includes("credit balance exhausted") ||
+    (lower.includes("credits") && lower.includes("exhaust")) ||
+    (lower.includes("balance") && lower.includes("empty"))
+  ) {
+    return COPY.errorCreditsEmpty;
+  }
+
+  if (
+    lower.includes("upgrade_required") ||
+    lower.includes("upgrade to premium") ||
+    lower.includes("buy a credit pack") ||
+    lower.includes("smart and deep")
+  ) {
+    return COPY.errorUpgradeRequired;
+  }
+
+  if (
+    lower.includes("cloud_busy") ||
+    lower.includes("cloud is busy") ||
+    lower.includes("openrouter_failed") ||
+    lower.includes("openrouter_not_configured") ||
+    lower.includes("no openrouter") ||
+    lower.includes("provider key")
+  ) {
+    return COPY.errorCloudBusy;
+  }
+
+  if (
+    lower.includes("rate_limited") ||
+    lower.includes("rate limit") ||
+    lower.includes("too many requests") ||
+    lower.includes("429")
+  ) {
+    return COPY.errorRateLimited;
   }
 
   if (
@@ -55,12 +87,13 @@ export function friendlyError(raw: string | undefined | null): string {
     lower.includes("no model") ||
     lower.includes("failed to start") ||
     lower.includes("not running") ||
-    lower.includes("loading")
+    lower.includes("llama") ||
+    (lower.includes("loading") && lower.includes("model"))
   ) {
     return COPY.errorNotReady;
   }
 
-  if (lower.includes("timeout") || lower.includes("timed out")) {
+  if (lower.includes("timeout") || lower.includes("timed out") || lower.includes("deadline")) {
     return COPY.errorTimeout;
   }
 
@@ -69,6 +102,7 @@ export function friendlyError(raw: string | undefined | null): string {
   }
 
   if (
+    lower.includes("invalid_credentials") ||
     lower.includes("invalid credentials") ||
     lower.includes("wrong password") ||
     lower.includes("unauthorized") ||
@@ -77,8 +111,47 @@ export function friendlyError(raw: string | undefined | null): string {
     return COPY.errorAuthCredentials;
   }
 
-  if (lower.includes("session expired") || lower.includes("refresh_token") || lower.includes("sign in again")) {
+  if (
+    lower.includes("email_already") ||
+    lower.includes("already exists") ||
+    lower.includes("already registered")
+  ) {
+    return COPY.errorEmailExists;
+  }
+
+  if (
+    lower.includes("email_not_verified") ||
+    lower.includes("verify your email") ||
+    lower.includes("verification link")
+  ) {
+    return "Verify your email before signing in. Check your inbox for the link, then try again.";
+  }
+
+  if (
+    lower.includes("session expired") ||
+    lower.includes("refresh_token") ||
+    lower.includes("refresh token") ||
+    lower.includes("sign in again")
+  ) {
     return COPY.errorSessionExpired;
+  }
+
+  if (
+    lower.includes("device_code") ||
+    lower.includes("device code") ||
+    lower.includes("link device") ||
+    lower.includes("pairing")
+  ) {
+    return COPY.errorDeviceLink;
+  }
+
+  if (
+    lower.includes("razorpay") ||
+    lower.includes("checkout") ||
+    lower.includes("billing") ||
+    lower.includes("payment")
+  ) {
+    return COPY.errorBilling;
   }
 
   if (
@@ -88,14 +161,13 @@ export function friendlyError(raw: string | undefined | null): string {
     lower.includes("multi-slide deck") ||
     lower.includes("too little visible content") ||
     lower.includes("styles without slide") ||
-    lower.includes("couldn't finish the presentation")
+    lower.includes("couldn't finish the presentation") ||
+    lower.includes("artifact") ||
+    lower.includes("spreadsheet") ||
+    lower.includes("workbook") ||
+    lower.includes("csv")
   ) {
-    // Keep a short, accurate message — not a billing/plan false positive.
-    const cleaned = text
-      .replace(/^couldn't finish the presentation:\s*/i, "")
-      .replace(/^failed to compile\/execute artifact plan:\s*/i, "")
-      .trim();
-    return cleaned || "The presentation HTML came back incomplete. Please try again.";
+    return COPY.errorArtifact;
   }
 
   if (
@@ -112,11 +184,90 @@ export function friendlyError(raw: string | undefined | null): string {
     return COPY.errorOpenBrowser;
   }
 
-  if (lower.includes("not signed in")) {
+  if (lower.includes("not signed in") || lower.includes("please sign in")) {
     return COPY.errorNotSignedIn;
   }
 
+  if (
+    lower.includes("web search") ||
+    lower.includes("search failed") ||
+    lower.includes("duckduckgo")
+  ) {
+    return COPY.errorWebSearch;
+  }
+
+  if (
+    lower.includes("failed to load") ||
+    lower.includes("failed to render") ||
+    lower.includes("failed to parse") ||
+    lower.includes("failed to read")
+  ) {
+    return COPY.errorFileLoad;
+  }
+
+  if (looksTechnical(text) || /\b[A-Z_]{4,}\b/.test(text) || lower.includes("api ")) {
+    return COPY.errorGeneric;
+  }
+
+  // Short plain text that isn't scary — keep it, ensure a next step.
+  if (text.length < 160 && !looksTechnical(text)) {
+    return ensureNextStep(text);
+  }
+
   return COPY.errorGeneric;
+}
+
+/** Convenience for catch blocks. */
+export function friendlyErrorFromUnknown(err: unknown): string {
+  if (err instanceof DOMException && err.name === "AbortError") {
+    return COPY.errorCancelled;
+  }
+  return friendlyError(err instanceof Error ? err.message : String(err));
+}
+
+function looksAlreadyFriendly(lower: string): boolean {
+  return (
+    lower.startsWith("we couldn't") ||
+    lower.startsWith("something went wrong") ||
+    lower.startsWith("please sign in") ||
+    lower.startsWith("you're not signed") ||
+    lower.startsWith("your nela cloud session") ||
+    lower.startsWith("that email or password") ||
+    lower.startsWith("an account with that email") ||
+    lower.startsWith("that sign-in") ||
+    lower.startsWith("that took too long") ||
+    lower.startsWith("too many requests") ||
+    lower.startsWith("nela cloud is having") ||
+    lower.startsWith("nela is still") ||
+    lower.startsWith("your computer ran low") ||
+    lower.startsWith("your plan doesn't") ||
+    lower.startsWith("check your internet") ||
+    lower.startsWith("cloud is busy") ||
+    lower.startsWith("credit balance") ||
+    lower.startsWith("buy a credit") ||
+    lower.startsWith("upgrade to") ||
+    lower.includes("please try again") ||
+    lower.includes("open cloud settings") ||
+    lower.includes("sign in again")
+  );
+}
+
+function ensureNextStep(message: string): string {
+  const lower = message.toLowerCase();
+  if (
+    lower.includes("try again") ||
+    lower.includes("sign in") ||
+    lower.includes("check ") ||
+    lower.includes("upgrade") ||
+    lower.includes("buy ") ||
+    lower.includes("open ") ||
+    lower.includes("wait ") ||
+    lower.includes("choose ") ||
+    lower.includes("close other")
+  ) {
+    return message;
+  }
+  return `${message.replace(/\.*\s*$/, "")}. Please try again.`;
 }
 
 function looksTechnical(text: string): boolean {
@@ -127,7 +278,13 @@ function looksTechnical(text: string): boolean {
     lower.includes("localhost") ||
     lower.includes("status") ||
     lower.includes("error sending") ||
+    lower.includes("stack") ||
+    lower.includes("at object.") ||
+    lower.includes("prisma") ||
+    lower.includes("sql") ||
     /\{.*\}/.test(text) ||
-    /\b[A-Z_]{4,}\b/.test(text) // ERROR_CODE style
+    /\b[A-Z_]{4,}\b/.test(text) ||
+    /\berror:\s/i.test(text) ||
+    /\b(errno|econn|enotfound)\b/i.test(text)
   );
 }

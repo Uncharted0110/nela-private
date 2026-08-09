@@ -62,12 +62,12 @@ import {
   defaultArtifactFollowup,
   defaultArtifactIntro,
 } from "../artifactChatCopy";
+import { friendlyErrorFromUnknown } from "../friendlyError";
 import { saveStreamedArtifact } from "../streamArtifactSave";
 import { sanitizeCsvArtifactBody } from "../sanitizeCsvArtifact";
 import { createStreamChunkFlusher } from "../streamUiBatch";
 import {
   extractAmbientSearchQuery,
-  selectAmbientResultsForInjection,
   shouldRunAmbientFileSearch,
 } from "../ambientSearch";
 import {
@@ -216,30 +216,32 @@ export async function handleArtifactGeneration(
       forceFileSearch: options?.forceFileSearch,
     });
 
-    // Proactive ambient FTS5 search if no file is attached but query references a file
+    // Proactive doc-graph search if no file is attached but query references a file
     if (!attachedFile && wantsAmbientFileSearch) {
       updateArtifactMsg("SearchingDisk");
       const searchQuery = extractAmbientSearchQuery(text);
       try {
-        const results = await Api.searchAmbientFiles(searchQuery);
-        const top = selectAmbientResultsForInjection(results ?? []);
-        if (top.length > 0) {
-          const best = top[0];
-          attachedFile = best.path;
-          attachedPaths.push(best.path);
-          const filename = attachedFile.split(/[/\\]/).pop() ?? "file";
-          ctx.updateSession(sid, (prev) => ({
-            messages: [
-              ...prev.messages,
-              {
-                role: "assistant" as const,
-                content: `${DISCOVERY_NOTICE_PREFIX} **${filename}**\nPath: \`${attachedFile}\`\nReading document content…`,
-              },
-            ],
-          }));
+        const md = await Api.queryKnowledgeBase(searchQuery);
+        if (md.trim() && md !== "No relevant structural context found.") {
+          ambientFileContent = md;
+          const pathMatch = md.match(/\(File:\s*([^)]+)\)/);
+          if (pathMatch?.[1]) {
+            attachedFile = pathMatch[1].trim();
+            attachedPaths.push(attachedFile);
+            const filename = attachedFile.split(/[/\\]/).pop() ?? "file";
+            ctx.updateSession(sid, (prev) => ({
+              messages: [
+                ...prev.messages,
+                {
+                  role: "assistant" as const,
+                  content: `${DISCOVERY_NOTICE_PREFIX} **${filename}**\nPath: \`${attachedFile}\`\nReading document content…`,
+                },
+              ],
+            }));
+          }
         }
       } catch (err) {
-        console.warn("Ambient search failed:", err);
+        console.warn("Doc-graph search failed:", err);
       }
     }
 
@@ -274,12 +276,12 @@ export async function handleArtifactGeneration(
           console.warn("Failed to parse spreadsheet file:", err);
         }
         try {
-          const cached = await Api.getAmbientFileContent(path);
-          if (cached) {
-            return formatAmbientFileSection(path, cached.substring(0, contentLimit));
+          const fileContent = await Api.readFileText(path);
+          if (fileContent) {
+            return formatAmbientFileSection(path, fileContent.substring(0, contentLimit));
           }
         } catch (err) {
-          console.warn("Failed to query Excel metadata cache:", err);
+          console.warn("Failed to read spreadsheet text:", err);
         }
         return "";
       }
@@ -1221,7 +1223,9 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
                   updateArtifactMsg(
                     "Error",
                     null,
-                    `Preview is ready but saving failed: ${msg}`
+                    friendlyErrorFromUnknown(
+                      msg ? `Preview is ready but saving failed: ${msg}` : streamErr
+                    )
                   );
                   return;
                 } else {
@@ -1336,20 +1340,7 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
             console.error("Artifact generation execution failed:", execErr);
             useChatModeStore.getState().setLiveToolStatus(null);
             ctx.updateSession(sid, { loading: false });
-            const msg = execErr instanceof Error ? execErr.message : String(execErr);
-            const kindLabel =
-              schemaId === "presentation_synthesis"
-                ? "presentation"
-                : schemaId === "spreadsheet_synthesis"
-                  ? "spreadsheet"
-                  : schemaId === "html_synthesis"
-                    ? "webpage"
-                    : "artifact";
-            updateArtifactMsg(
-              "Error",
-              null,
-              `Couldn't finish the ${kindLabel}: ${msg}`
-            );
+            updateArtifactMsg("Error", null, friendlyErrorFromUnknown(execErr));
           }
         })();
       },
@@ -1363,7 +1354,7 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
           }
           useChatModeStore.getState().setLiveToolStatus(null);
           ctx.updateSession(sid, { loading: false });
-          updateArtifactMsg("Error", null, `Failed to generate artifact plan: ${err}`);
+          updateArtifactMsg("Error", null, friendlyErrorFromUnknown(err));
         })();
       },
     });
@@ -1374,7 +1365,6 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
     ctx.updateSession(sid, {
       loading: false,
     });
-    const msg = err instanceof Error ? err.message : String(err);
-    updateArtifactMsg("Error", null, `Failed to initialize artifact creation: ${msg}`);
+    updateArtifactMsg("Error", null, friendlyErrorFromUnknown(err));
   }
 }

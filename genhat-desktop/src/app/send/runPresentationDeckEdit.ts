@@ -12,6 +12,7 @@ import { inferPresentationTheme } from "./presentationTheme";
 import { repairNestedKeys } from "./repairNestedKeys";
 import { streamChatByMode, willRouteToCloud } from "./cloudOrLocalStream";
 import type { GenerationOptions, SendHandlerContext } from "./types";
+import { friendlyErrorFromUnknown } from "../friendlyError";
 
 export async function runPresentationDeckEdit(
   text: string,
@@ -37,7 +38,7 @@ export async function runPresentationDeckEdit(
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       ctx.updateSession(sid, { loading: false });
-      updateEditMsg("Error", null, `Could not parse presentation deck: ${message}`);
+      updateEditMsg("Error", null, friendlyErrorFromUnknown(`Could not parse presentation deck: ${message}`));
       return;
     }
 
@@ -68,7 +69,7 @@ export async function runPresentationDeckEdit(
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       ctx.updateSession(sid, { loading: false });
-      updateEditMsg("Error", null, `Failed to add slide: ${message}`);
+      updateEditMsg("Error", null, friendlyErrorFromUnknown(`Failed to add slide: ${message}`));
     }
     return;
   }
@@ -80,7 +81,7 @@ export async function runPresentationDeckEdit(
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     ctx.updateSession(sid, { loading: false });
-    updateEditMsg("Error", null, `Could not parse presentation deck: ${message}`);
+    updateEditMsg("Error", null, friendlyErrorFromUnknown(`Could not parse presentation deck: ${message}`));
     return;
   }
 
@@ -171,22 +172,14 @@ Return the complete updated slides array with the requested changes applied.`;
             const message =
               execErr instanceof Error ? execErr.message : String(execErr);
             ctx.updateSession(sid, { loading: false });
-            updateEditMsg(
-              "Error",
-              null,
-              `Failed to apply deck edits: ${message}`
-            );
+            updateEditMsg("Error", null, friendlyErrorFromUnknown(`Failed to apply deck edits: ${message}`));
             resolve();
           }
         })();
       },
       onError: (err) => {
         ctx.updateSession(sid, { loading: false });
-        updateEditMsg(
-          "Error",
-          null,
-          `Failed to generate deck edit plan: ${err}`
-        );
+        updateEditMsg("Error", null, friendlyErrorFromUnknown(`Failed to generate deck edit plan: ${err}`));
         reject(err);
       },
     });

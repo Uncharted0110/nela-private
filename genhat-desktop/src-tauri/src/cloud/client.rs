@@ -6,7 +6,7 @@
 use crate::cloud::profile_cache;
 use crate::cloud::token_store;
 use crate::cloud::types::{
-    AuthTokenResponse, BillingManageResponse, CheckoutRequest, CheckoutResponse,
+    AuthTokenResponse, CheckoutRequest, CheckoutResponse,
     ConfirmCheckoutRequest, ConfirmCheckoutResponse, CloudChatRequest, DevicePollRequest,
     DevicePollResponse, DeviceStartResponse, EntitlementResponse, LogoutRequest,
     RefreshRequest, RefreshTokenResponse, UserProfileDto,
@@ -77,6 +77,10 @@ fn friendly_api_body_message(body: &str, status: StatusCode) -> String {
                     return "An account with that email already exists. Try signing in instead."
                         .to_string();
                 }
+                "EMAIL_NOT_VERIFIED" => {
+                    return "Verify your email before signing in. Check your inbox for the link, then try again."
+                        .to_string();
+                }
                 "DEVICE_CODE_EXPIRED" | "DEVICE_CODE_INVALID" => {
                     return "That sign-in code expired. Please start again.".to_string();
                 }
@@ -107,6 +111,13 @@ fn friendly_api_body_message(body: &str, status: StatusCode) -> String {
             }
             if m.contains("already") && m.contains("email") {
                 return "An account with that email already exists. Try signing in instead."
+                    .to_string();
+            }
+            if m.contains("verify your email")
+                || m.contains("email_not_verified")
+                || lower.contains("email_not_verified")
+            {
+                return "Verify your email before signing in. Check your inbox for the link, then try again."
                     .to_string();
             }
             if m.contains("expired") {
@@ -372,6 +383,30 @@ pub async fn get_me(app_data_dir: &Path) -> Result<UserProfileDto, String> {
         .map_err(|_| "We couldn't load your profile. Please try again.".to_string())
 }
 
+pub async fn patch_me(
+    app_data_dir: &Path,
+    body: serde_json::Value,
+) -> Result<UserProfileDto, String> {
+    let resp = authorized_request(app_data_dir, |token| {
+        let body = body.clone();
+        async move {
+            send_cloud(reqwest::Method::PATCH, "/v1/me", move |req| {
+                req.bearer_auth(token.clone()).json(&body)
+            })
+            .await
+        }
+    })
+    .await?;
+
+    if !resp.status().is_success() {
+        return Err(read_error_body(resp).await);
+    }
+
+    resp.json()
+        .await
+        .map_err(|_| "We couldn't save your profile. Please try again.".to_string())
+}
+
 pub async fn get_entitlement(app_data_dir: &Path) -> Result<EntitlementResponse, String> {
     let resp = authorized_request(app_data_dir, |token| async move {
         send_cloud(reqwest::Method::GET, "/v1/me/entitlement", move |req| {
@@ -418,31 +453,6 @@ pub async fn create_checkout(
     resp.json()
         .await
         .map_err(|_| "We couldn't open checkout. Please try again.".to_string())
-}
-
-pub async fn create_billing_manage(
-    app_data_dir: &Path,
-) -> Result<BillingManageResponse, String> {
-    let resp = authorized_request(app_data_dir, |token| async move {
-        send_cloud(
-            reqwest::Method::POST,
-            "/v1/billing/razorpay/manage",
-            move |req| {
-                req.bearer_auth(token.clone())
-                    .json(&serde_json::json!({}))
-            },
-        )
-        .await
-    })
-    .await?;
-
-    if !resp.status().is_success() {
-        return Err(read_error_body(resp).await);
-    }
-
-    resp.json()
-        .await
-        .map_err(|_| "We couldn't open billing settings. Please try again.".to_string())
 }
 
 /// Confirm a completed Razorpay payment-link checkout and activate Premium.

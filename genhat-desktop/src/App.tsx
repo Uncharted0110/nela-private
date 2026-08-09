@@ -22,7 +22,7 @@ import { useWorkspaceStore } from "./stores/workspaceStore";
 import { useUIStore } from "./stores/uiStore";
 import { useDownloadStore } from "./stores/downloadStore";
 import { useChatModeStore } from "./stores/chatModeStore";
-import { useFileIndexerStore } from "./stores/fileIndexerStore";
+import { useDocGraphStore } from "./stores/docGraphStore";
 import { useEffect } from "react";
 import "./App.css";
 
@@ -31,12 +31,12 @@ function App() {
   useAppLifecycle();
   const { startTour } = useTour();
 
-  const hydrateFileIndexer = useFileIndexerStore((s) => s.hydrate);
-  const fileIndexerSetupOpen = useFileIndexerStore((s) => s.setupOpen);
+  const hydrateDocGraph = useDocGraphStore((s) => s.hydrate);
+  const docGraphIndexOpen = useDocGraphStore((s) => s.indexOpen);
 
   useEffect(() => {
-    void hydrateFileIndexer();
-  }, [hydrateFileIndexer]);
+    void hydrateDocGraph();
+  }, [hydrateDocGraph]);
 
   const toggleTheme = () => setTheme(theme === "neon" ? "professional" : "neon");
 
@@ -99,7 +99,7 @@ function App() {
     });
   };
 
-  const showStartupModal = !activeWorkspace && !suppressStartupModal && !fileIndexerSetupOpen;
+  const showStartupModal = !activeWorkspace && !suppressStartupModal && !docGraphIndexOpen;
 
   return (
     <div className="relative w-full h-full overflow-hidden">

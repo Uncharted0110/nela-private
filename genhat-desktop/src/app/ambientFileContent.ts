@@ -24,21 +24,12 @@ export function hasLocalFilePathReference(text: string): boolean {
 }
 
 /**
- * Load readable text for an ambient file: indexed cache first, then on-demand parse/read.
+ * Load readable text for a local file via on-demand read/parse.
  */
 export async function loadAmbientFileBody(
   path: string,
   maxChars = MAX_AMBIENT_BODY_CHARS
 ): Promise<string> {
-  try {
-    const cached = await Api.getAmbientFileContent(path);
-    if (cached && cached.trim().length > 0) {
-      return cached.substring(0, maxChars);
-    }
-  } catch (err) {
-    console.warn("indexed content read failed:", err);
-  }
-
   try {
     const fileContent = await Api.readFileText(path);
     if (fileContent && fileContent.trim().length > 0) {

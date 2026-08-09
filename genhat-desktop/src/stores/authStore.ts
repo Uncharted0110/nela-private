@@ -8,6 +8,7 @@ import {
   pollCloudAuth,
   emailLoginCloud,
   emailRegisterCloud,
+  patchCloudProfile,
   signOutCloud,
   saveUploadedAvatar,
 } from "../api";
@@ -36,6 +37,11 @@ interface AuthActions {
     email: string;
     password: string;
     name?: string;
+  }) => Promise<void>;
+  completeOnboarding: (input: {
+    occupation?: string;
+    field?: string;
+    completeOnboarding?: boolean;
   }) => Promise<void>;
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
@@ -214,6 +220,21 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
       );
       set({ profile, loading: false, error: null });
       await useCloudStore.getState().refreshEntitlement();
+    } catch (err) {
+      const message = toFriendly(err);
+      set({
+        loading: false,
+        error: message,
+      });
+      throw new Error(message);
+    }
+  },
+
+  completeOnboarding: async (input) => {
+    set({ loading: true, error: null });
+    try {
+      const profile = normalizeProfile(await patchCloudProfile(input));
+      set({ profile, loading: false, error: null });
     } catch (err) {
       const message = toFriendly(err);
       set({

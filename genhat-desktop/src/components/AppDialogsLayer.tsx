@@ -17,11 +17,12 @@ import ModelsSettingsModal from "./ModelsSettingsModal";
 import StartupModal from "./StartupModal";
 import ToursModal from "./ToursModal";
 import ProfileModal from "./ProfileModal";
+import OnboardingModal from "./OnboardingModal";
 import CloudSettingsModal from "./CloudSettingsModal";
 import PremiumUpgradeModal from "./PremiumUpgradeModal";
 import RagSourcePickerModal from "./RagSourcePickerModal";
-import FileIndexerSetupModal from "./FileIndexerSetupModal";
-import FileIndexerChatModal from "./FileIndexerChatModal";
+import DocGraphIndexModal from "./DocGraphIndexModal";
+import DocGraphQueryModal from "./DocGraphQueryModal";
 interface AppDialogsLayerProps {
   showStartupModal: boolean;
   onContinueWorkspace: () => void;
@@ -72,8 +73,8 @@ export default function AppDialogsLayer({
   const downloads = useDownloadStore(s => s.downloads);
   return (
     <>
-      <FileIndexerSetupModal />
-      <FileIndexerChatModal />
+      <DocGraphIndexModal />
+      <DocGraphQueryModal />
 
       {showStartupModal && (
         <StartupModal
@@ -125,6 +126,7 @@ export default function AppDialogsLayer({
       <ToursModal isOpen={toursOpen} onClose={() => setToursOpen(false)} />
 
       <ProfileModal isOpen={profileOpen} onClose={() => setProfileOpen(false)} />
+      <OnboardingModal />
 
       <CloudSettingsModal
         isOpen={cloudSettingsOpen}

@@ -9,6 +9,7 @@
 import React, { useState, useCallback, useRef, useEffect } from "react";
 import { Mic, MicOff, Loader2, Square } from "lucide-react";
 import { Api } from "../api";
+import { friendlyErrorFromUnknown } from "../app/friendlyError";
 
 interface VoiceInputButtonProps {
   /** Called with the transcribed text when recording is stopped */
@@ -63,7 +64,7 @@ export const VoiceInputButton: React.FC<VoiceInputButtonProps> = ({
             : typeof err === "string"
               ? err
               : "Transcription failed";
-        setError(msg);
+        setError(friendlyErrorFromUnknown(msg));
       } finally {
         setIsTranscribing(false);
         setDuration(0);
@@ -85,7 +86,7 @@ export const VoiceInputButton: React.FC<VoiceInputButtonProps> = ({
             : typeof err === "string"
               ? err
               : "Failed to start recording";
-        setError(msg);
+        setError(friendlyErrorFromUnknown(msg));
       }
     }
   }, [isRecording, onTranscript]);

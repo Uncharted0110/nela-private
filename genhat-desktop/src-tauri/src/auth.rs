@@ -75,6 +75,12 @@ pub struct UserProfile {
     pub entitlement_status: Option<EntitlementStatus>,
     pub auth_provider: AuthProvider,
     pub updated_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub occupation: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub field: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub onboarding_completed: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -148,6 +154,9 @@ pub fn save_user_profile(
         entitlement_status: existing.entitlement_status,
         auth_provider: existing.auth_provider,
         updated_at: Utc::now().to_rfc3339(),
+        occupation: existing.occupation,
+        field: existing.field,
+        onboarding_completed: existing.onboarding_completed,
     };
 
     if updated.name.is_empty() {

@@ -5,6 +5,7 @@ import { Api, type HFModel, type HFRepoFile, type DeviceSpecs, type ModelCompati
 import type { ImportModelProfile } from "../types";
 import GlassDropdown from "./GlassDropdown";
 import "./HuggingFaceModal.css";
+import { friendlyErrorFromUnknown } from "../app/friendlyError";
 
 interface HuggingFaceModalProps {
   isOpen: boolean;
@@ -601,7 +602,7 @@ export default function HuggingFaceModal({
       });
     } catch (err) {
       console.error(err);
-      setActionError(err instanceof Error ? err.message : String(err));
+      setActionError(friendlyErrorFromUnknown(err));
     } finally {
       setCancellingDownloads((prev) => prev.filter((id) => id !== downloadId));
     }
@@ -678,7 +679,7 @@ export default function HuggingFaceModal({
       onModelImported?.();
     } catch(err) {
       console.error(err);
-      setActionError(err instanceof Error ? err.message : String(err));
+      setActionError(friendlyErrorFromUnknown(err));
     }
   };
 

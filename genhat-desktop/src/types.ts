@@ -574,6 +574,9 @@ export interface UserProfile {
   entitlementStatus?: EntitlementStatus;
   authProvider: AuthProvider;
   updatedAt: string;
+  occupation?: string | null;
+  field?: string | null;
+  onboardingCompleted?: boolean;
 }
 
 /** Where to run inference: private local, NELA Cloud, or prefer-cloud auto. */
@@ -650,10 +653,6 @@ export interface CheckoutResponse {
   checkoutUrl: string;
 }
 
-export interface BillingManageResponse {
-  manageUrl: string;
-}
-
 export interface CloudToolCall {
   id: string;
   type: "function";
@@ -707,5 +706,54 @@ export interface CloudChatRequest {
     /** Sticky OpenRouter session for prompt-cache routing. */
     sessionId?: string;
   };
+}
+
+/** Structural knowledge-graph engine stats. */
+export interface DocGraphStats {
+  nodes: number;
+  edges: number;
+  chunks: number;
+  vectors: number;
+}
+
+export interface DocGraphPipelineTiming {
+  discoveryMs: number;
+  parseMs: number;
+  assembleMs: number;
+  embedMs: number;
+  flushMs: number;
+  totalMs: number;
+}
+
+export interface DocGraphPipelineReport {
+  root: string;
+  filesDiscovered: number;
+  filesParsed: number;
+  filesFailed: number;
+  filesDeferred: number;
+  chunksIndexed: number;
+  nodes: number;
+  edges: number;
+  vectors: number;
+  timing: DocGraphPipelineTiming;
+  errors: string[];
+  deferredFiles: string[];
+}
+
+export interface DocGraphIndexingProgress {
+  phase: string;
+  filesDiscovered: number;
+  filesParsed: number;
+  filesFailed: number;
+  chunksIndexed: number;
+  message: string;
+}
+
+export interface DocGraphBackgroundStatus {
+  active: boolean;
+  remaining: number;
+  completed: number;
+  failed: number;
+  total: number;
 }
 

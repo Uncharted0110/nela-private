@@ -103,19 +103,49 @@ export const COPY = {
   intelligenceDownloadPrompt: (name: string, sizeLabel: string) =>
     `${name} is not installed yet${sizeLabel ? ` (${sizeLabel})` : ""}. Download it now?`,
 
-  // Generic errors (Task 10)
-  errorNotReady: "NELA is still getting ready. Please try again in a moment.",
+  // Generic errors — always include a next step
+  errorNotReady:
+    "NELA is still getting ready. Wait a moment, then try again.",
   errorGeneric: "Something went wrong. Please try again.",
+  errorCancelled: "Stopped. Send another message whenever you're ready.",
   errorTimeout: "That took too long. Please try again.",
-  errorMemory: "Your computer ran low on memory. Try a smaller model or close other apps.",
+  errorMemory:
+    "Your computer ran low on memory. Try a smaller model or close other apps, then retry.",
   errorCloudUnreachable:
     "We couldn't reach NELA Cloud. Check your internet connection and try again.",
-  errorAuthCredentials: "That email or password doesn't look right. Please try again.",
-  errorSessionExpired: "Your NELA Cloud session expired. Please sign in again.",
-  errorPlan: "Your plan doesn't cover this yet. Check your Cloud settings.",
-  errorOpenBrowser: "We couldn't open your browser. Please try again.",
-  errorNotSignedIn: "You're not signed in yet.",
+  errorCloudBusy:
+    "NELA Cloud is busy right now. Wait a moment, then try again.",
+  errorRateLimited:
+    "Too many requests just now. Wait a few seconds, then try again.",
+  errorAuthCredentials:
+    "That email or password doesn't look right. Check them and try again.",
+  errorEmailExists:
+    "An account with that email already exists. Sign in instead, or use a different email.",
+  errorSessionExpired:
+    "Your NELA Cloud session expired. Please sign in again.",
+  errorPlan:
+    "Your plan doesn't cover this yet. Open Cloud settings or upgrade on the website.",
+  errorUpgradeRequired:
+    "Smart and Deep need credits. Buy a pack or upgrade from Cloud settings / the website.",
+  errorCreditsEmpty:
+    "You're out of credits. Buy a pack or wait for your next monthly grant.",
+  errorFastQuota:
+    "You've used today's free Fast allowance. Wait for the window to reset, or buy credits for unlimited Fast.",
+  errorOpenBrowser:
+    "We couldn't open your browser. Open nela.ai manually, then try again.",
+  errorNotSignedIn:
+    "You're not signed in yet. Sign in from Profile to continue.",
   errorSignInTimeout: "Sign-in took too long. Please try again.",
+  errorDeviceLink:
+    "That device code didn't work. Generate a new code on desktop and try again.",
+  errorBilling:
+    "We couldn't complete billing. Check your payment details on the website and try again.",
+  errorArtifact:
+    "We couldn't finish that file. Try again, or ask for a simpler version.",
+  errorWebSearch:
+    "Web search didn't work just now. Try again, or continue without live sources.",
+  errorFileLoad:
+    "We couldn't open that file. Check the path and try again.",
   retry: "Try again",
 
   // Slash commands

@@ -39,7 +39,7 @@ import { useModelStore } from "../stores/modelStore";
 import { useUIStore } from "../stores/uiStore";
 import { useDownloadStore } from "../stores/downloadStore";
 import { useCloudStore } from "../stores/cloudStore";
-import { useFileIndexerStore } from "../stores/fileIndexerStore";
+import { useDocGraphStore } from "../stores/docGraphStore";
 import ChatTabBar from "./ChatTabBar";
 import AppMainTopBar from "./AppMainTopBar";
 import AppMainModeControls from "./AppMainModeControls";
@@ -171,14 +171,9 @@ export default function AppMainContent({ networkActive: networkActiveProp }: App
 
   const handleFileIndexerToggle = (enabled: boolean) => {
     setFileIndexerEnabled(enabled);
-    const { status, openSetup, closeChat } = useFileIndexerStore.getState();
-    if (enabled) {
-      // Keep querying in the main chat bar; popup only opens when results arrive.
-      if (!status.setupDone) {
-        openSetup();
-      }
-    } else {
-      closeChat();
+    const { stats, openIndex } = useDocGraphStore.getState();
+    if (enabled && (stats?.nodes ?? 0) === 0) {
+      openIndex();
     }
   };
 

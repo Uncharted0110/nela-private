@@ -352,7 +352,7 @@ export function streamChatByMode(args: StreamArgs): void {
     const paidNeeded = needsPremiumForCloudMode(mode);
     if (paidNeeded) {
       useCloudStore.getState().openUpgradeModal();
-      args.onError(new Error("Upgrade to Premium to use Smart and Deep in Cloud"));
+      args.onError(new Error(friendlyError("Upgrade to Premium to use Smart and Deep in Cloud")));
       return;
     }
     const reason = "not signed in or Fast quota exhausted";
@@ -376,16 +376,16 @@ export function streamChatByMode(args: StreamArgs): void {
     const msg = err instanceof Error ? err.message : String(err);
     if (/upgrade to premium|UPGRADE_REQUIRED|buy a credit pack/i.test(msg)) {
       useCloudStore.getState().openUpgradeModal("upgrade");
-      args.onError(err);
+      args.onError(new Error(friendlyError(msg)));
       return;
     }
-    if (/credit balance exhausted|QUOTA_EXHAUSTED|buy a pack/i.test(msg)) {
+    if (/QUOTA_EXHAUSTED|credit balance|FAST_QUOTA|buy a pack/i.test(msg)) {
       useCloudStore.getState().openUpgradeModal("credits");
-      args.onError(err);
+      args.onError(new Error(friendlyError(msg)));
       return;
     }
     if (disableLocalFallback) {
-      args.onError(err);
+      args.onError(new Error(friendlyError(msg)));
       return;
     }
     console.warn("Cloud stream failed; falling back to local:", err);

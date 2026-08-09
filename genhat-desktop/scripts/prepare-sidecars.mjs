@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 /**
  * Rebuild MCP artifact sidecars before every `tauri dev` / `tauri build`.
- * Also stages FileIndexer resources so Tauri can resolve them on every OS.
  *
  * Usage:
  *   node scripts/prepare-sidecars.mjs           # debug (for tauri dev)
@@ -69,90 +68,6 @@ function run(cmd, args, cwd) {
   }
 }
 
-function ensureFileindexerResources() {
-  const resourcesDir = path.join(tauriDir, "resources");
-  const modelsDir = path.join(resourcesDir, "models", "fileindexer");
-  fs.mkdirSync(modelsDir, { recursive: true });
-
-  // Tauri requires resources/models/fileindexer to exist on every OS.
-  const marker = path.join(modelsDir, ".nela-keep");
-  if (!fs.existsSync(marker)) {
-    fs.writeFileSync(
-      marker,
-      "Placeholder so Tauri can resolve resources/models/fileindexer.\nStage the MiniLM ONNX payload here for FileIndexer installs.\n"
-    );
-  }
-  log(`ok resources/models/fileindexer`);
-
-  const sidecarName = isWindows
-    ? "fileindexer_sidecar.exe"
-    : "fileindexer_sidecar";
-  const sidecarDest = path.join(resourcesDir, sidecarName);
-
-  const candidates = [
-    process.env.FILEINDEXER_SIDECAR,
-    path.join(tauriDir, "target", profile, sidecarName),
-    path.join(tauriDir, "target", "release", sidecarName),
-    path.join(tauriDir, "target", "debug", sidecarName),
-    path.join(resourcesDir, sidecarName),
-  ].filter(Boolean);
-
-  // Windows-only fallback: keep using a checked-in .exe when present.
-  if (isWindows) {
-    candidates.push(path.join(resourcesDir, "fileindexer_sidecar.exe"));
-  }
-
-  if (fs.existsSync(sidecarDest)) {
-    const st = fs.statSync(sidecarDest);
-    if (st.size > 0) {
-      // Don't treat a copied Windows PE as a valid Unix sidecar.
-      if (!isWindows) {
-        const fd = fs.openSync(sidecarDest, "r");
-        const buf = Buffer.alloc(2);
-        fs.readSync(fd, buf, 0, 2, 0);
-        fs.closeSync(fd);
-        if (buf[0] === 0x4d && buf[1] === 0x5a) {
-          log(
-            `warning: resources/${sidecarName} looks like a Windows PE — replacing with stub`
-          );
-        } else {
-          log(`ok resources/${sidecarName}`);
-          return;
-        }
-      } else {
-        log(`ok resources/${sidecarName}`);
-        return;
-      }
-    }
-  }
-
-  for (const src of candidates) {
-    if (!src || src === sidecarDest || !fs.existsSync(src)) continue;
-    const st = fs.statSync(src);
-    if (!st.isFile() || st.size === 0) continue;
-    if (!isWindows && src.endsWith(".exe")) continue;
-    fs.copyFileSync(src, sidecarDest);
-    if (!isWindows) {
-      try {
-        fs.chmodSync(sidecarDest, 0o755);
-      } catch {
-        /* ignore */
-      }
-    }
-    log(`staged resources/${sidecarName} from ${path.relative(root, src)}`);
-    return;
-  }
-
-  // Path must exist for Tauri resource resolution; stub keeps builds unblocked.
-  const stub = isWindows
-    ? "@echo off\r\necho FileIndexer sidecar not staged. See src-tauri/nsis/README.md\r\nexit /b 1\r\n"
-    : "#!/bin/sh\necho \"FileIndexer sidecar not staged for this platform.\" >&2\nexit 1\n";
-  fs.writeFileSync(sidecarDest, stub, { mode: 0o755 });
-  log(
-    `warning: resources/${sidecarName} missing — wrote stub so Tauri can resolve the path; stage a real binary for FileIndexer runtime`
-  );
-}
-
 function main() {
   log(`rebuilding MCP sidecars (${profile})…`);
 
@@ -180,7 +95,6 @@ function main() {
     log(`ok ${path.relative(root, built)}`);
   }
 
-  ensureFileindexerResources();
   log("done");
 }
 

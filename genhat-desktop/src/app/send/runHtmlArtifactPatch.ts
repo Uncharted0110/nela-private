@@ -2,6 +2,7 @@ import { Api } from "../../api";
 import type { PipelineStageKind } from "../../components/ProgressSlate";
 import { MAX_PATCH_SOURCE_CHARS, truncateForPatchEdit } from "../artifactEdit";
 import type { GenerationOptions, SendHandlerContext } from "./types";
+import { friendlyErrorFromUnknown } from "../friendlyError";
 
 export async function runHtmlArtifactPatch(
   text: string,
@@ -67,12 +68,12 @@ ${currentContent}
       } catch (execErr: unknown) {
         const message = execErr instanceof Error ? execErr.message : String(execErr);
         ctx.updateSession(sid, { loading: false });
-        updateEditMsg("Error", null, `Failed to apply HTML patch: ${message}`);
+        updateEditMsg("Error", null, friendlyErrorFromUnknown(message));
       }
     },
     (err) => {
       ctx.updateSession(sid, { loading: false });
-      updateEditMsg("Error", null, `Failed to generate HTML patch: ${err}`);
+      updateEditMsg("Error", null, friendlyErrorFromUnknown(err));
     },
     undefined,
     ctx.selectedModel || undefined,

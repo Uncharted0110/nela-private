@@ -339,7 +339,7 @@ export default function InlineArtifact({ artifactPath, artifactStage, errorMessa
           <div className="flex-1 min-w-0">
             <div className="text-[0.84rem] font-semibold text-danger">Generation Failed</div>
             <div className="text-[0.72rem] text-txt-secondary mt-1 whitespace-pre-wrap">
-              {errorMessage || "An unexpected error occurred during execution."}
+              {errorMessage || "Something went wrong. Please try again."}
             </div>
           </div>
         </div>

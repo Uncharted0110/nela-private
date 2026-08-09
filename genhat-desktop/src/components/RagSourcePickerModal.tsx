@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { friendlyErrorFromUnknown } from "../app/friendlyError";
 import {
   ArrowLeft,
   ArrowRight,
@@ -152,7 +153,7 @@ export default function RagSourcePickerModal() {
       } catch (e) {
         console.error("listFsEntries failed:", e);
         setEntries([]);
-        setError(e instanceof Error ? e.message : String(e));
+        setError(friendlyErrorFromUnknown(e));
       } finally {
         setLoading(false);
       }
@@ -204,7 +205,7 @@ export default function RagSourcePickerModal() {
       })
       .catch((e) => {
         console.error("listFsRoots failed:", e);
-        setError(e instanceof Error ? e.message : String(e));
+        setError(friendlyErrorFromUnknown(e));
         setLoading(false);
       });
   }, [isOpen, loadDir, foldersOnly]);

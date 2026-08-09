@@ -16,8 +16,7 @@
       "models/kittenTTS/mini/*": "models/tts/kitten-tts/mini/",
       "models/LLM/*": "models/LLM/",
       "models/LiquidAI-VLM/*": "models/LiquidAI-VLM/",
-      "models/parakeet/*": "models/parakeet/",
-      "resources/fileindexer_sidecar": "fileindexer_sidecar"
+      "models/parakeet/*": "models/parakeet/"
     }
   }
 }

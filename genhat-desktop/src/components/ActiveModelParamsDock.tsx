@@ -5,6 +5,7 @@ import { Api, type CompatibilityRating } from "../api";
 import { KITTEN_TTS_VOICES } from "../types";
 import GlassDropdown from "./GlassDropdown";
 import "./ActiveModelParamsDock.css";
+import { friendlyErrorFromUnknown } from "../app/friendlyError";
 
 export interface RuntimeParamsTarget {
   key: string;
@@ -412,7 +413,7 @@ const ActiveModelParamsDock: React.FC<ActiveModelParamsDockProps> = ({ target, o
       setSaved(true);
       window.setTimeout(() => setSaved(false), 1800);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(friendlyErrorFromUnknown(err));
     } finally {
       setSaving(false);
     }

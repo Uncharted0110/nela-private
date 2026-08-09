@@ -1,15 +1,13 @@
 import { Api } from "../../api";
 import type { PipelineStageKind } from "../../components/ProgressSlate";
+import { friendlyErrorFromUnknown } from "../friendlyError";
 import {
   artifactKindFromPath,
   findSessionArtifactPath,
   isEditableArtifactPath,
   type ArtifactEditKind,
 } from "../artifactEdit";
-import {
-  extractAmbientSearchQuery,
-  selectAmbientResultsForInjection,
-} from "../ambientSearch";
+import { extractAmbientSearchQuery } from "../ambientSearch";
 import type { SendHandlerContext } from "./types";
 
 export async function handleArtifactEdit(
@@ -33,12 +31,12 @@ export async function handleArtifactEdit(
   if (!artifactPath) {
     const searchQuery = extractAmbientSearchQuery(text);
     try {
-      const results = await Api.searchAmbientFiles(searchQuery);
-      const top = selectAmbientResultsForInjection(results ?? []);
-      const match = top.find((r) => isEditableArtifactPath(r.path));
-      if (match) artifactPath = match.path;
+      const md = await Api.queryKnowledgeBase(searchQuery);
+      const matches = [...md.matchAll(/\(File:\s*([^)]+)\)/g)].map((m) => m[1].trim());
+      const match = matches.find((p) => isEditableArtifactPath(p));
+      if (match) artifactPath = match;
     } catch (err) {
-      console.warn("Ambient search for artifact edit failed:", err);
+      console.warn("Doc-graph search for artifact edit failed:", err);
     }
   }
 
@@ -185,6 +183,6 @@ export async function handleArtifactEdit(
     const message = err instanceof Error ? err.message : String(err);
     console.error("Artifact edit failed:", err);
     ctx.updateSession(sid, { loading: false });
-    updateEditMsg("Error", null, `Failed to edit artifact: ${message}`);
+    updateEditMsg("Error", null, friendlyErrorFromUnknown(message));
   }
 }

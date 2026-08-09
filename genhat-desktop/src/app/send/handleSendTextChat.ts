@@ -1,6 +1,6 @@
 import { Api } from "../../api";
 import type { ChatMessage, WebSearchResult } from "../../types";
-import { friendlyError } from "../friendlyError";
+import { friendlyErrorFromUnknown } from "../friendlyError";
 import { createStreamChunkFlusher } from "../streamUiBatch";
 import {
   CONTEXT_COMPACTION_KEEP_RECENT,
@@ -13,13 +13,8 @@ import {
   extractAmbientSearchQuery,
   hasDocumentFileIntent,
   hasSearchKeywords,
-  selectAmbientResultsForInjection,
 } from "../ambientSearch";
-import {
-  formatAmbientFileSection,
-  hasLocalFilePathReference,
-  loadAmbientFileBody,
-} from "../ambientFileContent";
+import { hasLocalFilePathReference } from "../ambientFileContent";
 import { NELA_CLOUD_SYSTEM_PROMPT, NELA_SYSTEM_PROMPT } from "../nelaSystemPrompt";
 import { NELA_AUTO_ARTIFACT_CRITERIA } from "../autoArtifactPrompt";
 import { canAutoStreamArtifacts } from "../cloudPresentationMode";
@@ -30,9 +25,8 @@ import {
 import { StreamArtifactParser, scrubChatArtifactProtocol, stripPartialArtifactTags } from "../streamArtifactParser";
 import { saveStreamedArtifact } from "../streamArtifactSave";
 import { sanitizeCsvArtifactBody } from "../sanitizeCsvArtifact";
-import { useFileIndexerStore } from "../../stores/fileIndexerStore";
+import { useDocGraphStore } from "../../stores/docGraphStore";
 import { useCloudStore } from "../../stores/cloudStore";
-import { parseCSV } from "./csvParse";
 import { streamChatByMode } from "./cloudOrLocalStream";
 import type { SendHandlerContext } from "./types";
 import { runCloudAwareToolLoop } from "./cloudNativeToolLoop";
@@ -50,11 +44,10 @@ export async function handleSendTextChat(
 ): Promise<void> {
   const sid = ctx.activeSessionId;
 
-  // ── Local file search context injection ────────────────────────────────
+  // ── Local file search via structural knowledge graph ────────────────────
   let ambientFileContext = "";
   let attachedFile = ctx.directDocumentPaths.length > 0 ? ctx.directDocumentPaths[0] : null;
 
-  // Tools → "Search my files" (or /files): open File search popup + ground reply.
   const explicitFileSearch =
     resolvedIntentKind === "FileSearch" ||
     slashFileSearch ||
@@ -64,140 +57,28 @@ export async function handleSendTextChat(
   const fileSearchEnabled = ctx.fileIndexerEnabled || slashFileSearch;
 
   if (fileSearchEnabled && !attachedFile && text.trim()) {
-    {
-      const searchQuery = extractAmbientSearchQuery(text).trim() || text.trim();
-      try {
-        // Results UI lives in the File search popup (avoids dumping PDF noise into chat).
-        useFileIndexerStore.getState().openChatWithQuery(searchQuery);
+    const searchQuery = extractAmbientSearchQuery(text).trim() || text.trim();
+    try {
+      // Same Markdown the LLM receives — also shown in the query dialog.
+      useDocGraphStore.getState().openQuery(searchQuery);
+      const md = await Api.queryKnowledgeBase(searchQuery);
+      useDocGraphStore.setState({ queryResult: md, queryText: searchQuery });
 
-        let results: import("../../types").FileRecord[] = [];
-
-        try {
-          const fiHits = ((await Api.fileindexerSearch(searchQuery)) ?? []).map((h) => ({
-            path: h.path,
-            score: h.score,
-            fields: h.fields ?? [],
-          }));
-          results = fiHits.map((h) => ({
-            path: h.path,
-            filename: h.path.split(/[/\\]/).pop() ?? h.path,
-            is_dir: false,
-            size: 0,
-            mtime: 0,
-            score: h.score,
-          }));
-        } catch (fiErr) {
-          console.warn("FileIndexer search unavailable, trying ambient:", fiErr);
+      if (md.trim() && md !== "No relevant structural context found.") {
+        ambientFileContext =
+          `The following local structural knowledge-graph context was retrieved for the user's query.\n` +
+          `Use these expanded sources as the primary source of truth when answering.\n\n` +
+          md;
+        const pathMatch = md.match(/\(File:\s*([^)]+)\)/);
+        if (pathMatch?.[1]) {
+          attachedFile = pathMatch[1].trim();
         }
-
-        if (results.length === 0) {
-          results = (await Api.searchAmbientFiles(searchQuery)) ?? [];
-        }
-
-        // Light grounding only — do not re-parse every PDF hit (pdf-extract used to
-        // println! glyph warnings to stdout and break Tauri IPC).
-        const ranked = [...results]
-          .filter((r) => !r.is_dir)
-          .sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
-        const top = ranked.length > 0 ? ranked.slice(0, 5) : selectAmbientResultsForInjection(results);
-
-        if (top.length > 0) {
-          const sections: string[] = [];
-          let loadedBodies = 0;
-
-          for (const rec of top) {
-            const filename = rec.path.split(/[/\\]/).pop() ?? "file";
-            const lower = rec.path.toLowerCase();
-            const isPdf = lower.endsWith(".pdf");
-            const scoreBit =
-              typeof rec.score === "number" && Number.isFinite(rec.score)
-                ? ` (score ${rec.score.toFixed(3)})`
-                : "";
-
-            if (lower.endsWith(".csv") || lower.endsWith(".tsv")) {
-              try {
-                const fileContent = await Api.readFileText(rec.path);
-                const parsed = parseCSV(fileContent);
-                if (parsed.headers.length > 0) {
-                  sections.push(
-                    `File: "${filename}" (Path: ${rec.path})${scoreBit}\n` +
-                    `Columns: [${parsed.headers.join(", ")}]\n` +
-                    `First rows:\n${parsed.rows.slice(0, 10).map((r) => r.join(", ")).join("\n")}`
-                  );
-                  loadedBodies += 1;
-                  continue;
-                }
-              } catch (err) {
-                console.warn("CSV read failed:", err);
-              }
-            } else if (lower.endsWith(".xlsx") || lower.endsWith(".xls") || lower.endsWith(".ods")) {
-              try {
-                const cached = await Api.getAmbientFileContent(rec.path);
-                if (cached) {
-                  sections.push(
-                    `File: "${filename}" (Path: ${rec.path})${scoreBit}\nSchema:\n${cached}`
-                  );
-                  loadedBodies += 1;
-                  continue;
-                }
-              } catch (err) {
-                console.warn("Excel schema read failed:", err);
-              }
-            }
-
-            if (isPdf) {
-              try {
-                const cached = await Api.getAmbientFileContent(rec.path);
-                if (cached?.trim()) {
-                  sections.push(
-                    `File: "${filename}" (Path: ${rec.path})${scoreBit}\nContent:\n${cached.substring(0, 4000)}`
-                  );
-                  loadedBodies += 1;
-                  continue;
-                }
-              } catch {
-                /* ignore */
-              }
-              // At most one on-demand PDF parse for grounding.
-              if (loadedBodies === 0) {
-                try {
-                  const body = await loadAmbientFileBody(rec.path, 4000);
-                  sections.push(formatAmbientFileSection(rec.path, body) + scoreBit);
-                  if (body.trim()) loadedBodies += 1;
-                  continue;
-                } catch (err) {
-                  console.warn("PDF body load skipped:", err);
-                }
-              }
-              sections.push(
-                `File: "${filename}" (Path: ${rec.path})${scoreBit}\n` +
-                  `(PDF listed in File search results.)`
-              );
-              continue;
-            }
-
-            if (loadedBodies < 2) {
-              const body = await loadAmbientFileBody(rec.path);
-              sections.push(formatAmbientFileSection(rec.path, body) + scoreBit);
-              if (body.trim()) loadedBodies += 1;
-            } else {
-              sections.push(`File: "${filename}" (Path: ${rec.path})${scoreBit}`);
-            }
-          }
-
-          if (sections.length > 0) {
-            attachedFile = top[0].path;
-            ambientFileContext =
-              `The following local files were retrieved for the user's query (most relevant first).\n` +
-              `Use these as the primary source of truth when answering.\n\n` +
-              sections.join("\n\n---\n\n");
-          }
-        }
-      } catch (err) {
-        console.warn("Local file search in standard chat failed:", err);
+      } else if (explicitFileSearch) {
+        ambientFileContext = "FILE_SEARCH_NO_RESULTS";
       }
-
-      if (!ambientFileContext && !attachedFile && explicitFileSearch) {
+    } catch (err) {
+      console.warn("Doc-graph file search in standard chat failed:", err);
+      if (explicitFileSearch) {
         ambientFileContext = "FILE_SEARCH_NO_RESULTS";
       }
     }
@@ -532,7 +413,7 @@ export async function handleSendTextChat(
     ctx.updateSession(sid, (prev) => ({
       messages: [
         ...prev.messages,
-        { role: "assistant" as const, content: friendlyError(String(err)) },
+        { role: "assistant" as const, content: friendlyErrorFromUnknown(err) },
       ],
       streamingContent: "",
       loading: false,

@@ -1,5 +1,6 @@
 import { Api } from "../../api";
 import type { PipelineStageKind } from "../../components/ProgressSlate";
+import { friendlyErrorFromUnknown } from "../friendlyError";
 import {
   buildSpreadsheetEditSample,
   editedOutputName,
@@ -50,7 +51,7 @@ export async function runSpreadsheetArtifactEdit(
 
   if (!headers.length) {
     ctx.updateSession(sid, { loading: false });
-    updateEditMsg("Error", null, "Could not read spreadsheet data from the file.");
+    updateEditMsg("Error", null, friendlyErrorFromUnknown("Could not read spreadsheet data from the file."));
     return;
   }
 
@@ -161,22 +162,14 @@ Produce a plan that applies the requested changes to this spreadsheet.`;
             const message =
               execErr instanceof Error ? execErr.message : String(execErr);
             ctx.updateSession(sid, { loading: false });
-            updateEditMsg(
-              "Error",
-              null,
-              `Failed to apply spreadsheet edits: ${message}`
-            );
+            updateEditMsg("Error", null, friendlyErrorFromUnknown(`Failed to apply spreadsheet edits: ${message}`));
             resolve();
           }
         })();
       },
       onError: (err) => {
         ctx.updateSession(sid, { loading: false });
-        updateEditMsg(
-          "Error",
-          null,
-          `Failed to generate spreadsheet edit plan: ${err}`
-        );
+        updateEditMsg("Error", null, friendlyErrorFromUnknown(`Failed to generate spreadsheet edit plan: ${err}`));
         reject(err);
       },
     });
