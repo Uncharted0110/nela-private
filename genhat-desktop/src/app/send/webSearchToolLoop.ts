@@ -14,26 +14,43 @@ import type {
   ExtractedWebTable,
 } from "../../types";
 import { extractWebSearchQuery } from "../webSearchQuery";
+import { groundWebSearchQuery, resolveFollowUpSearchQuery } from "./followUpSearchQuery";
 import type { GenerationOptions } from "./types";
 import { MAX_WEB_SEARCH_TOOL_ROUNDS } from "./webSearchLimits";
 
-export const WEB_SEARCH_TOOL_SYSTEM = `You have a web_search tool for current, factual, or external information.
-When the user asks about news, prices, sports, docs, trips, flights, or anything that needs up-to-date facts, call the tool before answering.
-You may call web_search multiple times (different queries) until you have enough coverage — up to ${MAX_WEB_SEARCH_TOOL_ROUNDS} searches.
+export const WEB_SEARCH_TOOL_SYSTEM = `You have web tools for current, factual, or external information.
+When the user asks about news, prices, sports, docs, trips, flights, or anything that needs up-to-date facts, call a tool before answering.
+You may call tools multiple times (different queries) until you have enough coverage — up to ${MAX_WEB_SEARCH_TOOL_ROUNDS} rounds.
+
+Treat follow-ups as continuing the prior topic. If they planned a Spain trip and then ask about flights/hotels/food, include Spain (and any dates/constraints) in every search query. Never search a bare word like "flights" alone when the conversation already established a destination or product.
 
 To search the web, reply with ONLY this JSON (no markdown, no other text):
-{"tool":"web_search","query":"concise search query"}
+{"tool":"web_search","query":"concise self-contained search query"}
+Optional fields: "profile" ("simple" for quick lookups, "news" for current events, "research" for comparisons/summaries with full page content), "site" (restrict to one domain, e.g. "wikipedia.org"), "time_range" ("day"|"week"|"month"|"year").
+
+To read specific pages in full after a search, reply with ONLY:
+{"tool":"web_extract","urls":["https://..."],"query":"what you are looking for"}
 
 To answer without searching, reply with normal prose (not JSON).
-After you receive tool results, answer using those sources. Do not invent facts that are not in the results.`;
+After you receive tool results, answer using those sources. Cite source URLs. Do not invent facts that are not in the results.`;
 
 const MAX_TOOL_ROUNDS = MAX_WEB_SEARCH_TOOL_ROUNDS;
 
 export interface WebSearchToolCall {
   tool: "web_search";
   query: string;
-  depth?: "snippets" | "full";
+  profile?: "simple" | "news" | "research";
+  site?: string;
+  timeRange?: "day" | "week" | "month" | "year";
 }
+
+export interface WebExtractToolCall {
+  tool: "web_extract";
+  urls: string[];
+  query?: string;
+}
+
+export type HostWebToolCall = WebSearchToolCall | WebExtractToolCall;
 
 export interface WebSearchToolLoopOptions {
   messages: ChatContextMessage[];
@@ -52,8 +69,18 @@ export interface WebSearchToolLoopResult {
   webSearchResult: WebSearchResult | null;
 }
 
-/** Try to parse a web_search tool call from model output. */
-export function parseWebSearchToolCall(text: string): WebSearchToolCall | null {
+function asProfile(v: unknown): WebSearchToolCall["profile"] {
+  return v === "simple" || v === "news" || v === "research" ? v : undefined;
+}
+
+function asTimeRange(v: unknown): WebSearchToolCall["timeRange"] {
+  return v === "day" || v === "week" || v === "month" || v === "year"
+    ? v
+    : undefined;
+}
+
+/** Try to parse a web_search / web_extract tool call from model output. */
+export function parseWebSearchToolCall(text: string): HostWebToolCall | null {
   const trimmed = text.trim();
   if (!trimmed) return null;
 
@@ -72,20 +99,48 @@ export function parseWebSearchToolCall(text: string): WebSearchToolCall | null {
         (typeof obj.tool === "string" && obj.tool) ||
         (typeof obj.name === "string" && obj.name) ||
         "";
+      // Some models nest fields under "arguments".
+      const args: Record<string, unknown> =
+        obj.arguments && typeof obj.arguments === "object"
+          ? (obj.arguments as Record<string, unknown>)
+          : obj;
+
+      if (tool === "web_extract") {
+        const urls = Array.isArray(args.urls)
+          ? (args.urls as unknown[])
+              .filter((u): u is string => typeof u === "string")
+              .filter((u) => u.startsWith("http"))
+              .slice(0, 5)
+          : [];
+        if (urls.length === 0) continue;
+        return {
+          tool: "web_extract",
+          urls,
+          query:
+            typeof args.query === "string" && args.query.trim()
+              ? args.query.trim().slice(0, 200)
+              : undefined,
+        };
+      }
+
       if (tool !== "web_search") continue;
 
-      let query = "";
-      let depth: "snippets" | "full" | undefined;
-      if (typeof obj.query === "string") {
-        query = obj.query.trim();
-        if (obj.depth === "snippets" || obj.depth === "full") depth = obj.depth;
-      } else if (obj.arguments && typeof obj.arguments === "object") {
-        const args = obj.arguments as Record<string, unknown>;
-        if (typeof args.query === "string") query = args.query.trim();
-        if (args.depth === "snippets" || args.depth === "full") depth = args.depth;
-      }
+      const query = typeof args.query === "string" ? args.query.trim() : "";
       if (!query) continue;
-      return { tool: "web_search", query: query.slice(0, 200), depth };
+      // Legacy depth mapping: "full" used to mean fetch page content.
+      const profile =
+        asProfile(args.profile) ??
+        (args.depth === "full" ? "research" : undefined);
+      return {
+        tool: "web_search",
+        query: query.slice(0, 200),
+        profile,
+        site:
+          typeof args.site === "string" && args.site.trim()
+            ? args.site.trim()
+            : undefined,
+        timeRange: asTimeRange(args.time_range ?? args.timeRange),
+      };
     } catch {
       // try next candidate
     }
@@ -122,6 +177,10 @@ export function mergeWebSearchResults(
     c?.trim()
   );
 
+  const images = Array.from(
+    new Set([...(a.images ?? []), ...(b.images ?? [])])
+  ).slice(0, 12);
+
   return {
     query: a.query === b.query ? a.query : `${a.query}; ${b.query}`,
     queries: Array.from(
@@ -134,6 +193,8 @@ export function mergeWebSearchResults(
     results: mergedHits,
     formatted_context: contexts.join("\n\n"),
     extracted_tables: tables.length > 0 ? tables : undefined,
+    answer: a.answer ?? b.answer,
+    images: images.length > 0 ? images : undefined,
   };
 }
 
@@ -231,7 +292,82 @@ export async function runWebSearchToolLoop(
     if (decision.thinking) thinking += decision.thinking;
 
     const call = parseWebSearchToolCall(decision.content);
+    // When web is on, don't let the model answer from memory on round 0 —
+    // force a search using the user's last message.
     if (!call) {
+      if (round === 0) {
+        const lastUser = [...opts.messages]
+          .reverse()
+          .find((m) => m.role === "user" && m.content.trim());
+        const rawQ = (lastUser?.content ?? "").trim().slice(0, 200);
+        if (rawQ) {
+          let q = rawQ;
+          try {
+            q = await resolveFollowUpSearchQuery({
+              messages: opts.messages,
+              userText: rawQ,
+              modelId: opts.modelId,
+              signal: opts.signal,
+            });
+          } catch (e) {
+            if (e instanceof DOMException && e.name === "AbortError") throw e;
+          }
+          // Fall through into the search path with a synthetic call.
+          const forced = {
+            tool: "web_search" as const,
+            query: q,
+            profile:
+              opts.webDepth === "full"
+                ? ("research" as const)
+                : ("news" as const),
+          };
+          const canSearchAgain = round + 1 < MAX_TOOL_ROUNDS;
+          messages = [
+            ...messages,
+            {
+              role: "assistant",
+              content: JSON.stringify(forced),
+              name: "web_search",
+            },
+          ];
+          try {
+            const maxResults = forced.profile === "research" ? 8 : 5;
+            const result = await Api.webSearch(forced.query, maxResults, {
+              profile: forced.profile,
+            });
+            if (result.results.length > 0 || result.formatted_context?.trim()) {
+              webSearchResult = mergeWebSearchResults(webSearchResult, result);
+            }
+            const toolBody =
+              result.formatted_context?.trim() ||
+              (result.results.length === 0
+                ? `No web results found for query: ${forced.query}`
+                : result.results
+                    .map((h, i) => `${i + 1}. ${h.title}\n${h.snippet}\n${h.url}`)
+                    .join("\n\n"));
+            messages = [
+              ...messages,
+              {
+                role: "tool",
+                name: "web_search",
+                tool_call_id: `web_search_${round}`,
+                content: toolBody,
+              },
+              {
+                role: "user",
+                content: canSearchAgain
+                  ? `Using the tool results above, continue. You have ${MAX_TOOL_ROUNDS - (round + 1)} tool rounds left — ` +
+                    "call web_search with a NEW focused query if needed; otherwise answer in prose."
+                  : "Using the tool results above, answer the user's question in prose now. Do not call tools again.",
+              },
+            ];
+            if (!canSearchAgain) break;
+            continue;
+          } catch (e) {
+            console.warn("[web_search tool] Forced search failed:", e);
+          }
+        }
+      }
       // Model answered without a tool call — deliver prose to the UI.
       if (decision.content.trim()) {
         opts.onChunk(decision.content);
@@ -244,65 +380,103 @@ export async function runWebSearchToolLoop(
       break;
     }
 
-    const fetchContent =
-      call.depth === "full" ||
-      (call.depth !== "snippets" && opts.webDepth === "full");
-    const maxResults = fetchContent ? 4 : 5;
     const canSearchAgain = round + 1 < MAX_TOOL_ROUNDS;
+    const toolName = call.tool;
 
     messages = [
       ...messages,
       {
         role: "assistant",
-        content: JSON.stringify({
-          tool: "web_search",
-          query: call.query,
-          ...(call.depth ? { depth: call.depth } : {}),
-        }),
-        name: "web_search",
+        content: JSON.stringify(call),
+        name: toolName,
       },
     ];
 
     try {
-      const result = await Api.webSearch(call.query, maxResults, fetchContent);
-      if (result.results.length > 0 || result.formatted_context?.trim()) {
-        webSearchResult = mergeWebSearchResults(webSearchResult, result);
+      let toolBody: string;
+
+      if (call.tool === "web_extract") {
+        const result = await Api.webExtract(call.urls, call.query, "basic");
+        if (result.results.length > 0) {
+          const asSearchResult: WebSearchResult = {
+            query: call.query ?? call.urls[0]!,
+            results: result.results.map((p) => ({
+              title: p.url,
+              snippet: p.content.slice(0, 600),
+              url: p.url,
+              image_url: p.images?.[0] ?? null,
+            })),
+            formatted_context: "",
+            extracted_tables: result.extracted_tables,
+            images: result.results.flatMap((p) => p.images ?? []).slice(0, 8),
+          };
+          webSearchResult = mergeWebSearchResults(
+            webSearchResult,
+            asSearchResult
+          );
+        }
+        toolBody =
+          result.formatted_context?.trim() ||
+          "No content could be extracted from the provided URLs.";
+      } else {
+        let searchQuery = call.query;
+        try {
+          searchQuery = await groundWebSearchQuery(call.query, {
+            messages: opts.messages,
+            userText: call.query,
+            modelId: opts.modelId,
+            signal: opts.signal,
+          });
+        } catch (e) {
+          if (e instanceof DOMException && e.name === "AbortError") throw e;
+        }
+        const profile =
+          call.profile ?? (opts.webDepth === "full" ? "research" : "simple");
+        const maxResults = profile === "research" ? 8 : 5;
+        const result = await Api.webSearch(searchQuery, maxResults, {
+          profile,
+          site: call.site,
+          timeRange: call.timeRange,
+        });
+        if (result.results.length > 0 || result.formatted_context?.trim()) {
+          webSearchResult = mergeWebSearchResults(webSearchResult, result);
+        }
+        toolBody =
+          result.formatted_context?.trim() ||
+          (result.results.length === 0
+            ? `No web results found for query: ${searchQuery}`
+            : result.results
+                .map((h, i) => `${i + 1}. ${h.title}\n${h.snippet}\n${h.url}`)
+                .join("\n\n"));
       }
-      const toolBody =
-        result.formatted_context?.trim() ||
-        (result.results.length === 0
-          ? `No web results found for query: ${call.query}`
-          : result.results
-              .map((h, i) => `${i + 1}. ${h.title}\n${h.snippet}\n${h.url}`)
-              .join("\n\n"));
 
       messages = [
         ...messages,
         {
           role: "tool",
-          name: "web_search",
-          tool_call_id: `web_search_${round}`,
+          name: toolName,
+          tool_call_id: `${toolName}_${round}`,
           content: toolBody,
         },
         {
           role: "user",
           content: canSearchAgain
-            ? `Using the tool results above, continue. You have ${MAX_TOOL_ROUNDS - (round + 1)} search rounds left — ` +
-              "call web_search again with a NEW focused query if more facets are needed; otherwise answer in prose."
+            ? `Using the tool results above, continue. You have ${MAX_TOOL_ROUNDS - (round + 1)} tool rounds left — ` +
+              "call web_search with a NEW focused query (or web_extract on promising URLs) if more facets are needed; otherwise answer in prose."
             : "Using the tool results above, answer the user's question in prose now. Do not call tools again.",
         },
       ];
 
       if (!canSearchAgain) break;
     } catch (e) {
-      console.warn("[web_search tool] Failed:", e);
+      console.warn(`[${toolName} tool] Failed:`, e);
       messages = [
         ...messages,
         {
           role: "tool",
-          name: "web_search",
-          tool_call_id: `web_search_${round}`,
-          content: `web_search failed: ${e}. Answer from your knowledge and note that live search was unavailable.`,
+          name: toolName,
+          tool_call_id: `${toolName}_${round}`,
+          content: `${toolName} failed: ${e}. Answer from your knowledge and note that live search was unavailable.`,
         },
         {
           role: "user",

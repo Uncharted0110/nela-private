@@ -40,7 +40,7 @@ interface ChatModeState {
   enrichmentStatus: string | null;
   webEnabled: boolean;
   fileIndexerEnabled: boolean;
-  webDepth: "snippets" | "full";
+  webDepth: import("../types").WebDepth;
   /** Live status while a tool runs (e.g. web search) — shown above the streaming bubble. */
   liveToolStatus: string | null;
   imagePath: string | null;

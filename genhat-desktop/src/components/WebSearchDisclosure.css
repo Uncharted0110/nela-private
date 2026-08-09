@@ -45,6 +45,86 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Overlapping favicon stack in the collapsed pill (Gemini-style). */
+.web-search-disclosure__favicons {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.web-search-disclosure__favicons img {
+  width: 0.95rem;
+  height: 0.95rem;
+  border-radius: 50%;
+  border: 1.5px solid var(--color-void-800, #12141a);
+  background: var(--color-void-800, #12141a);
+  object-fit: cover;
+}
+
+.web-search-disclosure__favicons img + img {
+  margin-left: -0.35rem;
+}
+
+/* Image strip at the top of the expanded panel. */
+.web-search-disclosure__images {
+  display: flex;
+  gap: 0.4rem;
+  margin-bottom: 0.55rem;
+  overflow-x: auto;
+  padding-bottom: 0.15rem;
+}
+
+.web-search-disclosure__image {
+  flex-shrink: 0;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--color-glass-border) 90%, transparent);
+  border-radius: 0.5rem;
+  overflow: hidden;
+  background: transparent;
+  cursor: pointer;
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+
+.web-search-disclosure__image:hover {
+  border-color: color-mix(in srgb, var(--color-neon) 45%, var(--color-glass-border));
+  transform: translateY(-1px);
+}
+
+.web-search-disclosure__image img {
+  display: block;
+  width: 7.5rem;
+  height: 5rem;
+  object-fit: cover;
+}
+
+.web-search-disclosure__hit-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.web-search-disclosure__hit-favicon {
+  width: 0.85rem;
+  height: 0.85rem;
+  border-radius: 3px;
+  flex-shrink: 0;
+  object-fit: cover;
+}
+
+.web-search-disclosure__hit-favicon-fallback {
+  flex-shrink: 0;
+  opacity: 0.6;
+}
+
+.web-search-disclosure__hit-host {
+  flex-shrink: 0;
+  font-size: 0.65rem;
+  color: var(--color-txt-muted);
+  opacity: 0.8;
+}
+
 .web-search-disclosure__chevron {
   flex-shrink: 0;
   opacity: 0.75;

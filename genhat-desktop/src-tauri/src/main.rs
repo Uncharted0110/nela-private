@@ -452,6 +452,7 @@ fn main() {
             app_lib::commands::playground::playground_export_pipeline,
             // Web search commands
             app_lib::commands::web_search::web_search,
+            app_lib::commands::web_search::web_extract,
             // Artifact commands (revamp P3)
             app_lib::commands::artifact::resolve_intent,
             app_lib::commands::artifact::generate_spreadsheet,

@@ -151,8 +151,8 @@ interface ChatWindowProps {
   onToggleWebEnabled?: (enabled: boolean) => void;
   fileIndexerEnabled?: boolean;
   onToggleFileIndexerEnabled?: (enabled: boolean) => void;
-  webDepth?: "snippets" | "full";
-  onWebDepthChange?: (depth: "snippets" | "full") => void;
+  webDepth?: import("../types").WebDepth;
+  onWebDepthChange?: (depth: import("../types").WebDepth) => void;
   onIngestFile?: () => void;
   onIngestDir?: () => void;
   onAttachDirectDocuments?: () => void;
@@ -576,6 +576,18 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
                     aria-label="Thorough web results"
                   >
                     Thorough
+                  </button>
+                  <button
+                    className={`px-2 py-0.5 transition-colors ${
+                      webDepth === "deep"
+                        ? "bg-neon-subtle text-neon"
+                        : "bg-glass-bg text-txt-muted hover:text-txt"
+                    }`}
+                    onClick={() => onWebDepthChange?.("deep")}
+                    title="Deep Research: plans facets, runs multiple searches, writes a cited report"
+                    aria-label="Deep Research"
+                  >
+                    Deep
                   </button>
                 </div>
               </div>
@@ -1137,7 +1149,10 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
                                     </div>
                                   )}
                                   {safeContent ? (
-                                    <MarkdownRenderer content={safeContent} />
+                                    <MarkdownRenderer
+                                      content={safeContent}
+                                      sources={msg.webSearchResult?.results}
+                                    />
                                   ) : null}
                                   {msg.artifactStage === "Error" && (
                                     <div className="mt-2 text-[0.85rem] text-red-300/90">
@@ -1183,6 +1198,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
                                           content={scrubChatArtifactProtocol(
                                             msg.artifactFollowup
                                           )}
+                                          sources={msg.webSearchResult?.results}
                                         />
                                       </div>
                                     )}
@@ -1192,7 +1208,10 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
                           </>
                         ) : (
                           <>
-                            <MarkdownRenderer content={scrubChatArtifactProtocol(msg.content)} />
+                            <MarkdownRenderer
+                              content={scrubChatArtifactProtocol(msg.content)}
+                              sources={msg.webSearchResult?.results}
+                            />
                             {mediaAssets[idx] && <MediaGallery assets={mediaAssets[idx]} />}
                             {(msg.artifactPath || msg.artifactStage) && (
                               <div className="mt-3">

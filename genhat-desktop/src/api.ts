@@ -525,20 +525,46 @@ export const Api = {
   },
 
   /**
-   * Search the web via DuckDuckGo (no API key required).
-   * @param query - Search query (trimmed to 150 chars by backend).
+   * Search the web via the NELA backend Tavily proxy.
+   * @param query - Search query (trimmed to 400 chars by backend).
    * @param maxResults - Number of results to return (1–10).
-   * @param fetchContent - If true, fetches full-page markdown via Jina AI Reader.
+   * @param opts.profile - simple (default) | news | research (advanced depth + full content).
+   * @param opts.site - Restrict results to one domain (e.g. "booking.com").
+   * @param opts.timeRange - Recency filter: day | week | month | year.
    */
   async webSearch(
     query: string,
     maxResults: number,
-    fetchContent: boolean
+    opts?: {
+      profile?: import("./types").WebSearchProfile;
+      site?: string;
+      timeRange?: "day" | "week" | "month" | "year";
+    }
   ): Promise<WebSearchResult> {
     return invoke<WebSearchResult>("web_search", {
       query,
       maxResults,
-      fetchContent,
+      profile: opts?.profile ?? null,
+      site: opts?.site ?? null,
+      timeRange: opts?.timeRange ?? null,
+    });
+  },
+
+  /**
+   * Extract clean markdown content from up to 5 URLs (Tavily Extract proxy).
+   * @param urls - URLs to read (http/https only).
+   * @param query - Optional intent used to rerank extracted chunks.
+   * @param depth - basic (default) | advanced (tables/embedded content).
+   */
+  async webExtract(
+    urls: string[],
+    query?: string,
+    depth?: "basic" | "advanced"
+  ): Promise<import("./types").WebExtractResult> {
+    return invoke<import("./types").WebExtractResult>("web_extract", {
+      urls,
+      query: query ?? null,
+      depth: depth ?? null,
     });
   },
 

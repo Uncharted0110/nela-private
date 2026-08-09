@@ -10,9 +10,18 @@ interface WebSearchDisclosureProps {
   defaultOpen?: boolean;
 }
 
+function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return url;
+  }
+}
+
 /**
  * Collapsible “Searched the web” line with shaded sources panel —
- * similar to Cursor / Gemini / Claude search disclosures.
+ * Gemini-style: favicon stack when collapsed, image strip + favicon
+ * source cards when expanded.
  */
 const WebSearchDisclosure: React.FC<WebSearchDisclosureProps> = ({
   result,
@@ -32,6 +41,13 @@ const WebSearchDisclosure: React.FC<WebSearchDisclosureProps> = ({
         ? `Searched the web · ${queries.length} queries`
         : `Searched the web · ${count} source${count === 1 ? "" : "s"}`;
 
+  const favicons = result.results
+    .map((h) => h.favicon)
+    .filter((f): f is string => Boolean(f))
+    .slice(0, 5);
+
+  const images = (result.images ?? []).slice(0, 8);
+
   return (
     <div className={`web-search-disclosure ${open ? "is-open" : ""}`}>
       <button
@@ -42,6 +58,21 @@ const WebSearchDisclosure: React.FC<WebSearchDisclosureProps> = ({
       >
         <Globe size={13} strokeWidth={2} className="web-search-disclosure__icon" />
         <span className="web-search-disclosure__label">{summary}</span>
+        {favicons.length > 0 && (
+          <span className="web-search-disclosure__favicons" aria-hidden>
+            {favicons.map((f, i) => (
+              <img
+                key={`${f}-${i}`}
+                src={f}
+                alt=""
+                loading="lazy"
+                onError={(e) => {
+                  (e.target as HTMLImageElement).style.display = "none";
+                }}
+              />
+            ))}
+          </span>
+        )}
         <span className="web-search-disclosure__meta">
           {count} source{count === 1 ? "" : "s"}
         </span>
@@ -54,6 +85,31 @@ const WebSearchDisclosure: React.FC<WebSearchDisclosureProps> = ({
 
       {open && (
         <div className="web-search-disclosure__panel">
+          {images.length > 0 && (
+            <div className="web-search-disclosure__images">
+              {images.map((img, i) => (
+                <button
+                  key={`${img}-${i}`}
+                  type="button"
+                  className="web-search-disclosure__image"
+                  onClick={() => void openUrl(img)}
+                  title={img}
+                >
+                  <img
+                    src={img}
+                    alt=""
+                    loading="lazy"
+                    onError={(e) => {
+                      const btn = (e.target as HTMLImageElement).closest(
+                        "button"
+                      );
+                      if (btn) btn.style.display = "none";
+                    }}
+                  />
+                </button>
+              ))}
+            </div>
+          )}
           {queries.length > 1 && (
             <ul className="web-search-disclosure__queries">
               {queries.map((q) => (
@@ -72,15 +128,37 @@ const WebSearchDisclosure: React.FC<WebSearchDisclosureProps> = ({
                     void openUrl(hit.url);
                   }}
                 >
-                  <span className="web-search-disclosure__hit-title">
-                    {hit.title || hit.url}
+                  <span className="web-search-disclosure__hit-head">
+                    {hit.favicon ? (
+                      <img
+                        className="web-search-disclosure__hit-favicon"
+                        src={hit.favicon}
+                        alt=""
+                        loading="lazy"
+                        onError={(e) => {
+                          (e.target as HTMLImageElement).style.visibility =
+                            "hidden";
+                        }}
+                      />
+                    ) : (
+                      <Globe
+                        size={12}
+                        strokeWidth={2}
+                        className="web-search-disclosure__hit-favicon-fallback"
+                      />
+                    )}
+                    <span className="web-search-disclosure__hit-title">
+                      {hit.title || hit.url}
+                    </span>
+                    <span className="web-search-disclosure__hit-host">
+                      {hostOf(hit.url)}
+                    </span>
                   </span>
                   {hit.snippet ? (
                     <span className="web-search-disclosure__hit-snippet">
                       {hit.snippet}
                     </span>
                   ) : null}
-                  <span className="web-search-disclosure__hit-url">{hit.url}</span>
                 </button>
               </li>
             ))}

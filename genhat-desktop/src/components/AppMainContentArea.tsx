@@ -30,8 +30,8 @@ interface AppMainContentAreaProps {
   onToggleWebEnabled?: (enabled: boolean) => void;
   fileIndexerEnabled?: boolean;
   onToggleFileIndexerEnabled?: (enabled: boolean) => void;
-  webDepth?: "snippets" | "full";
-  onWebDepthChange?: (depth: "snippets" | "full") => void;
+  webDepth?: import("../types").WebDepth;
+  onWebDepthChange?: (depth: import("../types").WebDepth) => void;
   activeSession: ChatSession | null;
   activeWorkspace: { id: string } | null;
   onSend: (text: string) => void;

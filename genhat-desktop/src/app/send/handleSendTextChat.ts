@@ -30,6 +30,8 @@ import { useCloudStore } from "../../stores/cloudStore";
 import { streamChatByMode } from "./cloudOrLocalStream";
 import type { SendHandlerContext } from "./types";
 import { runCloudAwareToolLoop } from "./cloudNativeToolLoop";
+import { isCompositeQuery, runFacetResearchLoop } from "./facetPlanner";
+import { looksLikeWebFollowUp } from "./followUpSearchQuery";
 import { useChatModeStore } from "../../stores/chatModeStore";
 
 export async function handleSendTextChat(
@@ -438,10 +440,67 @@ export async function handleSendTextChat(
     ctx.setStreamingThinking(fullThinking);
   };
 
+  // Facet planner: Deep Research mode always plans facets; composite queries
+  // (itineraries, purchase decisions, multi-facet research) auto-route to it.
+  // Short follow-ups after a web/research thread also continue via facets when Deep
+  // (or when the prior ask was composite) so "possible flights" stays on-topic.
+  const priorWasComposite = sessionMessages.some(
+    (m) => m.role === "user" && isCompositeQuery(m.content ?? "")
+  );
+  const useFacetPlanner =
+    effectiveWebEnabled &&
+    !autoArtifacts &&
+    (ctx.webDepth === "deep" ||
+      isCompositeQuery(text) ||
+      (priorWasComposite && looksLikeWebFollowUp(text, apiMessages)));
+
+  if (useFacetPlanner) {
+    runFacetResearchLoop({
+      messages: apiMessages,
+      userText: text,
+      budget: ctx.webDepth === "deep" ? "deep" : "standard",
+      containsFileContext: Boolean(
+        ambientFileContext && ambientFileContext !== "FILE_SEARCH_NO_RESULTS"
+      ),
+      userConfirmedCloudContext: Boolean(
+        ctx.fileIndexerEnabled || slashFileSearch
+      ),
+      contextSource:
+        ambientFileContext && ambientFileContext !== "FILE_SEARCH_NO_RESULTS"
+          ? "ambient_file"
+          : undefined,
+      modelId: ctx.selectedModel || undefined,
+      signal: ctrl.signal,
+      disableThinking: !ctx.thinkingEnabled,
+      generationOptions,
+      onChunk,
+      onThinking,
+      onToolStatus: (status) => {
+        useChatModeStore.getState().setLiveToolStatus(status);
+      },
+    })
+      .then((result) => {
+        webSearchResult = result.webSearchResult;
+        if (result.thinking && !fullThinking) {
+          fullThinking = result.thinking;
+        }
+        void finishOk(
+          fullResponse || result.content,
+          fullThinking || result.thinking,
+          webSearchResult
+        );
+      })
+      .catch((err) => {
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        finishErr(err);
+      });
+    return;
+  }
+
   if (effectiveWebEnabled) {
     runCloudAwareToolLoop({
       messages: apiMessages,
-      webDepth: ctx.webDepth,
+      webDepth: ctx.webDepth === "deep" ? "full" : ctx.webDepth,
       includeMcpTools: !autoArtifacts,
       containsFileContext: Boolean(
         ambientFileContext && ambientFileContext !== "FILE_SEARCH_NO_RESULTS"

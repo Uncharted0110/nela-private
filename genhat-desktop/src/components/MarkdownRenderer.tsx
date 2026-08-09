@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
@@ -9,6 +9,8 @@ import "katex/dist/katex.min.css";
 import type { Components } from "react-markdown";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { Api } from "../api";
+import type { SearchHit } from "../types";
+import { SourceCitation } from "./SourceCitation";
 
 interface MarkdownRendererProps {
   content: string;
@@ -17,6 +19,8 @@ interface MarkdownRendererProps {
    * each streamed token paints quickly. Final messages use the full pipeline.
    */
   streaming?: boolean;
+  /** Web search hits — turns [n] markers into hoverable citation icons. */
+  sources?: SearchHit[] | null;
 }
 
 /** Recursively extract plain text from React nodes (handles rehype-highlight spans). */
@@ -78,100 +82,155 @@ const CopyButton: React.FC<{ text: string }> = ({ text }) => {
   );
 };
 
+/** Drop trailing "Sources" dump — citations render as inline icons instead. */
+export function stripTrailingSourcesSection(md: string): string {
+  return md
+    .replace(
+      /\n{1,3}(?:#{1,6}\s*|\*\*|__)?Sources(?:\*\*|__)?\s*(?:\n|:)?[\s\S]*$/i,
+      ""
+    )
+    .trimEnd();
+}
+
 /**
- * Custom component overrides for react-markdown.
- * Handles: code blocks with copy button + language label, links opening externally, etc.
+ * Turn [n] / [[n]] citation markers into markdown links that the renderer
+ * maps to SourceCitation chips. Skips fenced code blocks.
+ *
+ * Models often write `…claim [1].` — move the sentence punctuation before the
+ * icon so it reads `…claim. [icon]` instead of `…claim [icon].`
  */
-const markdownComponents: Components = {
-  // Code blocks (``` ```) and inline code (` `)
-  code({ className, children, ...props }) {
-    const match = /language-(\w+)/.exec(className || "");
-    const codeString = extractText(children).replace(/\n$/, "");
+function injectCitationLinks(md: string, sourceCount: number): string {
+  if (sourceCount <= 0) return md;
+  const parts = md.split(/(```[\s\S]*?```)/g);
+  return parts
+    .map((part) => {
+      if (part.startsWith("```")) return part;
+      // Avoid rewriting real markdown links like [1](https://...).
+      // Capture trailing . ! ? (and optional closing quotes) so the cite sits after the sentence.
+      return part.replace(
+        /\s*\[\[?(\d{1,3})\]\]?(?!\()\s*([.!?]+["']?)/g,
+        (full, numStr: string, punct: string) => {
+          const n = Number(numStr);
+          if (!Number.isFinite(n) || n < 1 || n > sourceCount) return full;
+          return `${punct} [↗](cite://${n})`;
+        }
+      ).replace(/\[\[?(\d{1,3})\]\]?(?!\()/g, (full, numStr: string) => {
+        const n = Number(numStr);
+        if (!Number.isFinite(n) || n < 1 || n > sourceCount) return full;
+        return `[↗](cite://${n})`;
+      });
+    })
+    .join("");
+}
 
-    // If it has a language class or is multi-line, render as a block
-    const isBlock = match || codeString.includes("\n");
+function buildMarkdownComponents(sources?: SearchHit[] | null): Components {
+  return {
+    code({ className, children, ...props }) {
+      const match = /language-(\w+)/.exec(className || "");
+      const codeString = extractText(children).replace(/\n$/, "");
+      const isBlock = match || codeString.includes("\n");
 
-    if (isBlock) {
-      return (
-        <div className="code-block-wrapper">
-          <div className="code-block-header">
-            <span className="code-lang">{match?.[1] || "code"}</span>
-            <CopyButton text={codeString} />
+      if (isBlock) {
+        return (
+          <div className="code-block-wrapper">
+            <div className="code-block-header">
+              <span className="code-lang">{match?.[1] || "code"}</span>
+              <CopyButton text={codeString} />
+            </div>
+            <pre className="code-block">
+              <code className={className} {...props}>
+                {children}
+              </code>
+            </pre>
           </div>
-          <pre className="code-block">
-            <code className={className} {...props}>
-              {children}
-            </code>
-          </pre>
+        );
+      }
+
+      return (
+        <code className="inline-code" {...props}>
+          {children}
+        </code>
+      );
+    },
+
+    a({ href, children, ...props }) {
+      const citeMatch = href?.match(/^cite:\/\/(\d+)$/);
+      if (citeMatch && sources?.length) {
+        const index = Number(citeMatch[1]);
+        const hit = sources[index - 1];
+        if (hit) {
+          return <SourceCitation hit={hit} index={index} variant="inline" />;
+        }
+      }
+
+      const isLocalFile = !!(
+        href?.startsWith("file://") ||
+        (href && /^[a-zA-Z]:[/\\]/.test(href)) ||
+        href?.startsWith("\\\\")
+      );
+
+      const handleClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
+        if (isLocalFile && href) {
+          e.preventDefault();
+          const path = normalizeLocalPath(href);
+          openPath(path).catch((openErr) => {
+            console.error("Failed to open local file:", openErr);
+            Api.revealInExplorer(path).catch((err) =>
+              console.error("Failed to reveal local path:", err)
+            );
+          });
+        }
+      };
+
+      return (
+        <a
+          {...props}
+          href={href}
+          target={isLocalFile ? undefined : "_blank"}
+          rel={isLocalFile ? undefined : "noopener noreferrer"}
+          onClick={handleClick}
+          className="md-link"
+        >
+          {children}
+        </a>
+      );
+    },
+
+    img({ src, alt, ...props }) {
+      if (typeof src !== "string" || !/^https?:\/\//.test(src)) return null;
+      return (
+        <img
+          {...props}
+          src={src}
+          alt={alt ?? ""}
+          loading="lazy"
+          className="md-inline-image"
+          onError={(e) => {
+            (e.target as HTMLImageElement).style.display = "none";
+          }}
+        />
+      );
+    },
+
+    table({ children, ...props }) {
+      return (
+        <div className="table-wrapper">
+          <table className="md-table" {...props}>
+            {children}
+          </table>
         </div>
       );
-    }
+    },
 
-    // Inline code
-    return (
-      <code className="inline-code" {...props}>
-        {children}
-      </code>
-    );
-  },
-
-  // Links open in external browser or local explorer (important for Tauri)
-  a({ href, children, ...props }) {
-    const isLocalFile = !!(
-      href?.startsWith("file://") ||
-      (href && /^[a-zA-Z]:[/\\]/.test(href)) ||
-      href?.startsWith("\\\\")
-    );
-
-    const handleClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
-      if (isLocalFile && href) {
-        e.preventDefault();
-        const path = normalizeLocalPath(href);
-        // Open the file with the OS default app (PDF viewer, etc.).
-        openPath(path).catch((openErr) => {
-          console.error("Failed to open local file:", openErr);
-          // Fallback: reveal in file manager (select file on Windows/macOS, parent dir on Linux).
-          Api.revealInExplorer(path).catch((err) =>
-            console.error("Failed to reveal local path:", err)
-          );
-        });
-      }
-    };
-
-    return (
-      <a
-        {...props}
-        href={href}
-        target={isLocalFile ? undefined : "_blank"}
-        rel={isLocalFile ? undefined : "noopener noreferrer"}
-        onClick={handleClick}
-        className="md-link"
-      >
-        {children}
-      </a>
-    );
-  },
-
-  // Tables get a scrollable wrapper
-  table({ children, ...props }) {
-    return (
-      <div className="table-wrapper">
-        <table className="md-table" {...props}>
+    blockquote({ children, ...props }) {
+      return (
+        <blockquote className="md-blockquote" {...props}>
           {children}
-        </table>
-      </div>
-    );
-  },
-
-  // Blockquotes
-  blockquote({ children, ...props }) {
-    return (
-      <blockquote className="md-blockquote" {...props}>
-        {children}
-      </blockquote>
-    );
-  },
-};
+        </blockquote>
+      );
+    },
+  };
+}
 
 /**
  * Pre-process markdown so that table cells render correctly:
@@ -185,10 +244,7 @@ function preprocessMarkdown(md: string): string {
     /^(\|.+\|)$/gm,
     (_match, row: string) => {
       return row
-        // Literal <br> / <br/> / <br /> (case-insensitive) → real line-break tag
         .replace(/<br\s*\/?>/gi, "<br/>")
-        // "- text" bullet pattern → bullet character (with line break before it
-        // unless it's at the very start of the cell)
         .replace(/(?<=\|\s*)-\s+/g, "• ")
         .replace(/<br\/>\s*-\s+/g, "<br/>• ");
     }
@@ -198,9 +254,13 @@ function preprocessMarkdown(md: string): string {
 const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
   content,
   streaming = false,
+  sources = null,
 }) => {
-  // While tokens arrive, prefer plain text so incomplete markdown / heavy rehype
-  // work cannot stall paints (rehype-raw especially can "eat" unfinished tags).
+  const components = useMemo(
+    () => buildMarkdownComponents(sources),
+    [sources]
+  );
+
   if (streaming) {
     return (
       <div className="markdown-body whitespace-pre-wrap break-words">
@@ -210,13 +270,16 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
     );
   }
 
-  const processed = preprocessMarkdown(content);
+  let prepared = stripTrailingSourcesSection(content);
+  prepared = injectCitationLinks(prepared, sources?.length ?? 0);
+  const processed = preprocessMarkdown(prepared);
+
   return (
     <div className="markdown-body">
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkMath]}
         rehypePlugins={[rehypeRaw, rehypeKatex, rehypeHighlight]}
-        components={markdownComponents}
+        components={components}
         urlTransform={(url) => url}
       >
         {processed}

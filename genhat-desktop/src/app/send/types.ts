@@ -35,7 +35,7 @@ export interface SendHandlerContext {
   ragEnabled: boolean;
   webEnabled: boolean;
   fileIndexerEnabled: boolean;
-  webDepth: "snippets" | "full";
+  webDepth: import("../../types").WebDepth;
   imagePath: string | null;
   directDocumentPaths: string[];
   ragDocs: IngestionStatus[];

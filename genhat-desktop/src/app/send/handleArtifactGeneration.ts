@@ -421,11 +421,9 @@ export async function handleArtifactGeneration(
                 .setLiveToolStatus(
                   `Searching the web: ${searchQuery.slice(0, 80)}`
                 );
-              const result = await Api.webSearch(
-                searchQuery,
-                perQuery,
-                fetchContent
-              );
+              const result = await Api.webSearch(searchQuery, perQuery, {
+                profile: fetchContent ? "research" : "simple",
+              });
               merged = mergeWebSearchResults(merged, result);
               if (merged) {
                 artifactWebSearchResult = merged;

@@ -1,0 +1,155 @@
+.source-cite {
+  position: relative;
+  display: inline-flex;
+  vertical-align: middle;
+  margin: 0 0.1rem;
+}
+
+.source-cite__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: auto;
+  height: auto;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: var(--color-txt-muted);
+  cursor: pointer;
+  vertical-align: middle;
+  transition: color 0.12s ease, opacity 0.12s ease;
+}
+
+.source-cite__btn:hover,
+.source-cite:focus-within .source-cite__btn {
+  background: transparent;
+  border: none;
+  color: var(--color-neon);
+  transform: none;
+  opacity: 1;
+}
+
+.source-cite--icon .source-cite__btn {
+  width: auto;
+  height: auto;
+}
+
+/* Fixed beside the response bubble — does not overlay answer text. */
+.source-cite__card {
+  position: fixed;
+  z-index: 80;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 0.75rem;
+  border: 1px solid color-mix(in srgb, var(--color-glass-border) 90%, transparent);
+  background: color-mix(in srgb, var(--color-void-800, #12141a) 94%, transparent);
+  backdrop-filter: blur(12px);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  cursor: pointer;
+  text-align: left;
+  animation: source-cite-in 0.14s ease-out;
+}
+
+.source-cite__card--right {
+  transform-origin: left center;
+}
+
+.source-cite__card--left {
+  transform-origin: right center;
+}
+
+@keyframes source-cite-in {
+  from {
+    opacity: 0;
+    transform: translateX(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.source-cite__card--left {
+  animation-name: source-cite-in-left;
+}
+
+@keyframes source-cite-in-left {
+  from {
+    opacity: 0;
+    transform: translateX(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.source-cite__preview {
+  display: block;
+  width: 100%;
+  height: 6.5rem;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--color-void-900, #0b0d12) 80%, transparent);
+}
+
+.source-cite__preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.source-cite__card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.28rem;
+  padding: 0.65rem 0.75rem 0.7rem;
+}
+
+.source-cite__card-title {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--color-txt, #e8eaed);
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.source-cite__card-host {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.68rem;
+  color: var(--color-neon, #00d4ff);
+}
+
+.source-cite__card-snippet {
+  font-size: 0.7rem;
+  color: var(--color-txt-muted, #9aa0a6);
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.source-cite__card-url {
+  font-size: 0.62rem;
+  color: var(--color-txt-muted, #9aa0a6);
+  opacity: 0.75;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.source-cite-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem;
+  margin: 0.15rem 0 0.55rem;
+}

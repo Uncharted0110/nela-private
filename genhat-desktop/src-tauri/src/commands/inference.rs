@@ -125,6 +125,104 @@ fn is_generated_compaction_summary(content: &str) -> bool {
         || lowered.starts_with("conversation summary (manual compaction):")
 }
 
+/// Cheap non-LLM summary so compaction can continue when no model is available.
+fn extractive_compaction_summary(transcript: &str) -> String {
+    let lines: Vec<&str> = transcript
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect();
+    if lines.is_empty() {
+        return String::new();
+    }
+
+    let mut picked: Vec<String> = Vec::new();
+    let head = lines.iter().take(4);
+    let tail_start = lines.len().saturating_sub(4);
+    for line in head.chain(lines[tail_start..].iter()) {
+        let clipped: String = line.chars().take(220).collect();
+        if !picked.iter().any(|existing| existing == &clipped) {
+            picked.push(clipped);
+        }
+        if picked.len() >= 8 {
+            break;
+        }
+    }
+    picked.join("\n")
+}
+
+/// Try summarize → chat; never fail the compaction path if models are missing.
+async fn generate_compaction_summary(
+    router: &TaskRouter,
+    summary_prompt: String,
+    model_override: Option<String>,
+) -> Option<String> {
+    let mut extra = HashMap::new();
+    extra.insert("max_tokens".to_string(), "320".to_string());
+    extra.insert("temperature".to_string(), "0.2".to_string());
+
+    let model_override = model_override.and_then(|v| {
+        let t = v.trim().to_string();
+        if t.is_empty() {
+            None
+        } else {
+            Some(t)
+        }
+    });
+
+    // Prefer explicit override, then any locally registered model for the task
+    // (cloud-selected model IDs often aren't available to the local router).
+    let mut override_attempts: Vec<Option<String>> = Vec::new();
+    if let Some(id) = model_override {
+        override_attempts.push(Some(id));
+    }
+    override_attempts.push(None);
+
+    for task_type in [TaskType::Summarize, TaskType::Chat] {
+        for override_id in &override_attempts {
+            let summarize_req = TaskRequest {
+                request_id: uuid::Uuid::new_v4().to_string(),
+                task_type: task_type.clone(),
+                input: summary_prompt.clone(),
+                model_override: override_id.clone(),
+                extra: extra.clone(),
+                cancel_token: None,
+            };
+
+            match router.route(&summarize_req).await {
+                Ok(TaskResponse::Text(text)) => {
+                    let trimmed = text.trim().to_string();
+                    if !trimmed.is_empty() {
+                        return Some(trimmed);
+                    }
+                }
+                Ok(TaskResponse::ChatWithThinking { content, .. }) => {
+                    let trimmed = content.trim().to_string();
+                    if !trimmed.is_empty() {
+                        return Some(trimmed);
+                    }
+                }
+                Ok(other) => {
+                    log::warn!(
+                        "Unexpected response while compacting context via '{}': {:?}",
+                        task_type,
+                        other
+                    );
+                }
+                Err(err) => {
+                    log::warn!(
+                        "Summary generation failed during context compaction via '{}': {}",
+                        task_type,
+                        err
+                    );
+                }
+            }
+        }
+    }
+
+    None
+}
+
 fn messages_equal(a: &[ChatContextMessage], b: &[ChatContextMessage]) -> bool {
     if a.len() != b.len() {
         return false;
@@ -254,36 +352,24 @@ pub async fn compact_chat_context(
                 Conversation:\n{transcript}"
             );
 
-            let mut extra = HashMap::new();
-            extra.insert("max_tokens".to_string(), "320".to_string());
-            extra.insert("temperature".to_string(), "0.2".to_string());
+            let mut summary_text = generate_compaction_summary(
+                router_state.0.as_ref(),
+                summary_prompt,
+                req.model_override.clone(),
+            )
+            .await;
 
-            let summarize_req = TaskRequest {
-                request_id: uuid::Uuid::new_v4().to_string(),
-                task_type: TaskType::Summarize,
-                input: summary_prompt,
-                model_override: req
-                    .model_override
-                    .clone()
-                    .and_then(|v| if v.trim().is_empty() { None } else { Some(v) }),
-                extra,
-                cancel_token: None,
-            };
-
-            let summary_text = match router_state.0.route(&summarize_req).await {
-                Ok(TaskResponse::Text(text)) => Some(text.trim().to_string()),
-                Ok(TaskResponse::ChatWithThinking { content, .. }) => {
-                    Some(content.trim().to_string())
+            // No summarize/chat model (e.g. cloud-only): keep going with a
+            // trim + extractive note instead of failing the send path.
+            if summary_text.as_ref().map(|s| s.is_empty()).unwrap_or(true) {
+                let fallback = extractive_compaction_summary(&transcript);
+                if !fallback.is_empty() {
+                    log::info!(
+                        "Context compaction continuing without summarize model (extractive fallback)"
+                    );
+                    summary_text = Some(fallback);
                 }
-                Ok(other) => {
-                    log::warn!("Unexpected response while compacting context: {:?}", other);
-                    None
-                }
-                Err(err) => {
-                    log::warn!("Summary generation failed during context compaction: {}", err);
-                    None
-                }
-            };
+            }
 
             if let Some(summary) = summary_text {
                 if !summary.is_empty() {
