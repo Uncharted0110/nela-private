@@ -102,7 +102,6 @@ export async function executeHandleSend(
   let resolvedIntentKind = slashFileSearch ? "FileSearch" : "";
   const artifactOptions = {
     webEnabled: effectiveWebEnabled,
-    webDepth: ctx.webDepth,
     ragEnabled: effectiveRagEnabled,
     forceFileSearch: slashFileSearch,
   };

@@ -30,8 +30,11 @@ import { useCloudStore } from "../../stores/cloudStore";
 import { streamChatByMode } from "./cloudOrLocalStream";
 import type { SendHandlerContext } from "./types";
 import { runCloudAwareToolLoop } from "./cloudNativeToolLoop";
-import { isCompositeQuery, runFacetResearchLoop } from "./facetPlanner";
-import { looksLikeWebFollowUp } from "./followUpSearchQuery";
+import { runFacetResearchLoop } from "./facetPlanner";
+import {
+  resolveWebResearchRoute,
+  webResearchRouteStatus,
+} from "./webResearchRouter";
 import { useChatModeStore } from "../../stores/chatModeStore";
 
 export async function handleSendTextChat(
@@ -440,25 +443,18 @@ export async function handleSendTextChat(
     ctx.setStreamingThinking(fullThinking);
   };
 
-  // Facet planner: Deep Research mode always plans facets; composite queries
-  // (itineraries, purchase decisions, multi-facet research) auto-route to it.
-  // Short follow-ups after a web/research thread also continue via facets when Deep
-  // (or when the prior ask was composite) so "possible flights" stays on-topic.
-  const priorWasComposite = sessionMessages.some(
-    (m) => m.role === "user" && isCompositeQuery(m.content ?? "")
-  );
-  const useFacetPlanner =
-    effectiveWebEnabled &&
-    !autoArtifacts &&
-    (ctx.webDepth === "deep" ||
-      isCompositeQuery(text) ||
-      (priorWasComposite && looksLikeWebFollowUp(text, apiMessages)));
+  // Auto-route web depth: facets (standard/deep) vs tool loop (snippets/full).
+  const webRoute =
+    effectiveWebEnabled && !autoArtifacts
+      ? resolveWebResearchRoute(text, apiMessages)
+      : null;
 
-  if (useFacetPlanner) {
+  if (webRoute?.mode === "facets") {
+    useChatModeStore.getState().setLiveToolStatus(webResearchRouteStatus(webRoute));
     runFacetResearchLoop({
       messages: apiMessages,
       userText: text,
-      budget: ctx.webDepth === "deep" ? "deep" : "standard",
+      budget: webRoute.budget,
       containsFileContext: Boolean(
         ambientFileContext && ambientFileContext !== "FILE_SEARCH_NO_RESULTS"
       ),
@@ -498,9 +494,12 @@ export async function handleSendTextChat(
   }
 
   if (effectiveWebEnabled) {
+    if (webRoute) {
+      useChatModeStore.getState().setLiveToolStatus(webResearchRouteStatus(webRoute));
+    }
     runCloudAwareToolLoop({
       messages: apiMessages,
-      webDepth: ctx.webDepth === "deep" ? "full" : ctx.webDepth,
+      webDepth: webRoute?.mode === "tools" ? webRoute.depth : "full",
       includeMcpTools: !autoArtifacts,
       containsFileContext: Boolean(
         ambientFileContext && ambientFileContext !== "FILE_SEARCH_NO_RESULTS"

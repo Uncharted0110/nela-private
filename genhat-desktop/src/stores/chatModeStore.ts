@@ -40,7 +40,6 @@ interface ChatModeState {
   enrichmentStatus: string | null;
   webEnabled: boolean;
   fileIndexerEnabled: boolean;
-  webDepth: import("../types").WebDepth;
   /** Live status while a tool runs (e.g. web search) — shown above the streaming bubble. */
   liveToolStatus: string | null;
   imagePath: string | null;
@@ -65,7 +64,6 @@ interface ChatModeActions {
   setEnrichmentStatus: (status: string | null) => void;
   setWebEnabled: (enabled: boolean) => void;
   setFileIndexerEnabled: (enabled: boolean) => void;
-  setWebDepth: (depth: "snippets" | "full") => void;
   setLiveToolStatus: (status: string | null) => void;
   setImagePath: (path: string | null) => void;
   setImagePreview: (preview: string | null) => void;
@@ -103,7 +101,6 @@ export const useChatModeStore = create<ChatModeState & ChatModeActions>((set) =>
     }
   })(),
   fileIndexerEnabled: false,
-  webDepth: "snippets",
   liveToolStatus: null,
   imagePath: null,
   imagePreview: null,
@@ -137,8 +134,6 @@ export const useChatModeStore = create<ChatModeState & ChatModeActions>((set) =>
 
   setFileIndexerEnabled: (fileIndexerEnabled) => set({ fileIndexerEnabled }),
   
-  setWebDepth: (webDepth) => set({ webDepth }),
-
   setLiveToolStatus: (liveToolStatus) => set({ liveToolStatus }),
   
   setImagePath: (imagePath) => set({ imagePath }),

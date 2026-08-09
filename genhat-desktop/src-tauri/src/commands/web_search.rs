@@ -309,9 +309,9 @@ pub async fn web_search(
     let candidate_tables = collect_tables(&table_sources);
     let extracted_tables: Vec<ExtractedWebTable> =
         match select_best_table(candidate_tables, &trimmed_query, row_limit) {
-            Some(table) => vec![table],
-            None => Vec::new(),
-        };
+        Some(table) => vec![table],
+        None => Vec::new(),
+    };
 
     let mut formatted_context = format_context(&results, answer.as_deref());
     if let Some(table) = extracted_tables.first() {
