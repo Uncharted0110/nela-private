@@ -32,7 +32,10 @@ To read specific pages in full after a search, reply with ONLY:
 {"tool":"web_extract","urls":["https://..."],"query":"what you are looking for"}
 
 To answer without searching, reply with normal prose (not JSON).
-After you receive tool results, answer using those sources. Cite source URLs. Do not invent facts that are not in the results.`;
+After you receive tool results, answer using those sources.
+Cite with inline [n] markers matching the numbered web sources (e.g. "…in 1899.[1]"), placed AFTER the sentence period.
+Do NOT paste raw URLs, 【url】 brackets, or a trailing Sources list — the UI shows link icons for citations.
+Do not invent facts that are not in the results.`;
 
 const MAX_TOOL_ROUNDS = MAX_WEB_SEARCH_TOOL_ROUNDS;
 
@@ -357,8 +360,8 @@ export async function runWebSearchToolLoop(
                 role: "user",
                 content: canSearchAgain
                   ? `Using the tool results above, continue. You have ${MAX_TOOL_ROUNDS - (round + 1)} tool rounds left — ` +
-                    "call web_search with a NEW focused query if needed; otherwise answer in prose."
-                  : "Using the tool results above, answer the user's question in prose now. Do not call tools again.",
+                    "call web_search with a NEW focused query if needed; otherwise answer in prose with inline [n] citations (no raw URLs)."
+                  : "Using the tool results above, answer the user's question in prose now with inline [n] citations only (no raw URLs, no Sources list). Do not call tools again.",
               },
             ];
             if (!canSearchAgain) break;
@@ -462,8 +465,8 @@ export async function runWebSearchToolLoop(
           role: "user",
           content: canSearchAgain
             ? `Using the tool results above, continue. You have ${MAX_TOOL_ROUNDS - (round + 1)} tool rounds left — ` +
-              "call web_search with a NEW focused query (or web_extract on promising URLs) if more facets are needed; otherwise answer in prose."
-            : "Using the tool results above, answer the user's question in prose now. Do not call tools again.",
+              "call web_search with a NEW focused query (or web_extract on promising URLs) if more facets are needed; otherwise answer in prose with inline [n] citations (no raw URLs)."
+            : "Using the tool results above, answer the user's question in prose now with inline [n] citations only (no raw URLs, no Sources list). Do not call tools again.",
         },
       ];
 

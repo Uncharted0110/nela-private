@@ -82,8 +82,6 @@ export default function AppMainContent({ networkActive: networkActiveProp }: App
   const setWebEnabled = useChatModeStore(s => s.setWebEnabled);
   const fileIndexerEnabled = useChatModeStore(s => s.fileIndexerEnabled);
   const setFileIndexerEnabled = useChatModeStore(s => s.setFileIndexerEnabled);
-  const webDepth = useChatModeStore(s => s.webDepth);
-  const setWebDepth = useChatModeStore(s => s.setWebDepth);
   const imagePath = useChatModeStore(s => s.imagePath);
   const imagePreview = useChatModeStore(s => s.imagePreview);
   const directDocumentPaths = useChatModeStore(s => s.directDocumentPaths);
@@ -182,10 +180,6 @@ export default function AppMainContent({ networkActive: networkActiveProp }: App
     }
   };
 
-  const handleWebDepthChange = (depth: import("../types").WebDepth) => {
-    setWebDepth(depth);
-  };
-
   const handleExitPlayground = () => {
     handleModeSwitch("text");
   };
@@ -264,8 +258,6 @@ export default function AppMainContent({ networkActive: networkActiveProp }: App
         onToggleWebEnabled={handleWebToggle}
         fileIndexerEnabled={fileIndexerEnabled}
         onToggleFileIndexerEnabled={handleFileIndexerToggle}
-        webDepth={webDepth}
-        onWebDepthChange={handleWebDepthChange}
         activeSession={activeSession}
         activeWorkspace={activeWorkspace}
         onSend={(text) => void handleSend(text)}

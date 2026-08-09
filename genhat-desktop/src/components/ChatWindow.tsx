@@ -151,8 +151,6 @@ interface ChatWindowProps {
   onToggleWebEnabled?: (enabled: boolean) => void;
   fileIndexerEnabled?: boolean;
   onToggleFileIndexerEnabled?: (enabled: boolean) => void;
-  webDepth?: import("../types").WebDepth;
-  onWebDepthChange?: (depth: import("../types").WebDepth) => void;
   onIngestFile?: () => void;
   onIngestDir?: () => void;
   onAttachDirectDocuments?: () => void;
@@ -309,8 +307,6 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
   onToggleWebEnabled,
   fileIndexerEnabled = false,
   onToggleFileIndexerEnabled,
-  webDepth = "snippets",
-  onWebDepthChange,
   onIngestFile,
   onIngestDir,
   onAttachDirectDocuments,
@@ -552,46 +548,6 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
                 />
               </span>
             </button>
-            {webEnabled && canToggleWeb && (
-              <div className="flex items-center justify-between gap-2 px-2.5 pb-2">
-                <div className="inline-flex rounded-full border border-glass-border overflow-hidden text-[0.78rem]">
-                  <button
-                    className={`px-2 py-0.5 transition-colors ${
-                      webDepth === "snippets"
-                        ? "bg-neon-subtle text-neon"
-                        : "bg-glass-bg text-txt-muted hover:text-txt"
-                    }`}
-                    onClick={() => onWebDepthChange?.("snippets")}
-                    aria-label="Quick web results"
-                  >
-                    Quick
-                  </button>
-                  <button
-                    className={`px-2 py-0.5 transition-colors ${
-                      webDepth === "full"
-                        ? "bg-neon-subtle text-neon"
-                        : "bg-glass-bg text-txt-muted hover:text-txt"
-                    }`}
-                    onClick={() => onWebDepthChange?.("full")}
-                    aria-label="Thorough web results"
-                  >
-                    Thorough
-                  </button>
-                  <button
-                    className={`px-2 py-0.5 transition-colors ${
-                      webDepth === "deep"
-                        ? "bg-neon-subtle text-neon"
-                        : "bg-glass-bg text-txt-muted hover:text-txt"
-                    }`}
-                    onClick={() => onWebDepthChange?.("deep")}
-                    title="Deep Research: plans facets, runs multiple searches, writes a cited report"
-                    aria-label="Deep Research"
-                  >
-                    Deep
-                  </button>
-                </div>
-              </div>
-            )}
           </div>
 
           <button

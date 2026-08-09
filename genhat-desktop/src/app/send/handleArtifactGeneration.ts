@@ -93,7 +93,6 @@ export async function handleArtifactGeneration(
   ctrl: AbortController,
   options?: {
     webEnabled?: boolean;
-    webDepth?: "snippets" | "full";
     ragEnabled?: boolean;
     forceFileSearch?: boolean;
   }

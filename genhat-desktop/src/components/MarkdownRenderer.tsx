@@ -19,7 +19,7 @@ interface MarkdownRendererProps {
    * each streamed token paints quickly. Final messages use the full pipeline.
    */
   streaming?: boolean;
-  /** Web search hits — turns [n] markers into hoverable citation icons. */
+  /** Web search hits — turns [n] / URL citations into hoverable citation icons. */
   sources?: SearchHit[] | null;
 }
 
@@ -41,19 +41,44 @@ function normalizeLocalPath(href: string): string {
   let path = href;
   if (path.startsWith("file://")) {
     path = decodeURIComponent(path.replace(/^file:\/\//, ""));
-    // file:///C:/path on Windows → C:/path
     if (/^\/[a-zA-Z]:/.test(path)) {
       path = path.substring(1);
     }
   }
-  // Windows paths use backslashes; Unix paths must keep forward slashes.
   const isWindowsPath = /^[a-zA-Z]:[/\\]/.test(path) || path.includes("\\");
   return isWindowsPath ? path.replace(/\//g, "\\") : path.replace(/\\/g, "/");
 }
 
-/**
- * Copy-to-clipboard button for code blocks.
- */
+function normalizeUrlKey(url: string): string {
+  try {
+    const u = new URL(url.trim());
+    u.hash = "";
+    const path = u.pathname.replace(/\/+$/, "") || "/";
+    return `${u.protocol}//${u.hostname.replace(/^www\./, "")}${path}${u.search}`.toLowerCase();
+  } catch {
+    return url.trim().toLowerCase().replace(/\/+$/, "");
+  }
+}
+
+function hitForUrl(url: string, sources?: SearchHit[] | null): SearchHit {
+  const key = normalizeUrlKey(url);
+  const found = sources?.find((s) => normalizeUrlKey(s.url) === key);
+  if (found) return found;
+  let host = url;
+  try {
+    host = new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    /* keep raw */
+  }
+  return { title: host, snippet: "", url };
+}
+
+function indexForUrl(url: string, sources?: SearchHit[] | null): number {
+  const key = normalizeUrlKey(url);
+  const idx = sources?.findIndex((s) => normalizeUrlKey(s.url) === key) ?? -1;
+  return idx >= 0 ? idx + 1 : 1;
+}
+
 const CopyButton: React.FC<{ text: string }> = ({ text }) => {
   const [copied, setCopied] = useState(false);
 
@@ -63,7 +88,6 @@ const CopyButton: React.FC<{ text: string }> = ({ text }) => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      // Fallback for older webview versions
       const ta = document.createElement("textarea");
       ta.value = text;
       document.body.appendChild(ta);
@@ -92,35 +116,99 @@ export function stripTrailingSourcesSection(md: string): string {
     .trimEnd();
 }
 
+const CITE_URL_PREFIX = "cite-url://";
+
+function encodeCiteUrl(url: string): string {
+  return `${CITE_URL_PREFIX}${encodeURIComponent(url.trim())}`;
+}
+
+function decodeCiteUrl(href: string): string | null {
+  if (!href.startsWith(CITE_URL_PREFIX)) return null;
+  try {
+    return decodeURIComponent(href.slice(CITE_URL_PREFIX.length));
+  } catch {
+    return href.slice(CITE_URL_PREFIX.length);
+  }
+}
+
 /**
- * Turn [n] / [[n]] citation markers into markdown links that the renderer
- * maps to SourceCitation chips. Skips fenced code blocks.
+ * Turn [n] markers and pasted URL citations (【url】, [url], (url)) into
+ * cite links that render as SourceCitation icons. Skips fenced code blocks.
  *
- * Models often write `…claim [1].` — move the sentence punctuation before the
- * icon so it reads `…claim. [icon]` instead of `…claim [icon].`
+ * Always place sentence punctuation BEFORE citation icons:
+ * `…claim【url】.` / `…claim [1].` → `…claim. [icon]`
  */
-function injectCitationLinks(md: string, sourceCount: number): string {
-  if (sourceCount <= 0) return md;
+function injectCitationLinks(
+  md: string,
+  sources: SearchHit[] | null | undefined
+): string {
+  const sourceCount = sources?.length ?? 0;
   const parts = md.split(/(```[\s\S]*?```)/g);
   return parts
     .map((part) => {
       if (part.startsWith("```")) return part;
-      // Avoid rewriting real markdown links like [1](https://...).
-      // Capture trailing . ! ? (and optional closing quotes) so the cite sits after the sentence.
-      return part.replace(
-        /\s*\[\[?(\d{1,3})\]\]?(?!\()\s*([.!?]+["']?)/g,
-        (full, numStr: string, punct: string) => {
+
+      let out = part;
+
+      // Fullwidth bracket URL cites: 【https://...】
+      out = out.replace(
+        /【\s*(https?:\/\/[^\s】]+)\s*】/gi,
+        (_full, url: string) => `[↗](${encodeCiteUrl(url)})`
+      );
+
+      // Square-bracket URL cites that aren't markdown links: [https://...]
+      out = out.replace(
+        /\[\s*(https?:\/\/[^\s\]]+)\s*\](?!\()/gi,
+        (_full, url: string) => `[↗](${encodeCiteUrl(url)})`
+      );
+
+      // Parenthetical bare URLs: (https://...)
+      out = out.replace(
+        /\(\s*(https?:\/\/[^\s)]+)\s*\)/gi,
+        (_full, url: string) => `[↗](${encodeCiteUrl(url)})`
+      );
+
+      // Numbered [n] / [[n]] (without trailing punct first).
+      if (sourceCount > 0) {
+        out = out.replace(/\[\[?(\d{1,3})\]\]?(?!\()/g, (full, numStr: string) => {
           const n = Number(numStr);
           if (!Number.isFinite(n) || n < 1 || n > sourceCount) return full;
-          return `${punct} [↗](cite://${n})`;
+          return `[↗](cite://${n})`;
+        });
+      }
+
+      // Collapse duplicate adjacent icons for the same target.
+      out = out.replace(/(\[↗\]\(cite(?:-url)?:\/\/[^)]+\))(?:\s*\1)+/g, "$1");
+
+      // Move one or more citation icons that sit before . ! ? to after that punct.
+      // e.g. "…1899[↗](cite-url://…)[↗](cite-url://…)." → "…1899. [↗]… [↗]…"
+      out = out.replace(
+        /\s*((?:\[↗\]\(cite(?:-url)?:\/\/[^)]+\)\s*)+)([.!?]+["']?)/g,
+        (_full, cites: string, punct: string) => {
+          const icons = cites
+            .trim()
+            .split(/\s+/)
+            .filter(Boolean)
+            .join(" ");
+          return `${punct} ${icons}`;
         }
-      ).replace(/\[\[?(\d{1,3})\]\]?(?!\()/g, (full, numStr: string) => {
-        const n = Number(numStr);
-        if (!Number.isFinite(n) || n < 1 || n > sourceCount) return full;
-        return `[↗](cite://${n})`;
-      });
+      );
+
+      return out;
     })
     .join("");
+}
+
+function looksLikeUrlLabel(label: string, href: string): boolean {
+  const t = label.trim();
+  if (!t || t === "↗" || t === "🔗") return true;
+  if (/^https?:\/\//i.test(t)) return true;
+  try {
+    const host = new URL(href).hostname.replace(/^www\./, "");
+    return t === host || t.toLowerCase() === host.toLowerCase();
+  } catch {
+    return false;
+  }
 }
 
 function buildMarkdownComponents(sources?: SearchHit[] | null): Components {
@@ -154,12 +242,44 @@ function buildMarkdownComponents(sources?: SearchHit[] | null): Components {
     },
 
     a({ href, children, ...props }) {
-      const citeMatch = href?.match(/^cite:\/\/(\d+)$/);
-      if (citeMatch && sources?.length) {
-        const index = Number(citeMatch[1]);
-        const hit = sources[index - 1];
-        if (hit) {
-          return <SourceCitation hit={hit} index={index} variant="inline" />;
+      if (href) {
+        const citeMatch = href.match(/^cite:\/\/(\d+)$/);
+        if (citeMatch && sources?.length) {
+          const index = Number(citeMatch[1]);
+          const hit = sources[index - 1];
+          if (hit) {
+            return <SourceCitation hit={hit} index={index} variant="inline" />;
+          }
+        }
+
+        const citeUrl = decodeCiteUrl(href);
+        if (citeUrl) {
+          return (
+            <SourceCitation
+              hit={hitForUrl(citeUrl, sources)}
+              index={indexForUrl(citeUrl, sources)}
+              variant="inline"
+            />
+          );
+        }
+
+        // Web answers: source / bare-URL markdown links → citation icons.
+        if (/^https?:\/\//i.test(href)) {
+          const label = extractText(children);
+          const inSources = Boolean(
+            sources?.some(
+              (s) => normalizeUrlKey(s.url) === normalizeUrlKey(href)
+            )
+          );
+          if (inSources || looksLikeUrlLabel(label, href)) {
+            return (
+              <SourceCitation
+                hit={hitForUrl(href, sources)}
+                index={indexForUrl(href, sources)}
+                variant="inline"
+              />
+            );
+          }
         }
       }
 
@@ -232,23 +352,13 @@ function buildMarkdownComponents(sources?: SearchHit[] | null): Components {
   };
 }
 
-/**
- * Pre-process markdown so that table cells render correctly:
- *  - Convert literal "<br>" text to actual <br/> tags
- *  - Turn "- item" bullet patterns inside table cells into bullet characters
- *    separated by <br/> since markdown lists can't nest inside GFM table cells.
- */
 function preprocessMarkdown(md: string): string {
-  return md.replace(
-    // Match a full GFM table row: | cell | cell | ...
-    /^(\|.+\|)$/gm,
-    (_match, row: string) => {
-      return row
-        .replace(/<br\s*\/?>/gi, "<br/>")
-        .replace(/(?<=\|\s*)-\s+/g, "• ")
-        .replace(/<br\/>\s*-\s+/g, "<br/>• ");
-    }
-  );
+  return md.replace(/^(\|.+\|)$/gm, (_match, row: string) => {
+    return row
+      .replace(/<br\s*\/?>/gi, "<br/>")
+      .replace(/(?<=\|\s*)-\s+/g, "• ")
+      .replace(/<br\/>\s*-\s+/g, "<br/>• ");
+  });
 }
 
 const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
@@ -271,7 +381,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
   }
 
   let prepared = stripTrailingSourcesSection(content);
-  prepared = injectCitationLinks(prepared, sources?.length ?? 0);
+  prepared = injectCitationLinks(prepared, sources);
   const processed = preprocessMarkdown(prepared);
 
   return (

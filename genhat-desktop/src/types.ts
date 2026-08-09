@@ -200,8 +200,8 @@ export interface SearchHit {
 
 export type WebSearchProfile = "simple" | "news" | "research";
 
-/** Web research depth selected in the UI. "deep" = full Deep Research loop. */
-export type WebDepth = "snippets" | "full" | "deep";
+/** Tool-loop web depth (auto-router chooses; deep research uses the facet planner). */
+export type WebDepth = "snippets" | "full";
 
 export interface WebSearchResult {
   query: string;

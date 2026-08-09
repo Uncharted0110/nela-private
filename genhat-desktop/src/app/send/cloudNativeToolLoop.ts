@@ -424,7 +424,8 @@ export async function runCloudNativeToolLoop(
     const hint =
       "You have a web_search tool for this turn. Use it for current events, news, prices, sports, documentation, travel, flights, or any factual question that needs up-to-date information before answering. " +
       "Follow-ups inherit the prior topic: if the user previously planned a Spain trip and now asks about flights, search for flights related to that Spain trip — never a bare query like \"flights\" alone. " +
-      "Every web_search query must be self-contained (include place, product, dates, or other entities from the conversation).";
+      "Every web_search query must be self-contained (include place, product, dates, or other entities from the conversation). " +
+      "When answering from web results, cite with inline [n] markers only (after the sentence period). Never paste raw URLs or a Sources list.";
     const firstSystem = messages.findIndex((m) => m.role === "system");
     if (firstSystem >= 0) {
       messages = [
@@ -566,7 +567,7 @@ export async function runCloudNativeToolLoop(
             role: "user",
             content:
               `You have ~${remaining} tool rounds left. ` +
-              "If you still need more web facts, call web_search again with a NEW query; otherwise answer in prose now.",
+              "If you still need more web facts, call web_search again with a NEW query; otherwise answer in prose with inline [n] citations only (no raw URLs or Sources list).",
           },
         ];
       }

@@ -65,7 +65,6 @@ export function buildSendHandlerContext(): SendHandlerContext {
     ragEnabled: advanced ? chatModeStore.ragEnabled : true,
     webEnabled: chatModeStore.webEnabled,
     fileIndexerEnabled: chatModeStore.fileIndexerEnabled,
-    webDepth: chatModeStore.webDepth,
     imagePath: chatModeStore.imagePath,
     directDocumentPaths: chatModeStore.directDocumentPaths,
     ragDocs: chatModeStore.ragDocs,

@@ -30,8 +30,6 @@ interface AppMainContentAreaProps {
   onToggleWebEnabled?: (enabled: boolean) => void;
   fileIndexerEnabled?: boolean;
   onToggleFileIndexerEnabled?: (enabled: boolean) => void;
-  webDepth?: import("../types").WebDepth;
-  onWebDepthChange?: (depth: import("../types").WebDepth) => void;
   activeSession: ChatSession | null;
   activeWorkspace: { id: string } | null;
   onSend: (text: string) => void;
@@ -92,8 +90,6 @@ export default function AppMainContentArea({
   onToggleWebEnabled,
   fileIndexerEnabled,
   onToggleFileIndexerEnabled,
-  webDepth,
-  onWebDepthChange,
   activeSession,
   activeWorkspace,
   onSend,
@@ -205,8 +201,6 @@ export default function AppMainContentArea({
             onToggleWebEnabled={onToggleWebEnabled}
             fileIndexerEnabled={fileIndexerEnabled}
             onToggleFileIndexerEnabled={onToggleFileIndexerEnabled}
-            webDepth={webDepth}
-            onWebDepthChange={onWebDepthChange}
             showRagControls={chatMode === "text" || chatMode === "mindmap"}
             docPanelOpen={docPanelOpen}
             modeOptions={modeOptions}
