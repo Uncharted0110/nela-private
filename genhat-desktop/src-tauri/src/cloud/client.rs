@@ -471,6 +471,52 @@ pub async fn confirm_checkout(
         .map_err(|_| "We couldn't confirm your payment. Please try again.".to_string())
 }
 
+/// POST /v1/search — Tavily-backed web search proxy on the NELA backend.
+/// Body: `{ query, profile?, site?, timeRange?, maxResults? }`.
+pub async fn search_web(app_data_dir: &Path, body: Value) -> Result<Value, String> {
+    let resp = authorized_request(app_data_dir, |token| {
+        let body = body.clone();
+        async move {
+            send_cloud(reqwest::Method::POST, "/v1/search", move |req| {
+                req.bearer_auth(token.clone()).json(&body)
+            })
+            .await
+        }
+    })
+    .await?;
+
+    if !resp.status().is_success() {
+        return Err(read_error_body(resp).await);
+    }
+
+    resp.json()
+        .await
+        .map_err(|_| "We got an unexpected reply from web search. Please try again.".to_string())
+}
+
+/// POST /v1/extract — Tavily-backed page extraction proxy on the NELA backend.
+/// Body: `{ urls, query?, depth? }`.
+pub async fn extract_web(app_data_dir: &Path, body: Value) -> Result<Value, String> {
+    let resp = authorized_request(app_data_dir, |token| {
+        let body = body.clone();
+        async move {
+            send_cloud(reqwest::Method::POST, "/v1/extract", move |req| {
+                req.bearer_auth(token.clone()).json(&body)
+            })
+            .await
+        }
+    })
+    .await?;
+
+    if !resp.status().is_success() {
+        return Err(read_error_body(resp).await);
+    }
+
+    resp.json()
+        .await
+        .map_err(|_| "We got an unexpected reply from web extract. Please try again.".to_string())
+}
+
 /// Non-streaming chat completion — returns raw OpenAI-style JSON string
 /// (includes content and/or tool_calls under choices[0].message).
 pub async fn chat_complete(

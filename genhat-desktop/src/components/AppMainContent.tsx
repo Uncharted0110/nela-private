@@ -182,7 +182,7 @@ export default function AppMainContent({ networkActive: networkActiveProp }: App
     }
   };
 
-  const handleWebDepthChange = (depth: "snippets" | "full") => {
+  const handleWebDepthChange = (depth: import("../types").WebDepth) => {
     setWebDepth(depth);
   };
 

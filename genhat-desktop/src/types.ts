@@ -190,7 +190,18 @@ export interface SearchHit {
   snippet: string;
   url: string;
   image_url?: string | null;
+  /** Favicon URL for the source site (Gemini-style source cards). */
+  favicon?: string | null;
+  /** Tavily relevance score (0..1). */
+  score?: number | null;
+  /** Publish date for news results. */
+  published_date?: string | null;
 }
+
+export type WebSearchProfile = "simple" | "news" | "research";
+
+/** Web research depth selected in the UI. "deep" = full Deep Research loop. */
+export type WebDepth = "snippets" | "full" | "deep";
 
 export interface WebSearchResult {
   query: string;
@@ -199,6 +210,23 @@ export interface WebSearchResult {
   results: SearchHit[];
   formatted_context: string;
   extracted_tables?: ExtractedWebTable[];
+  /** Tavily answer seed (extra model context, not user-facing). */
+  answer?: string | null;
+  /** Query-level images for the UI gallery. */
+  images?: string[];
+}
+
+export interface ExtractedPage {
+  url: string;
+  content: string;
+  images?: string[];
+}
+
+export interface WebExtractResult {
+  results: ExtractedPage[];
+  formatted_context: string;
+  extracted_tables?: ExtractedWebTable[];
+  failed?: string[];
 }
 
 export interface ExtractedWebTable {

@@ -19,6 +19,7 @@ import {
   willRouteToCloud,
 } from "./cloudOrLocalStream";
 import { cloudToolsWebAndMcp, cloudToolsWebOnly } from "./cloudTools";
+import { groundWebSearchQuery, resolveFollowUpSearchQuery } from "./followUpSearchQuery";
 import { mergeWebSearchResults, runWebSearchToolLoop } from "./webSearchToolLoop";
 import type { GenerationOptions } from "./types";
 import { MAX_WEB_SEARCH_TOOL_ROUNDS } from "./webSearchLimits";
@@ -61,10 +62,21 @@ function toCloudMessages(messages: ChatContextMessage[]): CloudChatMessage[] {
   }));
 }
 
+function lastUserQuery(messages: CloudChatMessage[]): string {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m?.role === "user" && typeof m.content === "string" && m.content.trim()) {
+      return m.content.trim().slice(0, 200);
+    }
+  }
+  return "";
+}
+
 function streamCloudRound(
   messages: CloudChatMessage[],
   tools: CloudToolDefinition[],
-  opts: CloudNativeToolLoopOptions
+  opts: CloudNativeToolLoopOptions,
+  toolChoice: "auto" | "required" | { type: "function"; function: { name: string } } = "auto"
 ): Promise<{ content: string; tool_calls?: CloudToolCall[] }> {
   return new Promise((resolve, reject) => {
     let content = "";
@@ -97,7 +109,7 @@ function streamCloudRound(
       disableThinking: opts.disableThinking,
       disableLocalFallback: true,
       tools,
-      tool_choice: "auto",
+      tool_choice: toolChoice,
       generationOptions: opts.generationOptions,
       onChunk: (chunk) => {
         content += chunk;
@@ -138,19 +150,48 @@ async function executeToolCall(
   }
 
   if (name === "web_search") {
-    const query = typeof args.query === "string" ? args.query.trim() : "";
+    let query = typeof args.query === "string" ? args.query.trim() : "";
     if (!query) {
       return { content: "web_search requires a query", webSearchResult };
     }
-    const depth =
-      args.depth === "full" || args.depth === "snippets"
-        ? args.depth
-        : opts.webDepth;
-    const fetchContent = depth === "full";
-    const maxResults = fetchContent ? 4 : 5;
+    try {
+      query = await groundWebSearchQuery(query, {
+        messages: opts.messages,
+        userText: query,
+        modelId: opts.modelId,
+        signal: opts.signal,
+        containsFileContext: opts.containsFileContext,
+        userConfirmedCloudContext: opts.userConfirmedCloudContext,
+        contextSource: opts.contextSource,
+      });
+    } catch (e) {
+      if (e instanceof DOMException && e.name === "AbortError") throw e;
+    }
+    const profile =
+      args.profile === "news" || args.profile === "research"
+        ? args.profile
+        : args.depth === "full" || opts.webDepth === "full"
+          ? "research"
+          : "simple";
+    const site =
+      typeof args.site === "string" && args.site.trim()
+        ? args.site.trim()
+        : undefined;
+    const timeRange =
+      args.time_range === "day" ||
+      args.time_range === "week" ||
+      args.time_range === "month" ||
+      args.time_range === "year"
+        ? args.time_range
+        : undefined;
+    const maxResults = profile === "research" ? 8 : 5;
     opts.onToolStatus?.(`Searching “${query}”`);
     try {
-      const result = await Api.webSearch(query, maxResults, fetchContent);
+      const result = await Api.webSearch(query, maxResults, {
+        profile,
+        site,
+        timeRange,
+      });
       const merged =
         result.results.length > 0 || result.formatted_context?.trim()
           ? mergeWebSearchResults(webSearchResult, result)
@@ -168,6 +209,56 @@ async function executeToolCall(
       opts.onToolStatus?.(null);
       return {
         content: `web_search failed: ${e}`,
+        webSearchResult,
+      };
+    }
+  }
+
+  if (name === "web_extract") {
+    const urls = Array.isArray(args.urls)
+      ? (args.urls as unknown[])
+          .filter((u): u is string => typeof u === "string")
+          .filter((u) => u.startsWith("http"))
+          .slice(0, 5)
+      : [];
+    if (urls.length === 0) {
+      return { content: "web_extract requires at least one URL", webSearchResult };
+    }
+    const extractQuery =
+      typeof args.query === "string" && args.query.trim()
+        ? args.query.trim()
+        : undefined;
+    const depth = args.depth === "advanced" ? "advanced" : "basic";
+    opts.onToolStatus?.(`Reading ${urls.length} page${urls.length > 1 ? "s" : ""}`);
+    try {
+      const result = await Api.webExtract(urls, extractQuery, depth);
+      // Fold extracted tables/sources into the running web result so the
+      // spreadsheet flow and disclosure UI see them.
+      const asSearchResult: WebSearchResult = {
+        query: extractQuery ?? urls[0]!,
+        results: result.results.map((p) => ({
+          title: p.url,
+          snippet: p.content.slice(0, 600),
+          url: p.url,
+          image_url: p.images?.[0] ?? null,
+        })),
+        formatted_context: "",
+        extracted_tables: result.extracted_tables,
+        images: result.results.flatMap((p) => p.images ?? []).slice(0, 8),
+      };
+      const merged =
+        result.results.length > 0
+          ? mergeWebSearchResults(webSearchResult, asSearchResult)
+          : webSearchResult;
+      const toolBody =
+        result.formatted_context?.trim() ||
+        `No content could be extracted from the provided URLs.`;
+      opts.onToolStatus?.(null);
+      return { content: toolBody, webSearchResult: merged };
+    } catch (e) {
+      opts.onToolStatus?.(null);
+      return {
+        content: `web_extract failed: ${e}`,
         webSearchResult,
       };
     }
@@ -331,7 +422,9 @@ export async function runCloudNativeToolLoop(
   // Dynamic (non-cached) reminder so the model actually uses web_search when available.
   if (tools.some((t) => t.function.name === "web_search")) {
     const hint =
-      "You have a web_search tool for this turn. Use it for current events, news, prices, sports, documentation, or any factual question that needs up-to-date information before answering.";
+      "You have a web_search tool for this turn. Use it for current events, news, prices, sports, documentation, travel, flights, or any factual question that needs up-to-date information before answering. " +
+      "Follow-ups inherit the prior topic: if the user previously planned a Spain trip and now asks about flights, search for flights related to that Spain trip — never a bare query like \"flights\" alone. " +
+      "Every web_search query must be self-contained (include place, product, dates, or other entities from the conversation).";
     const firstSystem = messages.findIndex((m) => m.role === "system");
     if (firstSystem >= 0) {
       messages = [
@@ -349,23 +442,86 @@ export async function runCloudNativeToolLoop(
   let thinking = "";
   let lastContent = "";
 
+  const hasWebSearch = tools.some((t) => t.function.name === "web_search");
+
   try {
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+      // When web search is enabled, force the first round to call web_search.
+      // Models often answer from memory with tool_choice=auto and never hit /v1/search.
+      const toolChoice =
+        hasWebSearch && round === 0
+          ? ({
+              type: "function" as const,
+              function: { name: "web_search" },
+            })
+          : ("auto" as const);
+
       // Don't stream intermediate tool-decision tokens to the chat bubble.
-      const decision = await streamCloudRound(messages, tools, {
-        ...opts,
-        onThinking: (t) => {
-          thinking += t;
-          opts.onThinking(t);
+      const decision = await streamCloudRound(
+        messages,
+        tools,
+        {
+          ...opts,
+          onThinking: (t) => {
+            thinking += t;
+            opts.onThinking(t);
+          },
+          onChunk: () => {
+            /* suppress until final prose or no-tool answer */
+          },
         },
-        onChunk: () => {
-          /* suppress until final prose or no-tool answer */
-        },
-      });
+        toolChoice
+      );
 
       lastContent = decision.content;
 
-      if (!decision.tool_calls?.length) {
+      let toolCalls = decision.tool_calls ?? [];
+
+      // Host-side guarantee: if the model still skipped tools on round 0, inject
+      // a web_search grounded in conversation context (follow-ups included).
+      if (hasWebSearch && round === 0 && toolCalls.length === 0) {
+        const rawQ = lastUserQuery(messages);
+        if (rawQ) {
+          let q = rawQ;
+          try {
+            q = await resolveFollowUpSearchQuery({
+              messages: opts.messages,
+              userText: rawQ,
+              modelId: opts.modelId,
+              signal: opts.signal,
+              containsFileContext: opts.containsFileContext,
+              userConfirmedCloudContext: opts.userConfirmedCloudContext,
+              contextSource: opts.contextSource,
+            });
+          } catch (e) {
+            if (e instanceof DOMException && e.name === "AbortError") throw e;
+          }
+          toolCalls = [
+            {
+              id: `forced_web_search_${Date.now()}`,
+              type: "function",
+              function: {
+                name: "web_search",
+                arguments: JSON.stringify({
+                  query: q,
+                  profile:
+                    opts.webDepth === "full" ? "research" : "news",
+                }),
+              },
+            },
+          ];
+        } else if (decision.content.trim()) {
+          opts.onChunk(decision.content);
+          return {
+            content: decision.content,
+            thinking,
+            webSearchResult,
+            artifacts,
+          };
+        } else {
+          break;
+        }
+      } else if (!toolCalls.length) {
         if (decision.content.trim()) {
           opts.onChunk(decision.content);
         }
@@ -383,11 +539,11 @@ export async function runCloudNativeToolLoop(
         {
           role: "assistant",
           content: decision.content || null,
-          tool_calls: decision.tool_calls,
+          tool_calls: toolCalls,
         },
       ];
 
-      for (const call of decision.tool_calls) {
+      for (const call of toolCalls) {
         const executed = await executeToolCall(call, opts, webSearchResult);
         webSearchResult = executed.webSearchResult;
         if (executed.artifact) artifacts.push(executed.artifact);

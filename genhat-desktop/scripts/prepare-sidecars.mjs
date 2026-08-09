@@ -154,6 +154,10 @@ function ensureFileindexerResources() {
 }
 
 function main() {
+  // Tauri's build script validates bundle resources before any cargo unit
+  // finishes — stage the FileIndexer path first (stub OK if binary missing).
+  ensureFileindexerResources();
+
   log(`rebuilding MCP sidecars (${profile})…`);
 
   for (const rel of MCP_SOURCES) {
@@ -180,6 +184,7 @@ function main() {
     log(`ok ${path.relative(root, built)}`);
   }
 
+  // Re-stage in case cargo produced a real fileindexer_sidecar in target/.
   ensureFileindexerResources();
   log("done");
 }

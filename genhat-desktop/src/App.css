@@ -692,6 +692,17 @@
   border-bottom-color: #99eeff;
 }
 
+/* Inline images embedded from web research results */
+.md-inline-image {
+  display: block;
+  max-width: min(100%, 26rem);
+  max-height: 18rem;
+  object-fit: cover;
+  border-radius: 0.6rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  margin: 0.5rem 0;
+}
+
 
 /* ══════════════════════════════════════════════════════════════════════════════
    HIGHLIGHT.JS THEME — Void Glass

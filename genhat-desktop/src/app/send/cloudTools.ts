@@ -10,7 +10,11 @@ export const WEB_SEARCH_TOOL: CloudToolDefinition = {
   function: {
     name: "web_search",
     description:
-      "Search the live public web. Call this for current events, news, prices, sports, flights, travel facts, documentation, or any question that needs up-to-date information. You may call it multiple times with different focused queries (up to ~20) until coverage is enough. Pass a short, specific keyword query — never the full user prompt.",
+      "Search the live public web (Tavily). Call this for current events, news, prices, sports, flights, travel facts, documentation, or any question that needs up-to-date information. " +
+      "Break complex questions into multiple focused queries instead of one long query. Pass short, specific keyword queries — never the full user prompt. " +
+      "Follow-ups must stay on the prior topic: include the destination, product, or entity from earlier turns (e.g. after a Spain itinerary, search 'flights Spain 1 week' not just 'flights'). " +
+      "Profiles: 'simple' for quick factual lookups (default); 'news' for current events and anything time-sensitive; 'research' for comparisons, summaries, or multi-facet questions (returns full page content). " +
+      "Results include titles, URLs, relevant excerpts, relevance scores, and images.",
     parameters: {
       type: "object",
       properties: {
@@ -18,13 +22,55 @@ export const WEB_SEARCH_TOOL: CloudToolDefinition = {
           type: "string",
           description: "Concise search query (keywords, not a full sentence)",
         },
-        depth: {
+        profile: {
           type: "string",
-          enum: ["snippets", "full"],
-          description: "snippets = titles/snippets only; full = fetch page text",
+          enum: ["simple", "news", "research"],
+          description:
+            "simple = quick lookup; news = time-sensitive/current events; research = deep content for analysis",
+        },
+        site: {
+          type: "string",
+          description:
+            "Optional: restrict results to one domain, e.g. 'booking.com' or 'wikipedia.org'",
+        },
+        time_range: {
+          type: "string",
+          enum: ["day", "week", "month", "year"],
+          description: "Optional recency filter (use with news profile)",
         },
       },
       required: ["query"],
+    },
+  },
+};
+
+export const WEB_EXTRACT_TOOL: CloudToolDefinition = {
+  type: "function",
+  function: {
+    name: "web_extract",
+    description:
+      "Read the full content of specific web pages (Tavily Extract). Use AFTER web_search when a result looks promising but its excerpt is not enough — pass the exact URLs you want to read in depth. " +
+      "Up to 5 URLs per call. Use depth 'advanced' when the page likely contains data tables or embedded content you need.",
+    parameters: {
+      type: "object",
+      properties: {
+        urls: {
+          type: "array",
+          items: { type: "string" },
+          description: "Up to 5 http(s) URLs to read in full",
+        },
+        query: {
+          type: "string",
+          description:
+            "Optional: what you are looking for — extracted content is reranked against this",
+        },
+        depth: {
+          type: "string",
+          enum: ["basic", "advanced"],
+          description: "advanced = retrieves tables and embedded content",
+        },
+      },
+      required: ["urls"],
     },
   },
 };
@@ -116,15 +162,15 @@ export function cloudToolsForChat(options?: {
   if (options?.webEnabled !== false) {
     // caller decides; default include when building web loop
   }
-  if (options?.webEnabled) tools.push(WEB_SEARCH_TOOL);
+  if (options?.webEnabled) tools.push(WEB_SEARCH_TOOL, WEB_EXTRACT_TOOL);
   if (options?.mcpEnabled !== false) tools.push(...MCP_CLOUD_TOOLS);
   return tools;
 }
 
 export function cloudToolsWebOnly(): CloudToolDefinition[] {
-  return [WEB_SEARCH_TOOL];
+  return [WEB_SEARCH_TOOL, WEB_EXTRACT_TOOL];
 }
 
 export function cloudToolsWebAndMcp(): CloudToolDefinition[] {
-  return [WEB_SEARCH_TOOL, ...MCP_CLOUD_TOOLS];
+  return [WEB_SEARCH_TOOL, WEB_EXTRACT_TOOL, ...MCP_CLOUD_TOOLS];
 }
