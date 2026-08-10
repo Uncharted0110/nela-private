@@ -67,6 +67,8 @@ pub async fn start_indexing_directory(
             engine.spawn_pass2(deferred, Some(on_bg));
         }
 
+        engine.start_live_watch(root.clone());
+
         Ok::<PipelineReport, crate::doc_graph::errors::EngineError>(report)
     })
     .await

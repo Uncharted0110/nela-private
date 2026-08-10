@@ -16,7 +16,7 @@ pub const DEFAULT_API_BASE_URL: &str = "https://nela-backend.onrender.com";
 /// Production website (Vercel). Used unless `NELA_CLOUD_WEB_BASE_URL` is set.
 pub const DEFAULT_WEB_BASE_URL: &str = "https://nela-webpage.vercel.app";
 /// Local API fallback when production is unreachable.
-pub const LOCAL_API_BASE_URL: &str = "https://nela-backend.onrender.com";
+pub const LOCAL_API_BASE_URL: &str = "http://localhost:3001";
 /// Local website fallback when production is unreachable.
 pub const LOCAL_WEB_BASE_URL: &str = "http://localhost:3000";
 

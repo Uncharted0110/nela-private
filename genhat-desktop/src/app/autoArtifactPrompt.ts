@@ -21,6 +21,9 @@ Do NOT invent an HTML page or spreadsheet for ordinary requests such as:
 - explanations, comparisons, how-tos, summaries
 - lists, bullet answers, or markdown tables in chat
 
+For HTML dashboards / plots: call render_chart (data only) first, then embed
+<div data-nela-chart="nela-chart:0"></div> markers — never Chart.js or hand-rolled echarts.init.
+
 Formats when (and only when) an artifact is warranted — angle brackets are MANDATORY:
 - Webpage or HTML slides:
   <nela-artifact type="text/html" title="Short Title">

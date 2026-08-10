@@ -90,7 +90,7 @@ ${currentContent}
     true,
     {
       ...generationOptions,
-      maxTokens: 2048,
+      maxTokens: 16_384,
       temperature: 0.1,
     }
   );

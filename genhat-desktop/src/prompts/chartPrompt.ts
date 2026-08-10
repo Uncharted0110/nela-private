@@ -1,54 +1,32 @@
 /**
- * Prompt + schema helpers for LLM-generated Apache ECharts charts.
+ * Prompt + schema helpers for Apache ECharts charts.
  *
- * Models should emit a fenced JSON block the UI can detect and render with
- * {@link ChartViewer}. Supported payload shapes:
- *
- * ```json
- * {
- *   "type": "chart",
- *   "title": "Optional title",
- *   "option": { ...ECharts option... }
- * }
- * ```
- *
- * or `"type": "echarts"` with the same structure. The `option` object may also
- * be flattened beside `type` / `title` (series/xAxis/… at the top level).
+ * Chat: models emit a fenced JSON block rendered by {@link ChartViewer}.
+ * Artifacts (HTML/PPT): models call the host `render_chart` tool and embed
+ * `nela-chart:N` markers — see {@link ArtifactChartPool}.
  */
 
-/** OpenAI-compatible tool schema for requesting a chart config. */
+/** @deprecated Prefer host RENDER_CHART_TOOL in cloudTools — kept for docs/compat. */
 export const GENERATE_CHART_TOOL_SCHEMA = {
   type: "function" as const,
   function: {
-    name: "generate_chart",
+    name: "render_chart",
     description:
-      "Produce an Apache ECharts option JSON for a static dataset (line, bar, pie, scatter, radar, gauge, or treemap). " +
-      "Return the chart as a JSON object with type 'chart' or 'echarts' plus an ECharts option. " +
-      "Do not invent live APIs — use only the numbers/categories supplied in the conversation.",
+      "Ask the desktop to render an ECharts chart from structured data (bar/pie/line). " +
+      "Returns a nela-chart:N token to embed in HTML. Do not invent Chart.js.",
     parameters: {
       type: "object",
       properties: {
-        type: {
+        chart_type: {
           type: "string",
-          enum: ["chart", "echarts"],
-          description: "Discriminator so the NELA UI renders an interactive chart",
+          enum: ["bar", "pie", "line"],
         },
-        title: {
-          type: "string",
-          description: "Short human-readable chart title",
-        },
-        chartKind: {
-          type: "string",
-          enum: ["line", "bar", "pie", "scatter", "radar", "gauge", "treemap"],
-          description: "Primary series / chart family",
-        },
-        option: {
-          type: "object",
-          description:
-            "Valid Apache ECharts option object (title, tooltip, legend, grid, xAxis/yAxis or radar, series, color, …)",
-        },
+        title: { type: "string" },
+        labels: { type: "array", items: { type: "string" } },
+        values: { type: "array", items: { type: "number" } },
+        theme: { type: "string" },
       },
-      required: ["type", "option"],
+      required: ["chart_type", "title", "labels", "values"],
     },
   },
 };

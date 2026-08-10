@@ -8,6 +8,10 @@ import {
   embedPoolImagesInHtml,
   type ImagePoolEntry,
 } from "./artifactImagePool";
+import {
+  embedPoolChartsInHtml,
+  type ChartPoolEntry,
+} from "./artifactChartPool";
 import { parseCSV } from "./send/csvParse";
 import { sanitizeCsvArtifactBody } from "./sanitizeCsvArtifact";
 import { normalizeSpreadsheetPlan } from "./spreadsheetPlan";
@@ -19,16 +23,26 @@ import {
 } from "./artifactHtmlOutput";
 import type { NelaArtifactMime } from "./streamArtifactParser";
 
+function withMediaEmbeds(
+  html: string,
+  imagePool?: ImagePoolEntry[],
+  chartPool?: ChartPoolEntry[]
+): string {
+  let out = html;
+  if (imagePool?.length) out = embedPoolImagesInHtml(out, imagePool);
+  if (chartPool?.length) out = embedPoolChartsInHtml(out, chartPool);
+  return out;
+}
+
 export async function saveStreamedHtmlArtifact(input: {
   rawBody: string;
   topic: string;
   asPresentation?: boolean;
   imagePool?: ImagePoolEntry[];
+  chartPool?: ChartPoolEntry[];
 }): Promise<ArtifactResult> {
-  const withImages = (html: string) =>
-    input.imagePool?.length
-      ? embedPoolImagesInHtml(html, input.imagePool)
-      : html;
+  const embed = (html: string) =>
+    withMediaEmbeds(html, input.imagePool, input.chartPool);
 
   if (input.asPresentation) {
     if (looksLikePresentationJsonPlan(input.rawBody)) {
@@ -39,7 +53,7 @@ export async function saveStreamedHtmlArtifact(input: {
       title: parsed.title,
       archetype: "landing",
       sections: [],
-      html: withImages(parsed.html),
+      html: embed(parsed.html),
       output_name: parsed.output_name,
     });
   }
@@ -52,7 +66,7 @@ export async function saveStreamedHtmlArtifact(input: {
     title: parsed.title,
     archetype: "landing",
     sections: [],
-    html: withImages(parsed.html),
+    html: embed(parsed.html),
     output_name: parsed.output_name,
   });
 }
@@ -105,6 +119,7 @@ export async function saveStreamedArtifact(input: {
   title?: string;
   asPresentation?: boolean;
   imagePool?: ImagePoolEntry[];
+  chartPool?: ChartPoolEntry[];
 }): Promise<ArtifactResult> {
   if (input.type === "text/csv") {
     return saveStreamedCsvArtifact({
@@ -118,5 +133,6 @@ export async function saveStreamedArtifact(input: {
     topic: input.topic,
     asPresentation: input.asPresentation,
     imagePool: input.imagePool,
+    chartPool: input.chartPool,
   });
 }

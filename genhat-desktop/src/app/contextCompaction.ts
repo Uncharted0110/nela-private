@@ -71,7 +71,8 @@ export function normalizeMessagesForLlm(
 export function resolveReservedOutputTokens(maxTokens: number | undefined): number {
   const fallback = 2048;
   const safe = Number.isFinite(maxTokens) ? Math.round(maxTokens as number) : fallback;
-  return Math.max(128, Math.min(8192, safe));
+  // Allow Deep / artifact budgets through; only floor tiny values.
+  return Math.max(128, Math.min(131_072, safe));
 }
 
 export function applyCompactionResultToSession(

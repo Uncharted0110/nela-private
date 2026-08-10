@@ -202,15 +202,62 @@ impl WatchedPathsManager {
         let mut ingested = 0usize;
         let mut skipped = 0usize;
         let mut errors = 0usize;
+        let mut removed = 0usize;
+
+        // Paths currently on disk under watched roots.
+        let on_disk: std::collections::HashSet<String> = candidate_paths
+            .iter()
+            .map(|p| p.to_string_lossy().to_string())
+            .collect();
+
+        // Purge DB docs that lived under a watched root but no longer exist.
+        if let Ok(docs) = self.db.list_documents() {
+            for doc in docs {
+                let under_watch = watched.iter().any(|w| {
+                    doc.path == w.path
+                        || doc.path.starts_with(&format!(
+                            "{}{}",
+                            w.path.trim_end_matches('/'),
+                            std::path::MAIN_SEPARATOR
+                        ))
+                        || doc.path.starts_with(&format!(
+                            "{}{}",
+                            w.path.trim_end_matches('\\'),
+                            std::path::MAIN_SEPARATOR
+                        ))
+                });
+                if !under_watch {
+                    continue;
+                }
+                if on_disk.contains(&doc.path) {
+                    continue;
+                }
+                log::info!("Watched file deleted, removing from RAG: {}", doc.path);
+                match pipeline.delete_document(doc.id).await {
+                    Ok(()) => removed += 1,
+                    Err(e) => {
+                        log::warn!("Could not delete missing doc {}: {e}", doc.id);
+                        errors += 1;
+                    }
+                }
+            }
+        }
 
         emit_progress(
             &app_handle,
             ScanProgress {
-                status: format!("Found {total} supported files — checking for changes…"),
+                status: format!(
+                    "Found {total} supported files — checking for changes…{}",
+                    if removed > 0 {
+                        format!(" (removed {removed} deleted)")
+                    } else {
+                        String::new()
+                    }
+                ),
                 found: total,
                 ingested: 0,
                 skipped: 0,
-                errors: 0,
+                errors,
                 done: false,
             },
         );

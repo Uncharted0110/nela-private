@@ -33,6 +33,12 @@ import {
   formatImageCatalogForPrompt,
 } from "../artifactImagePool";
 import {
+  embedPoolChartsInHtml,
+  formatChartCatalogForPrompt,
+  wantsArtifactCharts,
+  type ChartPoolEntry,
+} from "../artifactChartPool";
+import {
   HTML_PLAN_MAX_TOKENS,
   HTML_FREEFORM_MAX_TOKENS,
   buildHtmlArtifactSystemParts,
@@ -58,7 +64,7 @@ import {
 } from "../webSearchQuery";
 import { formulateArtifactWebQueries, mergeWebSearchResults } from "./webSearchToolLoop";
 import { MAX_ARTIFACT_HOST_QUERIES } from "./webSearchLimits";
-import { runCloudArtifactWebResearch } from "./cloudNativeToolLoop";
+import { runCloudArtifactWebResearch, runCloudArtifactChartPrep } from "./cloudNativeToolLoop";
 import {
   attachedPathsToSearchResult,
   knowledgeBaseToSearchResult,
@@ -711,6 +717,52 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
     const cloudAnyFreeform =
       cloudPresentationFreeform || cloudHtmlFreeform || cloudSpreadsheetFreeform;
 
+    let chartPool: ChartPoolEntry[] = [];
+    if (
+      useCloud &&
+      (cloudHtmlFreeform || cloudPresentationFreeform) &&
+      wantsArtifactCharts(text, htmlHasSourceData || Boolean(headers?.length))
+    ) {
+      try {
+        useChatModeStore.getState().setLiveToolStatus("Preparing charts…");
+        const chartDataHint = [
+          spreadsheetData ? buildHtmlDataContext(spreadsheetData, 12) : "",
+          headers?.length
+            ? `Columns: [${headers.join(", ")}]. Rows: ${rows?.length ?? 0}.`
+            : "",
+          supplementalContext.slice(0, 4000),
+        ]
+          .filter(Boolean)
+          .join("\n");
+        chartPool = await runCloudArtifactChartPrep({
+          artifactRequest: text,
+          schemaId,
+          dataContext: chartDataHint,
+          signal: ctrl.signal,
+          onStatus: (status) =>
+            useChatModeStore.getState().setLiveToolStatus(status),
+        });
+        if (chartPool.length) {
+          useChatModeStore
+            .getState()
+            .setLiveToolStatus(`Prepared ${chartPool.length} chart(s)`);
+        }
+      } catch (chartErr) {
+        console.warn("Artifact chart prep failed:", chartErr);
+      }
+    }
+    if (
+      useCloud &&
+      (cloudHtmlFreeform || cloudPresentationFreeform) &&
+      wantsArtifactCharts(text, htmlHasSourceData || Boolean(headers?.length)) &&
+      chartPool.length === 0
+    ) {
+      console.warn(
+        "Chart prep finished with an empty pool — freeform HTML markers will not render until render_chart succeeds"
+      );
+    }
+    const chartCatalog = formatChartCatalogForPrompt(chartPool);
+
     if (cloudAnyFreeform) {
       ctx.updateSession(sid, (prev) => {
         const updated = [...prev.messages];
@@ -746,6 +798,7 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
         ? buildHtmlArtifactSystemParts(htmlArchetype, {
             hasSourceData: htmlHasSourceData,
             hasImages: imagePool.length > 0,
+            hasCharts: chartPool.length > 0,
             cloudMode: cloudHtmlMode ?? "local",
           })
         : schemaId === "spreadsheet_synthesis"
@@ -763,6 +816,7 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
             sourceDocumentRules,
             cloudMode: cloudPresentationMode ?? "local",
             hasImages: imagePool.length > 0,
+            hasCharts: chartPool.length > 0,
           })
         : null;
 
@@ -817,21 +871,21 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
       schemaId === "html_synthesis" && spreadsheetData
         ? buildHtmlDataContext(spreadsheetData)
         : "";
-    const dataContextBody = `${dataContext}${spreadsheetContext}${imageCatalog}`;
+    const dataContextBody = `${dataContext}${spreadsheetContext}${imageCatalog}${chartCatalog}`;
     const planRequestText = planRequest;
 
     // Presentations need far more output room than a single artifact plan: budget
     // roughly per-slide so larger decks aren't truncated mid-array.
-    // Keep budgets conservative when a source document is attached — oversized
-    // max_tokens + long prompts frequently crash llama-server (proxy 500).
+    // Keep local (grammar) budgets conservative — oversized max_tokens + long
+    // prompts can crash llama-server. Cloud freeform / Deep use model headroom.
     const desiredPlanMaxTokens =
       schemaId === "presentation_synthesis"
         ? cloudPresentationFreeform
-          ? Math.min(16000, Math.max(10000, 2000 + slidePlan.count * 900))
+          ? Math.max(16_384, 4_000 + slidePlan.count * 1_200)
           : cloudPresentationJson
-            ? Math.min(
-                8192,
-                900 + slidePlan.count * 380 + (hasSourceDocument ? 600 : 0)
+            ? Math.max(
+                12_288,
+                1_200 + slidePlan.count * 480 + (hasSourceDocument ? 600 : 0)
               )
             : Math.min(
                 contextWindowTokens <= 4096
@@ -849,7 +903,7 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
           : HTML_PLAN_MAX_TOKENS
         : schemaId === "spreadsheet_synthesis"
         ? cloudSpreadsheetFreeform
-          ? Math.min(12_000, Math.max(4096, 800 + (rowPlan.count ?? 20) * 40))
+          ? Math.max(16_384, 2_048 + (rowPlan.count ?? 20) * 80)
           : spreadsheetPlanMaxTokens(hasSourceData, ambientFileContent, rowPlan.count)
         : 500;
 
@@ -912,6 +966,9 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
           if (typeof planObj.html === "string" && planObj.html.trim()) {
             planObj.html = embedPoolImagesInHtml(planObj.html, imagePool);
           }
+        }
+        if (chartPool.length && typeof planObj.html === "string" && planObj.html.trim()) {
+          planObj.html = embedPoolChartsInHtml(planObj.html, chartPool);
         }
       }
 
@@ -1208,17 +1265,23 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
                   asPresentation: schemaId === "presentation_synthesis",
                   imagePool:
                     streamedArtifactType === "text/html" ? imagePool : undefined,
+                  chartPool:
+                    streamedArtifactType === "text/html" ? chartPool : undefined,
                 });
-                // Keep side-panel HTML in sync with embedded images.
-                if (
-                  streamedArtifactType === "text/html" &&
-                  imagePool.length &&
-                  streamedArtifactBody
-                ) {
-                  streamedArtifactBody = embedPoolImagesInHtml(
-                    streamedArtifactBody,
-                    imagePool
-                  );
+                // Keep side-panel HTML in sync with embedded images/charts.
+                if (streamedArtifactType === "text/html" && streamedArtifactBody) {
+                  if (imagePool.length) {
+                    streamedArtifactBody = embedPoolImagesInHtml(
+                      streamedArtifactBody,
+                      imagePool
+                    );
+                  }
+                  if (chartPool.length) {
+                    streamedArtifactBody = embedPoolChartsInHtml(
+                      streamedArtifactBody,
+                      chartPool
+                    );
+                  }
                 }
                 const filename = result.path.split(/[/\\]/).pop() ?? "artifact";
                 const title =

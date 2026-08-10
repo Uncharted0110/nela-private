@@ -326,6 +326,13 @@ fn file_of(kb: &KnowledgeBase, block: NodeIndex) -> Option<String> {
     None
 }
 
+/// Resolve the on-disk path for a content chunk (for live-staleness checks).
+pub fn file_path_for_chunk(kb: &KnowledgeBase, chunk_id: &str) -> Option<String> {
+    let node_u32 = *kb.chunk_to_node.get(chunk_id)?;
+    let block_idx = NodeIndex::new(node_u32 as usize);
+    file_of(kb, block_idx)
+}
+
 fn truncate(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
         s.to_string()

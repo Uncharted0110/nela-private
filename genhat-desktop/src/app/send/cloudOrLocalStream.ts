@@ -135,6 +135,28 @@ export function formatCloudFallbackNotice(err: unknown): string {
   return `*NELA Cloud is unavailable right now — ${summarizeCloudError(err)} Using your local model instead.*\n\n`;
 }
 
+/** Deep / artifact cloud answers should not inherit tiny local-model max_tokens. */
+const CLOUD_DEEP_MIN_OUTPUT_TOKENS = 65_536;
+const CLOUD_ARTIFACT_MIN_OUTPUT_TOKENS = 65_536;
+
+function resolveCloudMaxTokens(
+  mode: CloudQualityMode,
+  intent: CloudIntent | undefined,
+  requested: number | undefined
+): number | undefined {
+  const base =
+    typeof requested === "number" && Number.isFinite(requested) && requested > 0
+      ? Math.round(requested)
+      : undefined;
+  if (intent === "artifact_plan") {
+    return Math.max(base ?? 0, CLOUD_ARTIFACT_MIN_OUTPUT_TOKENS);
+  }
+  if (mode === "deep") {
+    return Math.max(base ?? 0, CLOUD_DEEP_MIN_OUTPUT_TOKENS);
+  }
+  return base;
+}
+
 function runLocalStream(args: StreamArgs): void {
   const localMessages = args.messages
     .filter(
@@ -223,7 +245,7 @@ async function runCloudStream(args: StreamArgs): Promise<void> {
       contextSource: args.contextSource,
     },
     generation: {
-      maxTokens: args.generationOptions?.maxTokens,
+      maxTokens: resolveCloudMaxTokens(mode, args.intent, args.generationOptions?.maxTokens),
       temperature: args.generationOptions?.temperature,
     },
     tools: args.tools,

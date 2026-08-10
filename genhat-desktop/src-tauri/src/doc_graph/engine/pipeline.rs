@@ -563,6 +563,211 @@ pub fn run_incremental_sync(
     Ok(report)
 }
 
+/// Live / targeted sync for a set of absolute paths (create/modify/delete).
+///
+/// - Missing paths (and directory prefixes) are purged from graph + Tantivy + manifest.
+/// - Existing supported files are re-indexed when fingerprints differ (or are new).
+pub fn sync_paths(
+    paths: &[PathBuf],
+    data_dir: &Path,
+    kb: &mut KnowledgeBase,
+    index: &TantivyIndex,
+    embedder: &Embedder,
+    on_progress: Option<ProgressCallback>,
+) -> Result<PipelineReport, EngineError> {
+    let t0 = Instant::now();
+    let emit = |p: IndexingProgress| {
+        if let Some(cb) = &on_progress {
+            cb(p);
+        }
+    };
+
+    if paths.is_empty() {
+        return Ok(PipelineReport::default());
+    }
+
+    let mut manifest = IndexManifest::load(data_dir)?;
+    let root = if !manifest.root.is_empty() {
+        PathBuf::from(&manifest.root)
+    } else {
+        paths[0]
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| paths[0].clone())
+    };
+
+    let mut to_remove: Vec<PathBuf> = Vec::new();
+    let mut to_index: Vec<PathBuf> = Vec::new();
+    let mut seen_remove = std::collections::HashSet::new();
+    let mut seen_index = std::collections::HashSet::new();
+
+    let push_remove = |path: &Path,
+                       to_remove: &mut Vec<PathBuf>,
+                       seen: &mut std::collections::HashSet<String>| {
+        let key = IndexManifest::key(path);
+        if seen.insert(key) {
+            to_remove.push(path.to_path_buf());
+        }
+    };
+
+    for raw in paths {
+        let path = raw.canonicalize().unwrap_or_else(|_| raw.clone());
+
+        if path_is_under_excluded(&path) {
+            continue;
+        }
+
+        // Directory gone (or remove event): purge every indexed descendant.
+        if !path.exists() {
+            let prefix = path.to_string_lossy().to_string();
+            let prefix_slash = if prefix.ends_with(std::path::MAIN_SEPARATOR) {
+                prefix.clone()
+            } else {
+                format!("{}{}", prefix, std::path::MAIN_SEPARATOR)
+            };
+            push_remove(&path, &mut to_remove, &mut seen_remove);
+            for key in manifest.files.keys() {
+                if key == &prefix || key.starts_with(&prefix_slash) {
+                    push_remove(Path::new(key), &mut to_remove, &mut seen_remove);
+                }
+            }
+            continue;
+        }
+
+        if path.is_dir() {
+            // Directory still exists — only react to supported files under it when
+            // they also appear in the event batch; no full re-walk here.
+            continue;
+        }
+
+        if !is_supported_ext(&path) {
+            continue;
+        }
+
+        match FileFingerprint::from_path(&path) {
+            Some(fp) if manifest.matches(&path, &fp) => {}
+            Some(_) | None => {
+                let key = IndexManifest::key(&path);
+                if seen_index.insert(key) {
+                    to_index.push(path);
+                }
+            }
+        }
+    }
+
+    emit(IndexingProgress {
+        phase: "live-sync".into(),
+        message: format!(
+            "Live sync: {} to update, {} to remove",
+            to_index.len(),
+            to_remove.len()
+        ),
+        files_discovered: to_index.len() + to_remove.len(),
+        ..Default::default()
+    });
+
+    for path in &to_remove {
+        let chunk_ids = remove_document_by_path(kb, path);
+        let path_str = path.to_string_lossy().to_string();
+        index.delete_by_file_path(&path_str)?;
+        if !chunk_ids.is_empty() {
+            index.delete_chunk_ids(&chunk_ids)?;
+        }
+        manifest.remove(path);
+    }
+
+    for path in &to_index {
+        let chunk_ids = remove_document_by_path(kb, path);
+        let path_str = path.to_string_lossy().to_string();
+        index.delete_by_file_path(&path_str)?;
+        if !chunk_ids.is_empty() {
+            index.delete_chunk_ids(&chunk_ids)?;
+        }
+        manifest.remove(path);
+    }
+
+    let mut report = if to_index.is_empty() {
+        if !to_remove.is_empty() {
+            index.commit()?;
+            kb.save_graph(&data_dir.join("graph.bin"))?;
+            kb.save_vectors(&data_dir.join("vectors.bin"))?;
+        }
+        let stats = kb.stats();
+        PipelineReport {
+            root: root.to_string_lossy().to_string(),
+            files_discovered: to_remove.len(),
+            files_parsed: 0,
+            files_failed: 0,
+            files_deferred: 0,
+            chunks_indexed: 0,
+            nodes: stats.nodes,
+            edges: stats.edges,
+            vectors: stats.vectors,
+            timing: PipelineTiming {
+                total_ms: t0.elapsed().as_millis(),
+                ..Default::default()
+            },
+            errors: Vec::new(),
+            deferred_files: Vec::new(),
+        }
+    } else {
+        let mut report = index_paths_batch(
+            &root,
+            data_dir,
+            kb,
+            index,
+            embedder,
+            &to_index,
+            0,
+            on_progress.clone(),
+        )?;
+        report.files_discovered = to_index.len() + to_remove.len();
+        report
+    };
+
+    for path in &to_index {
+        if report
+            .deferred_files
+            .iter()
+            .any(|d| d.as_str() == path.to_string_lossy())
+        {
+            continue;
+        }
+        if let Some(fp) = FileFingerprint::from_path(path) {
+            manifest.upsert(path, fp);
+        }
+    }
+    if manifest.root.is_empty() {
+        manifest.root = root.to_string_lossy().to_string();
+    }
+    manifest.save(data_dir)?;
+
+    emit(IndexingProgress {
+        phase: "done".into(),
+        files_discovered: report.files_discovered,
+        files_parsed: report.files_parsed,
+        files_failed: report.files_failed,
+        chunks_indexed: report.chunks_indexed,
+        message: format!(
+            "Live sync done: {} updated, {} removed in {}ms",
+            report.files_parsed,
+            to_remove.len(),
+            t0.elapsed().as_millis()
+        ),
+    });
+
+    Ok(report)
+}
+
+fn path_is_under_excluded(path: &Path) -> bool {
+    path.components().any(|c| {
+        let name = c.as_os_str().to_string_lossy();
+        EXCLUDED_DIR_NAMES
+            .iter()
+            .any(|ex| name.eq_ignore_ascii_case(ex))
+    })
+}
+
 /// Shared Pass 1 parse → Tantivy → assemble → commit for an explicit file list.
 fn index_paths_batch(
     root: &Path,
@@ -754,12 +959,21 @@ pub fn query_kb(
     // Expand up to `top_k` RRF hits (default 25); hybrid already caps the pool at 50.
     let top_k = top_k.unwrap_or(25).clamp(1, 50);
     let hits = hybrid_search(query, kb, index, embedder, 50, 50)?;
+    // Drop hits whose source file no longer exists (stale until live sync catches up).
     let hit_ids: Vec<String> = hits
         .into_iter()
+        .filter(|h| chunk_source_exists(kb, &h.chunk_id))
         .take(top_k)
         .map(|h| h.chunk_id)
         .collect();
     Ok(assemble_markdown(kb, &hit_ids))
+}
+
+fn chunk_source_exists(kb: &KnowledgeBase, chunk_id: &str) -> bool {
+    let Some(path) = crate::doc_graph::graph::traversal::file_path_for_chunk(kb, chunk_id) else {
+        return true; // keep if we cannot resolve; better than dropping everything
+    };
+    Path::new(&path).is_file()
 }
 
 /// Directories skipped during discovery (coding projects, caches, VCS, etc.).

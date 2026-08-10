@@ -99,7 +99,7 @@ Produce a plan that applies the requested changes to this spreadsheet.`;
       response_format: useCloud ? { type: "json_object" } : undefined,
       generationOptions: {
         ...generationOptions,
-        maxTokens: 4096,
+        maxTokens: 32_768,
         temperature: 0.1,
         grammar,
       },

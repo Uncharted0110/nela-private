@@ -27,8 +27,14 @@ import type { GenerationOptions } from "./types";
 import { MAX_WEB_SEARCH_TOOL_ROUNDS } from "./webSearchLimits";
 import { useDocGraphStore } from "../../stores/docGraphStore";
 import { useModelStore } from "../../stores/modelStore";
+import {
+  ArtifactChartPool,
+  embedPoolChartsInHtml,
+  type ChartPoolEntry,
+} from "../artifactChartPool";
 
 const MAX_TOOL_ROUNDS = MAX_WEB_SEARCH_TOOL_ROUNDS;
+const MAX_CHART_PREP_ROUNDS = 6;
 
 export interface CloudNativeToolLoopOptions {
   messages: ChatContextMessage[];
@@ -39,6 +45,10 @@ export interface CloudNativeToolLoopOptions {
   fileSearchEnabled?: boolean;
   /** Include MCP spreadsheet/presentation/html tools alongside web_search. */
   includeMcpTools?: boolean;
+  /** Expose host render_chart tool (HTML/PPT dashboards). */
+  chartEnabled?: boolean;
+  /** Shared pool when chartEnabled — caller owns the instance. */
+  chartPool?: ArtifactChartPool;
   containsFileContext?: boolean;
   userConfirmedCloudContext?: boolean;
   contextSource?: string;
@@ -356,10 +366,14 @@ async function executeToolCall(
 
   if (name === "generate_presentation") {
     try {
-      const html =
+      const pool = opts.chartPool?.list() ?? [];
+      let html =
         typeof args.html === "string" && args.html.trim().length > 0
           ? args.html
           : null;
+      if (html && pool.length) {
+        html = embedPoolChartsInHtml(html, pool);
+      }
       const artifact = html
         ? await Api.generateHtml({
             title:
@@ -396,7 +410,16 @@ async function executeToolCall(
 
   if (name === "generate_html") {
     try {
-      const artifact = await Api.generateHtml(args as never);
+      const pool = opts.chartPool?.list() ?? [];
+      const payload = { ...(args as Record<string, unknown>) };
+      if (
+        pool.length &&
+        typeof payload.html === "string" &&
+        payload.html.trim()
+      ) {
+        payload.html = embedPoolChartsInHtml(payload.html, pool);
+      }
+      const artifact = await Api.generateHtml(payload as never);
       opts.onArtifact?.(artifact);
       return {
         content: JSON.stringify({
@@ -413,6 +436,32 @@ async function executeToolCall(
         webSearchResult,
       };
     }
+  }
+
+  if (name === "render_chart") {
+    const pool = opts.chartPool;
+    if (!pool) {
+      return {
+        content: JSON.stringify({
+          ok: false,
+          error: "render_chart is not available in this turn",
+        }),
+        webSearchResult,
+      };
+    }
+    opts.onToolStatus?.("Rendering chart…");
+    const result = pool.render({
+      chart_type: typeof args.chart_type === "string" ? args.chart_type : undefined,
+      title: typeof args.title === "string" ? args.title : undefined,
+      labels: args.labels,
+      values: args.values,
+      theme: typeof args.theme === "string" ? args.theme : undefined,
+    });
+    opts.onToolStatus?.(null);
+    return {
+      content: JSON.stringify(result),
+      webSearchResult,
+    };
   }
 
   return {
@@ -496,6 +545,7 @@ export async function runCloudNativeToolLoop(
     webEnabled,
     fileSearchEnabled,
     mcpEnabled: opts.includeMcpTools !== false,
+    chartEnabled: Boolean(opts.chartEnabled),
   });
 
   let messages = toCloudMessages(opts.messages);
@@ -504,7 +554,8 @@ export async function runCloudNativeToolLoop(
   const hasFileSearch = tools.some(
     (t) => t.function.name === "search_knowledge_base"
   );
-  if (hasWebSearch || hasFileSearch) {
+  const hasRenderChart = tools.some((t) => t.function.name === "render_chart");
+  if (hasWebSearch || hasFileSearch || hasRenderChart) {
     const parts: string[] = [];
     if (hasWebSearch) {
       parts.push(
@@ -519,6 +570,13 @@ export async function runCloudNativeToolLoop(
         "You have a search_knowledge_base tool for the user's local indexed document graph (hybrid BM25 + vector embeddings). " +
           "Call it for their files/notes/PDFs/slides. Prefer higher top_k (25–40) so graph retrieval can surface related chunks; use 10–15 only for pinpoint lookups. " +
           "Cite local sources with inline [n] markers only (no raw file paths or Sources list)."
+      );
+    }
+    if (hasRenderChart) {
+      parts.push(
+        "You have a render_chart tool for dashboards and plots. Call it with chart_type (bar|pie|line), title, labels[], and values[] — " +
+          "never invent Chart.js or hand-written echarts.init. Embed the returned nela-chart:N token in HTML as " +
+          '<div data-nela-chart="nela-chart:N"></div>.'
       );
     }
     const hint = parts.join(" ");
@@ -906,4 +964,145 @@ export async function runCloudArtifactWebResearch(opts: {
   }
 
   return webSearchResult;
+}
+
+/**
+ * Pre-stream prep: model calls render_chart with data; host builds fragments.
+ * Returns the pool for catalog injection + post-save embedding.
+ */
+export async function runCloudArtifactChartPrep(opts: {
+  artifactRequest: string;
+  schemaId: string;
+  /** Optional spreadsheet / research context the model may chart. */
+  dataContext?: string;
+  signal?: AbortSignal;
+  onStatus?: (status: string | null) => void;
+}): Promise<ChartPoolEntry[]> {
+  const pool = new ArtifactChartPool(4);
+  const kind =
+    opts.schemaId === "presentation_synthesis"
+      ? "presentation"
+      : opts.schemaId === "html_synthesis"
+        ? "webpage"
+        : "artifact";
+
+  const dataBlock = opts.dataContext?.trim()
+    ? `\n\nData you may chart (use real numbers only):\n${opts.dataContext.trim().slice(0, 6000)}`
+    : "";
+
+  const prepOpts: CloudNativeToolLoopOptions = {
+    messages: [
+      {
+        role: "system",
+        content:
+          `You prepare charts for a ${kind} the user will generate next. ` +
+          "Call render_chart once per plot (max 4) with chart_type (bar|pie|line), title, labels[], and values[]. " +
+          "Use only numbers from the user request or the supplied data context — do not invent live APIs. " +
+          "After charts are registered, reply with a one-line acknowledgement — do not write the artifact HTML.",
+      },
+      {
+        role: "system",
+        content:
+          "You MUST call render_chart at least once when the request needs a chart, dashboard, plot, or stats visualization. " +
+          "Each call needs chart_type, title, labels (string array), and values (number array).",
+      },
+      {
+        role: "user",
+        content:
+          `Prepare charts for this ${kind} request:\n${opts.artifactRequest.slice(0, 1500)}` +
+          dataBlock,
+      },
+    ],
+    webDepth: "snippets",
+    webEnabled: false,
+    fileSearchEnabled: false,
+    includeMcpTools: false,
+    chartEnabled: true,
+    chartPool: pool,
+    signal: opts.signal,
+    disableThinking: true,
+    generationOptions: {
+      // Tool-call args include labels[]/values[] — 256 truncates and yields an empty pool.
+      maxTokens: 4096,
+      temperature: 0.2,
+    },
+    onChunk: () => {},
+    onThinking: () => {},
+    onToolStatus: opts.onStatus,
+  };
+
+  const tools = buildCloudChatTools({
+    webEnabled: false,
+    fileSearchEnabled: false,
+    mcpEnabled: false,
+    chartEnabled: true,
+  });
+
+  let messages = toCloudMessages(prepOpts.messages);
+
+  try {
+    for (let round = 0; round < MAX_CHART_PREP_ROUNDS; round++) {
+      if (pool.length >= pool.maxCharts) break;
+
+      const decision = await streamCloudRound(
+        messages,
+        tools,
+        prepOpts,
+        round === 0 && pool.length === 0
+          ? { type: "function", function: { name: "render_chart" } }
+          : "auto"
+      );
+
+      if (!decision.tool_calls?.length) break;
+
+      messages = [
+        ...messages,
+        {
+          role: "assistant",
+          content: decision.content || null,
+          tool_calls: decision.tool_calls,
+        },
+      ];
+
+      for (const call of decision.tool_calls) {
+        const executed = await executeToolCall(call, prepOpts, null);
+        messages = [
+          ...messages,
+          {
+            role: "tool",
+            tool_call_id: call.id,
+            name: call.function.name,
+            content: executed.content,
+          },
+        ];
+      }
+
+      if (pool.length > 0 && round + 1 < MAX_CHART_PREP_ROUNDS) {
+        const remaining = pool.maxCharts - pool.length;
+        if (remaining <= 0) break;
+        messages = [
+          ...messages,
+          {
+            role: "user",
+            content:
+              `You can register ${remaining} more chart(s). ` +
+              "If another distinct plot would help, call render_chart again with different data. " +
+              "Otherwise reply briefly that charts are ready.",
+          },
+        ];
+      }
+    }
+  } catch (err) {
+    if (
+      (err instanceof DOMException && err.name === "AbortError") ||
+      (err instanceof Error && err.name === "AbortError")
+    ) {
+      throw err;
+    }
+    console.warn("Chart prep loop failed:", err);
+  } finally {
+    opts.onStatus?.(null);
+  }
+
+  return pool.list();
 }

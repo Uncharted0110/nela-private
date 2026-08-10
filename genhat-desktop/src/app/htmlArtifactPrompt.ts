@@ -3,9 +3,9 @@
  * Cloud (including Fast) uses freeform HTML; local uses the section JSON template.
  */
 
-export const HTML_PLAN_MAX_TOKENS = 4096;
-/** Freeform HTML needs room for a full page (CSS + content). */
-export const HTML_FREEFORM_MAX_TOKENS = 12_000;
+export const HTML_PLAN_MAX_TOKENS = 16_384;
+/** Freeform HTML — allow long pages; capped only by model completion limit upstream. */
+export const HTML_FREEFORM_MAX_TOKENS = 65_536;
 
 /**
  * Cloud freeform HTML for capable models (Smart/Deep on paid tiers).
@@ -29,9 +29,8 @@ CRITICAL CONTENT RULES:
 - Content must be rich and specific to the USER'S TOPIC (real places, offerings, tone).
 - Use web research only as supporting facts — never let off-topic search results replace the subject.
 - Set <title> to a short accurate page title.
-- Self-contained: inline <style>. For charts/dashboards, load ECharts from CDN once:
-  <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
-  then mount charts with echarts.init(...) and real data (never fake empty chart shells).
+- Self-contained: inline <style>. Do NOT write Chart.js, Plotly, or hand-rolled echarts.init / chart config JS.
+- NEVER invent nela-chart markers. Only when an AVAILABLE CHARTS catalog is provided, embed with <div data-nela-chart="nela-chart:0"></div> using those exact indices.
 - When AVAILABLE IMAGES are listed, embed them with <img src="nela-img:0"> (or :1, :2, …). Do not invent image URLs.
 - No markdown fences around the HTML.`;
 
@@ -230,6 +229,7 @@ export function buildHtmlArtifactSystemParts(
   options?: {
     hasSourceData?: boolean;
     hasImages?: boolean;
+    hasCharts?: boolean;
     /** Smart/Deep cloud freeform vs structured JSON plan. */
     cloudMode?: CloudHtmlMode;
   }
@@ -238,12 +238,15 @@ export function buildHtmlArtifactSystemParts(
     const imageHint = options.hasImages
       ? `IMAGES: An AVAILABLE IMAGES catalog is in the user message. Embed with <img src="nela-img:0"> (etc). Prefer placing 1–3 relevant photos in the hero or a media strip — do not invent URLs.`
       : "";
+    const chartHint = options.hasCharts
+      ? `CHARTS: An AVAILABLE CHARTS catalog is in the user message. Embed ONLY with <div data-nela-chart="nela-chart:0"></div> (etc). Do NOT write Chart.js, Plotly, or echarts.init — the desktop injects working ECharts markup.`
+      : `If the page needs plots and no chart catalog is present, use tables/stats instead of inventing chart JavaScript.`;
     const dataHint = options.hasSourceData
-      ? "Source spreadsheet data may be attached — build a dashboard with ECharts charts/tables from real columns; do not invent numbers."
-      : "If the user asked for a dashboard or charts, include interactive ECharts charts with realistic series data.";
+      ? "Source spreadsheet data may be attached — use real columns for tables/KPIs; do not invent numbers."
+      : "";
     return {
       cacheable: HTML_CLOUD_FREEFORM_STATIC,
-      dynamic: [imageHint, dataHint].filter(Boolean).join("\n\n"),
+      dynamic: [imageHint, chartHint, dataHint].filter(Boolean).join("\n\n"),
     };
   }
 
@@ -297,7 +300,7 @@ export function htmlPlanRequest(
     return (
       `Write a complete HTML webpage for: "${text}". ` +
       `Stay on this exact subject. ` +
-      `If this is a dashboard / analytics request, embed interactive ECharts charts with the data. ` +
+      `If this is a dashboard / analytics request, place nela-chart markers for host-rendered charts (never hand-write Chart.js). ` +
       `Wrap the document in <nela-artifact type="text/html" title="...">...</nela-artifact>. ` +
       `Invent your own design — do not use a JSON section template.`
     );

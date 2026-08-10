@@ -88,7 +88,7 @@ Produce an updated presentation plan that applies these edits. Use the "${themeH
       response_format: useCloud ? { type: "json_object" } : undefined,
       generationOptions: {
         ...generationOptions,
-        maxTokens: 6144,
+        maxTokens: 65_536,
         temperature: 0.15,
         grammar,
       },

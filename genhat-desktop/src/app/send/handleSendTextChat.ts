@@ -20,6 +20,7 @@ import {
 import { StreamArtifactParser, scrubChatArtifactProtocol, stripPartialArtifactTags } from "../streamArtifactParser";
 import { saveStreamedArtifact } from "../streamArtifactSave";
 import { sanitizeCsvArtifactBody } from "../sanitizeCsvArtifact";
+import { ArtifactChartPool } from "../artifactChartPool";
 import { useCloudStore } from "../../stores/cloudStore";
 import { streamChatByMode } from "./cloudOrLocalStream";
 import type { SendHandlerContext } from "./types";
@@ -58,6 +59,8 @@ export async function handleSendTextChat(
   let fullThinking = "";
   let textFirstTokenTimeMs: number | null = null;
   let webSearchResult: WebSearchResult | null = null;
+  /** Shared across tool rounds so streamed / generate_html artifacts can embed charts. */
+  const chartPool = new ArtifactChartPool(4);
 
   const sessionMessages = session.messages;
   const fullSessionMessages: ChatMessage[] = [
@@ -210,6 +213,8 @@ export async function handleSendTextChat(
           topic: text,
           title: streamedArtifactTitle || undefined,
           asPresentation,
+          chartPool:
+            streamedArtifactType === "text/html" ? chartPool.list() : undefined,
         });
         artifactPath = saved.path;
         artifactStage = "LivePreview";
@@ -359,10 +364,11 @@ export async function handleSendTextChat(
     ctx.setStreamingThinking(fullThinking);
   };
 
-  // Tool loop when web and/or knowledge-base search is enabled.
+  // Tool loop when web, knowledge-base, and/or auto-artifact chart prep is needed.
   // Do NOT auto-route to facet research — web search runs only when the model
   // calls web_search(query, depth).
-  if (effectiveWebEnabled || fileSearchEnabled) {
+  const useToolLoop = effectiveWebEnabled || fileSearchEnabled || autoArtifacts;
+  if (useToolLoop) {
     if (fileSearchEnabled && !effectiveWebEnabled) {
       useChatModeStore.getState().setLiveToolStatus("Ready to search your files…");
     }
@@ -372,6 +378,8 @@ export async function handleSendTextChat(
       webEnabled: effectiveWebEnabled,
       fileSearchEnabled,
       includeMcpTools: !autoArtifacts,
+      chartEnabled: true,
+      chartPool,
       containsFileContext: false,
       // "Search my files" / /files is explicit consent to ground on local hits.
       userConfirmedCloudContext: Boolean(fileSearchEnabled),
