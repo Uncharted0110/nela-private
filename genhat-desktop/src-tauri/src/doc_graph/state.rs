@@ -40,6 +40,8 @@ pub struct DocGraphEngine {
     bg_failed: AtomicUsize,
     bg_total: AtomicUsize,
     bg_handle: Mutex<Option<JoinHandle<()>>>,
+    /// Live FS watcher for the current index root (home or manually indexed dir).
+    live_watch: Mutex<Option<crate::doc_graph::watcher::LiveWatchHandle>>,
 }
 
 impl DocGraphEngine {
@@ -64,6 +66,7 @@ impl DocGraphEngine {
             bg_failed: AtomicUsize::new(0),
             bg_total: AtomicUsize::new(0),
             bg_handle: Mutex::new(None),
+            live_watch: Mutex::new(None),
         })
     }
 
@@ -80,6 +83,13 @@ impl DocGraphEngine {
     pub fn try_begin_indexing(&self) -> bool {
         // Cancel any in-flight Pass 2 before starting a fresh Pass 1.
         self.request_cancel_pass2();
+        self.indexing
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+    }
+
+    /// Acquire the indexing lock for small live updates without cancelling Pass 2.
+    pub fn try_begin_live_sync(&self) -> bool {
         self.indexing
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
             .is_ok()
@@ -205,6 +215,7 @@ impl DocGraphEngine {
                             report.files_deferred,
                             report.files_failed
                         );
+                        engine.start_live_watch(home.clone());
                         let deferred: Vec<PathBuf> = report
                             .deferred_files
                             .iter()
@@ -440,6 +451,15 @@ impl DocGraphEngine {
         kb.save_graph(&self.data_dir.join("graph.bin"))?;
         kb.save_vectors(&self.data_dir.join("vectors.bin"))?;
         Ok(())
+    }
+
+    /// Replace the live FS watcher for `root` (home or a manually indexed directory).
+    pub fn start_live_watch(self: &Arc<Self>, root: PathBuf) {
+        let mut slot = self.live_watch.lock();
+        if let Some(prev) = slot.take() {
+            prev.stop();
+        }
+        *slot = crate::doc_graph::watcher::start_live_watch(Arc::clone(self), root);
     }
 }
 

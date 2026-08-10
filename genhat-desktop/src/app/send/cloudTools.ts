@@ -176,6 +176,52 @@ export const MCP_HTML_TOOL: CloudToolDefinition = {
   },
 };
 
+/**
+ * Host-rendered chart for HTML / PPT artifacts.
+ * Pass data only — the desktop builds a reliable ECharts fragment.
+ * Embed the returned token (nela-chart:N) in the page; do not invent Chart.js.
+ */
+export const RENDER_CHART_TOOL: CloudToolDefinition = {
+  type: "function",
+  function: {
+    name: "render_chart",
+    description:
+      "Generate a reliable interactive ECharts chart on the desktop from structured data. " +
+      "Call this for every plot in HTML/PPT dashboards — do NOT write Chart.js, Plotly, or hand-rolled echarts.init. " +
+      "Returns a short token like nela-chart:0 to place in your HTML as <div data-nela-chart=\"nela-chart:0\"></div>. " +
+      "Use only numbers/categories you already know from the conversation or research.",
+    parameters: {
+      type: "object",
+      properties: {
+        chart_type: {
+          type: "string",
+          enum: ["bar", "pie", "line"],
+          description: "bar = comparisons, pie = proportions, line = trends",
+        },
+        title: {
+          type: "string",
+          description: "Short chart title",
+        },
+        labels: {
+          type: "array",
+          items: { type: "string" },
+          description: "Category labels (same length as values)",
+        },
+        values: {
+          type: "array",
+          items: { type: "number" },
+          description: "Numeric series aligned with labels",
+        },
+        theme: {
+          type: "string",
+          description: "Optional palette hint (aurora, corporate, midnight, …)",
+        },
+      },
+      required: ["chart_type", "title", "labels", "values"],
+    },
+  },
+};
+
 export const MCP_CLOUD_TOOLS: CloudToolDefinition[] = [
   MCP_SPREADSHEET_TOOL,
   MCP_PRESENTATION_TOOL,
@@ -186,10 +232,13 @@ export function buildCloudChatTools(options?: {
   webEnabled?: boolean;
   fileSearchEnabled?: boolean;
   mcpEnabled?: boolean;
+  /** Host-rendered charts for HTML/PPT (default false). */
+  chartEnabled?: boolean;
 }): CloudToolDefinition[] {
   const tools: CloudToolDefinition[] = [];
   if (options?.webEnabled) tools.push(WEB_SEARCH_TOOL, WEB_EXTRACT_TOOL);
   if (options?.fileSearchEnabled) tools.push(SEARCH_KNOWLEDGE_BASE_TOOL);
+  if (options?.chartEnabled) tools.push(RENDER_CHART_TOOL);
   if (options?.mcpEnabled) tools.push(...MCP_CLOUD_TOOLS);
   return tools;
 }

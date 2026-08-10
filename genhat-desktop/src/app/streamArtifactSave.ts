@@ -8,6 +8,10 @@ import {
   embedPoolImagesInHtml,
   type ImagePoolEntry,
 } from "./artifactImagePool";
+import {
+  embedPoolChartsInHtml,
+  type ChartPoolEntry,
+} from "./artifactChartPool";
 import { parseCSV } from "./send/csvParse";
 import { sanitizeCsvArtifactBody } from "./sanitizeCsvArtifact";
 import { normalizeSpreadsheetPlan } from "./spreadsheetPlan";
@@ -37,23 +41,33 @@ function withThemeOverride(html: string, topic: string): string {
   }
 }
 
+function withMediaEmbeds(
+  html: string,
+  imagePool?: ImagePoolEntry[],
+  chartPool?: ChartPoolEntry[]
+): string {
+  let out = html;
+  if (imagePool?.length) out = embedPoolImagesInHtml(out, imagePool);
+  if (chartPool?.length) out = embedPoolChartsInHtml(out, chartPool);
+  return out;
+}
+
 export async function saveStreamedHtmlArtifact(input: {
   rawBody: string;
   topic: string;
   asPresentation?: boolean;
   imagePool?: ImagePoolEntry[];
+  chartPool?: ChartPoolEntry[];
 }): Promise<ArtifactResult> {
-  const withImages = (html: string) =>
-    input.imagePool?.length
-      ? embedPoolImagesInHtml(html, input.imagePool)
-      : html;
+  const embed = (html: string) =>
+    withMediaEmbeds(html, input.imagePool, input.chartPool);
 
   if (input.asPresentation) {
     if (looksLikePresentationJsonPlan(input.rawBody)) {
       throw new Error("MODEL_RETURNED_JSON_SLIDE_PLAN");
     }
     const parsed = parsePresentationHtmlArtifactOutput(input.rawBody, input.topic);
-    const themed = withThemeOverride(withImages(parsed.html), input.topic);
+    const themed = withThemeOverride(embed(parsed.html), input.topic);
     return Api.generateHtml({
       title: parsed.title,
       archetype: "landing",
@@ -67,7 +81,7 @@ export async function saveStreamedHtmlArtifact(input: {
     throw new Error("MODEL_RETURNED_JSON_HTML_PLAN");
   }
   const parsed = parseHtmlArtifactOutput(input.rawBody, input.topic);
-  const themed = withThemeOverride(withImages(parsed.html), input.topic);
+  const themed = withThemeOverride(embed(parsed.html), input.topic);
   return Api.generateHtml({
     title: parsed.title,
     archetype: "landing",
@@ -125,6 +139,7 @@ export async function saveStreamedArtifact(input: {
   title?: string;
   asPresentation?: boolean;
   imagePool?: ImagePoolEntry[];
+  chartPool?: ChartPoolEntry[];
 }): Promise<ArtifactResult> {
   if (input.type === "text/csv") {
     return saveStreamedCsvArtifact({
@@ -138,5 +153,6 @@ export async function saveStreamedArtifact(input: {
     topic: input.topic,
     asPresentation: input.asPresentation,
     imagePool: input.imagePool,
+    chartPool: input.chartPool,
   });
 }

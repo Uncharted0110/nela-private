@@ -66,7 +66,8 @@ CRITICAL CONTENT RULES:
 - Mark each slide with class="slide". First slide must include class="slide active" so something is visible immediately.
 - Complete creative freedom on colors/fonts — but content first, polish second.
 - Content must be RICH and specific. Prefer 6–10 slides unless the user asked for a count.
-- When the topic has statistics, include STAT slides (headline metric + supporting bullets) and/or small SVG/CSS bar visuals with real numbers.
+- When the topic has statistics, include STAT slides (headline metric + supporting bullets).
+- Do NOT write Chart.js, Plotly, or hand-rolled echarts.init. When AVAILABLE CHARTS are listed, embed with <div data-nela-chart="nela-chart:0"></div> on relevant slides.
 - When AVAILABLE IMAGES are listed, embed with <img src="nela-img:0"> on relevant slides (hero / IMAGE_LEFT style layouts). Never invent image URLs.
 - Stay on the USER'S TOPIC. Ignore off-topic web results (worksheets, crafts, product listings).
 - Set <title> to a short accurate deck title.
@@ -86,6 +87,7 @@ export function buildPresentationSystemParts(options: {
   cloudFreeform?: boolean;
   cloudMode?: CloudPresentationMode;
   hasImages?: boolean;
+  hasCharts?: boolean;
 }): PresentationSystemParts {
   const mode: CloudPresentationMode =
     options.cloudMode ??
@@ -97,6 +99,12 @@ export function buildPresentationSystemParts(options: {
       : "- AVAILABLE IMAGES are listed — set image_index on IMAGE_LEFT slides (and prefer at least one IMAGE_LEFT layout)."
     : "";
 
+  const chartHint = options.hasCharts
+    ? mode === "html"
+      ? "- AVAILABLE CHARTS are listed — embed with <div data-nela-chart=\"nela-chart:0\"></div>. Never invent Chart.js or echarts.init."
+      : ""
+    : "";
+
   const dynamic = [
     `- ${options.slideCountInstruction}`,
     options.sourceDocumentRules.trim(),
@@ -104,6 +112,7 @@ export function buildPresentationSystemParts(options: {
       ? "- Honor the user's topic exactly. Web research is optional supporting context — never let it replace the requested subject."
       : "",
     imageHint,
+    chartHint,
   ]
     .filter(Boolean)
     .join("\n");

@@ -10,6 +10,7 @@ pub mod manifest;
 pub mod parsers;
 pub mod search;
 pub mod state;
+pub mod watcher;
 
 pub use engine::{query_kb, run_incremental_sync, run_pipeline, IndexingProgress, PipelineReport};
 pub use state::{DocGraphEngine, DocGraphState};
