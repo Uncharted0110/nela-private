@@ -5,6 +5,10 @@
 //!
 //! BM25 queries search `file_name` / `title` / `content` with field boosts that
 //! prefer basename matches over body text (avoids path/homograph collisions).
+//!
+//! Query-side stopwords are stripped before BM25 (not at index time, not for
+//! dense embeddings) so phrases like "how to make mazes" do not latch onto
+//! unrelated titles such as "How to Eat.pptx" via `how`/`to` + file_name×4.
 
 use super::schema::IndexSchemaManager;
 use crate::doc_graph::errors::EngineError;
@@ -19,6 +23,18 @@ use tantivy::{doc, Index, IndexReader, IndexWriter, ReloadPolicy, Term};
 pub const BOOST_FILE_NAME: f32 = 4.0;
 pub const BOOST_TITLE: f32 = 2.0;
 pub const BOOST_CONTENT: f32 = 1.0;
+
+/// Common English function words stripped only from the *query* side of BM25.
+/// They carry almost no discriminating power and otherwise drown content terms
+/// when basename/title fields are boosted. Never applied to indexed documents
+/// or to text sent to the embedder.
+const STOPWORDS: &[&str] = &[
+    "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "has", "he",
+    "in", "is", "it", "its", "of", "on", "that", "the", "to", "was", "were",
+    "will", "with", "i", "you", "your", "my", "me", "who", "what", "when",
+    "where", "why", "how", "do", "does", "did", "can", "could", "would",
+    "should", "this", "these", "those", "there", "here", "am",
+];
 
 pub struct TantivyIndex {
     pub schema_mgr: IndexSchemaManager,
@@ -186,9 +202,10 @@ impl TantivyIndex {
 ///
 /// Example: query `resume` → `(resume OR cv OR "curriculum vitae")` so
 /// CV-named files surface alongside `*_resume.pdf`. Multi-word queries are
-/// left unchanged (aside from alphanumeric token cleaning).
+/// left unchanged aside from alphanumeric cleaning + stopword stripping
+/// (`"how to make mazes"` → `"make mazes"`).
 pub fn expand_query_terms(query: &str) -> String {
-    let tokens: Vec<String> = query
+    let raw_tokens: Vec<String> = query
         .split_whitespace()
         .map(|t| {
             t.chars()
@@ -198,9 +215,25 @@ pub fn expand_query_terms(query: &str) -> String {
         .filter(|t| !t.is_empty())
         .collect();
 
-    if tokens.is_empty() {
+    if raw_tokens.is_empty() {
         return query.to_string();
     }
+
+    let tokens = {
+        let filtered: Vec<String> = raw_tokens
+            .iter()
+            .filter(|t| {
+                let lower = t.to_ascii_lowercase();
+                !STOPWORDS.iter().any(|s| *s == lower)
+            })
+            .cloned()
+            .collect();
+        if filtered.is_empty() {
+            raw_tokens
+        } else {
+            filtered
+        }
+    };
 
     // Synonym expansion only when the whole query is a single term.
     if tokens.len() == 1 {
@@ -217,15 +250,35 @@ pub fn expand_query_terms(query: &str) -> String {
 }
 
 fn escape_query(q: &str) -> String {
-    q.split_whitespace()
+    // Same cleaning + stopword strip as expand_query_terms, without synonym
+    // expansion — used when the primary parser rejects the expanded form.
+    let raw_tokens: Vec<String> = q
+        .split_whitespace()
         .map(|t| {
             t.chars()
                 .filter(|c| c.is_alphanumeric() || *c == '_' || *c == '-')
                 .collect::<String>()
         })
         .filter(|t| !t.is_empty())
-        .collect::<Vec<_>>()
-        .join(" ")
+        .collect();
+
+    if raw_tokens.is_empty() {
+        return q.to_string();
+    }
+
+    let filtered: Vec<String> = raw_tokens
+        .iter()
+        .filter(|t| {
+            let lower = t.to_ascii_lowercase();
+            !STOPWORDS.iter().any(|s| *s == lower)
+        })
+        .cloned()
+        .collect();
+    if filtered.is_empty() {
+        raw_tokens.join(" ")
+    } else {
+        filtered.join(" ")
+    }
 }
 
 pub type SharedTantivyIndex = Arc<TantivyIndex>;
@@ -253,5 +306,16 @@ mod tests {
     fn leaves_unrelated_queries_alone() {
         let q = expand_query_terms("revenue growth metrics");
         assert_eq!(q, "revenue growth metrics");
+    }
+
+    #[test]
+    fn strips_how_to_stopwords_from_content_queries() {
+        assert_eq!(expand_query_terms("how to make mazes"), "make mazes");
+        assert_eq!(expand_query_terms("Generating mazes"), "Generating mazes");
+    }
+
+    #[test]
+    fn keeps_all_stopword_queries() {
+        assert_eq!(expand_query_terms("how to"), "how to");
     }
 }

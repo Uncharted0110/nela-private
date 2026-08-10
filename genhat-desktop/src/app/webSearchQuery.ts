@@ -83,3 +83,13 @@ export function webPresentationGroundingPreamble(): string {
     "- If web results are off-topic, discard them and rely on accurate general knowledge of the subject.\n\n"
   );
 }
+
+/** Local Doc Graph / attached-file grounding for artifacts. */
+export function localArtifactGroundingPreamble(): string {
+  return (
+    "LOCAL FILE SOURCES (source of truth for this artifact):\n" +
+    "- Use ONLY facts explicitly stated in the excerpts / document text below.\n" +
+    "- Do NOT invent, estimate, or guess numbers, names, dates, or claims absent from these sources.\n" +
+    "- If sources omit a detail the user asked for, note that it was not found in the files — do not fabricate.\n\n"
+  );
+}

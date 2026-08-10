@@ -4,8 +4,10 @@
 //!   1. BM25-retrieve the top [`RRF_CANDIDATE_POOL`] ContentBlocks via a
 //!      multi-field QueryParser over `file_name`×4, `title`×2, `content`×1
 //!      (basename preferred; full `file_path` is intentionally excluded).
-//!      Single-term queries like `resume` expand to `cv` / `curriculum vitae`.
-//!   2. Embed those candidates + the query with FastEmbed
+//!      Query stopwords are stripped for BM25 only; single-term queries like
+//!      `resume` expand to `cv` / `curriculum vitae`.
+//!   2. Embed those candidates + the **original** query with FastEmbed
+//!      (stopwords kept — they help sentence semantics)
 //!   3. Cosine-rank the candidates and RRF-fuse with BM25
 //!   4. Truncate the fused list to [`RRF_CANDIDATE_POOL`] before graph expansion
 

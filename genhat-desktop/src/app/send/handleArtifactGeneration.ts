@@ -51,12 +51,18 @@ import {
 import {
   webArtifactGroundingPreamble,
   webPresentationGroundingPreamble,
+  localArtifactGroundingPreamble,
   webContextCharLimit,
   webSearchOptionsForArtifact,
+  extractWebSearchQuery,
 } from "../webSearchQuery";
 import { formulateArtifactWebQueries, mergeWebSearchResults } from "./webSearchToolLoop";
 import { MAX_ARTIFACT_HOST_QUERIES } from "./webSearchLimits";
 import { runCloudArtifactWebResearch } from "./cloudNativeToolLoop";
+import {
+  attachedPathsToSearchResult,
+  knowledgeBaseToSearchResult,
+} from "./fileSearchCitations";
 import { useModelStore } from "../../stores/modelStore";
 import { StreamArtifactParser, looksLikeHtmlContent, stripPartialArtifactTags } from "../streamArtifactParser";
 import {
@@ -207,6 +213,10 @@ export async function handleArtifactGeneration(
     let rows: string[][] | undefined;
     let spreadsheetData: SpreadsheetData | null = null;
     let ambientFileContent = "";
+    let usedDocGraphMarkdown = false;
+
+    const fileSearchEnabled =
+      Boolean(ctx.fileIndexerEnabled) || Boolean(options?.forceFileSearch);
 
     const attachedPaths =
       ctx.directDocumentPaths.length > 0 ? [...ctx.directDocumentPaths] : [];
@@ -216,32 +226,57 @@ export async function handleArtifactGeneration(
       forceFileSearch: options?.forceFileSearch,
     });
 
-    // Proactive doc-graph search if no file is attached but query references a file
-    if (!attachedFile && wantsAmbientFileSearch) {
+    const mergeArtifactCitations = (next: WebSearchResult | null) => {
+      if (!next?.results?.length) return;
+      artifactWebSearchResult = artifactWebSearchResult
+        ? mergeWebSearchResults(artifactWebSearchResult, next)
+        : next;
+    };
+
+    // Doc Graph search: explicit ambient file intent, or file-indexer toggle for topic grounding.
+    if (!attachedFile && (wantsAmbientFileSearch || fileSearchEnabled)) {
       updateArtifactMsg("SearchingDisk");
-      const searchQuery = extractAmbientSearchQuery(text);
+      const searchQuery =
+        extractAmbientSearchQuery(text).trim() ||
+        extractWebSearchQuery(text).trim() ||
+        text.trim().slice(0, 120);
       try {
-        const md = await Api.queryKnowledgeBase(searchQuery);
+        useChatModeStore
+          .getState()
+          .setLiveToolStatus(`Searching knowledge base for “${searchQuery}”`);
+        const md = await Api.queryKnowledgeBase(searchQuery, 25);
         if (md.trim() && md !== "No relevant structural context found.") {
           ambientFileContent = md;
-          const pathMatch = md.match(/\(File:\s*([^)]+)\)/);
-          if (pathMatch?.[1]) {
-            attachedFile = pathMatch[1].trim();
-            attachedPaths.push(attachedFile);
-            const filename = attachedFile.split(/[/\\]/).pop() ?? "file";
-            ctx.updateSession(sid, (prev) => ({
-              messages: [
-                ...prev.messages,
-                {
-                  role: "assistant" as const,
-                  content: `${DISCOVERY_NOTICE_PREFIX} **${filename}**\nPath: \`${attachedFile}\`\nReading document content…`,
-                },
-              ],
-            }));
+          usedDocGraphMarkdown = true;
+          mergeArtifactCitations(knowledgeBaseToSearchResult(searchQuery, md));
+          updateArtifactMsg("SearchingDisk");
+
+          // Only escalate to full-document load when the user asked to find/open a file.
+          if (wantsAmbientFileSearch) {
+            const pathMatch = md.match(/\(File:\s*([^)]+)\)/);
+            if (pathMatch?.[1]) {
+              attachedFile = pathMatch[1].trim();
+              attachedPaths.push(attachedFile);
+              const filename = attachedFile.split(/[/\\]/).pop() ?? "file";
+              ctx.updateSession(sid, (prev) => ({
+                messages: [
+                  ...prev.messages,
+                  {
+                    role: "assistant" as const,
+                    content: `${DISCOVERY_NOTICE_PREFIX} **${filename}**\nPath: \`${attachedFile}\`\nReading document content…`,
+                    ...(artifactWebSearchResult
+                      ? { webSearchResult: artifactWebSearchResult }
+                      : {}),
+                  },
+                ],
+              }));
+            }
           }
         }
       } catch (err) {
         console.warn("Doc-graph search failed:", err);
+      } finally {
+        useChatModeStore.getState().setLiveToolStatus(null);
       }
     }
 
@@ -303,6 +338,15 @@ export async function handleArtifactGeneration(
         if (section.trim()) sections.push(section);
       }
       ambientFileContent = sections.join("\n\n");
+      usedDocGraphMarkdown = false;
+      const citeQuery =
+        extractWebSearchQuery(text).trim() ||
+        extractAmbientSearchQuery(text).trim() ||
+        text.trim().slice(0, 120);
+      mergeArtifactCitations(
+        attachedPathsToSearchResult(citeQuery, attachedPaths.slice(0, 3))
+      );
+      updateArtifactMsg("SearchingDisk");
     }
 
     // Ensure document text is loaded for PDF/DOC paths (index cache or search snippet may be incomplete).
@@ -323,6 +367,7 @@ export async function handleArtifactGeneration(
             attachedFile,
             fileContent.substring(0, contentLimit)
           );
+          usedDocGraphMarkdown = false;
         }
       } catch (err) {
         console.warn("Failed to read attached document for artifact context:", err);
@@ -381,7 +426,7 @@ export async function handleArtifactGeneration(
             intelligenceMode === "auto");
 
         if (useCloudWebTools) {
-          // Smart/Deep: OpenRouter model issues web_search tool calls with its own queries.
+          // Smart/Deep: OpenRouter model issues web_search / optional KB tool calls.
           useChatModeStore
             .getState()
             .setLiveToolStatus("Cloud model choosing web searches…");
@@ -390,6 +435,7 @@ export async function handleArtifactGeneration(
               artifactRequest: text,
               schemaId,
               webDepth: fetchContent ? "full" : "snippets",
+              fileSearchEnabled,
               signal: ctrl.signal,
               onStatus: (status) =>
                 useChatModeStore.getState().setLiveToolStatus(status),
@@ -440,14 +486,10 @@ export async function handleArtifactGeneration(
             if (!result) continue;
             merged = mergeWebSearchResults(merged, result);
           }
-          if (merged) {
-            artifactWebSearchResult = merged;
-            updateArtifactMsg("CrunchingMetrics");
-          }
         }
 
         if (merged) {
-          artifactWebSearchResult = merged;
+          mergeArtifactCitations(merged);
           updateArtifactMsg("CrunchingMetrics");
           if (
             schemaId === "spreadsheet_synthesis" &&
@@ -563,6 +605,9 @@ export async function handleArtifactGeneration(
       !!ambientFileContent &&
       !ambientFileContent.includes("(Content could not be extracted");
     if (schemaId === "spreadsheet_synthesis") {
+      if (usedDocGraphMarkdown && !hasSourceData) {
+        dataContext += localArtifactGroundingPreamble();
+      }
       dataContext += buildSpreadsheetDataContext({
         headers: hasSourceData ? headers : undefined,
         rows: hasSourceData ? rows : undefined,
@@ -578,11 +623,17 @@ export async function handleArtifactGeneration(
       }
     } else if (ambientFileContent) {
       if (schemaId === "presentation_synthesis" && hasSourceDocument) {
+        if (usedDocGraphMarkdown) {
+          dataContext += localArtifactGroundingPreamble();
+        }
         dataContext +=
           `=== ATTACHED SOURCE DOCUMENT (authoritative — every slide must cite concrete facts from here) ===\n` +
           `${ambientFileContent}\n` +
           `=== END SOURCE DOCUMENT ===\n\n`;
       } else {
+        if (usedDocGraphMarkdown) {
+          dataContext += localArtifactGroundingPreamble();
+        }
         dataContext += `Source data details:\n${ambientFileContent}\n\n`;
       }
     }
@@ -964,7 +1015,7 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
             { role: "user" as const, content: fitted.userPrompt },
           ];
 
-    if (options?.webEnabled && artifactWebSearchResult) {
+    if (artifactWebSearchResult) {
       useChatModeStore
         .getState()
         .setLiveToolStatus(
@@ -978,7 +1029,7 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
                   ? "Writing presentation plan…"
                   : "Writing artifact plan…"
         );
-    } else if (!options?.webEnabled) {
+    } else {
       useChatModeStore.getState().setLiveToolStatus(null);
     }
 

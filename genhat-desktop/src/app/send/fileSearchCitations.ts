@@ -120,3 +120,31 @@ export function knowledgeBaseToSearchResult(
       ),
   };
 }
+
+/** Citation hits for explicitly attached local paths (no Doc Graph parse required). */
+export function attachedPathsToSearchResult(
+  query: string,
+  paths: string[]
+): WebSearchResult | null {
+  const results: SearchHit[] = [];
+  const seen = new Set<string>();
+  for (const path of paths) {
+    const trimmed = path.trim();
+    if (!trimmed) continue;
+    const key = trimmed.replace(/\\/g, "/").toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    results.push({
+      title: trimmed.split(/[/\\]/).pop() || trimmed,
+      snippet: trimmed,
+      url: pathToFileUrl(trimmed),
+    });
+  }
+  if (!results.length) return null;
+  return {
+    query,
+    queries: [query],
+    results,
+    formatted_context: "",
+  };
+}

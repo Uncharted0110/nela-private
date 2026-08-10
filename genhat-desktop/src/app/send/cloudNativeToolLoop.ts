@@ -699,17 +699,20 @@ export async function runCloudNativeToolLoop(
 
 /**
  * Cloud Smart/Deep artifact prelude: let the OpenRouter model call web_search
- * with its own concise queries (not the raw user prompt).
+ * (and optionally search_knowledge_base) with its own concise queries.
  * Returns merged search results for grounding; does not write the artifact.
  */
 export async function runCloudArtifactWebResearch(opts: {
   artifactRequest: string;
   schemaId: string;
   webDepth?: "snippets" | "full";
+  /** When true, expose local Doc Graph search alongside web_search. */
+  fileSearchEnabled?: boolean;
   signal?: AbortSignal;
   onStatus?: (status: string | null) => void;
 }): Promise<WebSearchResult | null> {
   const webDepth = opts.webDepth ?? "full";
+  const fileSearchEnabled = Boolean(opts.fileSearchEnabled);
   const kind =
     opts.schemaId === "presentation_synthesis"
       ? "presentation"
@@ -719,6 +722,10 @@ export async function runCloudArtifactWebResearch(opts: {
           ? "webpage"
           : "artifact";
 
+  const localHint = fileSearchEnabled
+    ? " Also call search_knowledge_base with SHORT keyword queries when the request may be answered from the user's indexed local files (notes, PDFs, slides). "
+    : " ";
+
   const researchOpts: CloudNativeToolLoopOptions = {
     messages: [
       {
@@ -726,7 +733,8 @@ export async function runCloudArtifactWebResearch(opts: {
         content:
           `You are researching facts to ground a ${kind} the user will generate next. ` +
           "Call web_search repeatedly with SHORT keyword queries covering DIFFERENT facets " +
-          "(e.g. flights, destinations, day activities, seasons, transport). " +
+          "(e.g. flights, destinations, day activities, seasons, transport)." +
+          localHint +
           "Never paste the full user prompt as the query. Prefer depth=full when you need page text. " +
           `You may search up to ${MAX_TOOL_ROUNDS} times. After enough research, reply with a one-line acknowledgement — do not write the artifact.`,
       },
@@ -736,6 +744,8 @@ export async function runCloudArtifactWebResearch(opts: {
       },
     ],
     webDepth,
+    webEnabled: true,
+    fileSearchEnabled,
     includeMcpTools: false,
     signal: opts.signal,
     disableThinking: true,
@@ -752,16 +762,18 @@ export async function runCloudArtifactWebResearch(opts: {
 
   const tools = buildCloudChatTools({
     webEnabled: true,
-    fileSearchEnabled: false,
+    fileSearchEnabled,
     mcpEnabled: false,
   });
   let messages = toCloudMessages(researchOpts.messages);
+  const mustCallHint = fileSearchEnabled
+    ? "You MUST call web_search or search_knowledge_base at least once with a concise keyword query before finishing. Prefer search_knowledge_base when the topic likely lives in the user's local files."
+    : "You MUST call the web_search tool at least once with a concise keyword query and depth (snippet|full|standard|deep) before finishing.";
   messages = [
     messages[0]!,
     {
       role: "system",
-      content:
-        "You MUST call the web_search tool at least once with a concise keyword query and depth (snippet|full|standard|deep) before finishing.",
+      content: mustCallHint,
     },
     ...messages.slice(1),
   ];
@@ -802,7 +814,9 @@ export async function runCloudArtifactWebResearch(opts: {
           // Force a tool call on the first round so the OR model picks the query.
           tool_choice:
             round === 0
-              ? { type: "function", function: { name: "web_search" } }
+              ? fileSearchEnabled
+                ? "required"
+                : { type: "function", function: { name: "web_search" } }
               : "auto",
           generationOptions: researchOpts.generationOptions,
           onChunk: (chunk) => {
@@ -852,6 +866,9 @@ export async function runCloudArtifactWebResearch(opts: {
       // Encourage multi-facet research until the model stops or hits the round cap.
       if (webSearchResult && round + 1 < MAX_TOOL_ROUNDS) {
         const remaining = MAX_TOOL_ROUNDS - (round + 1);
+        const localRoundHint = fileSearchEnabled
+          ? " You may also call search_knowledge_base for local-file facets."
+          : "";
         messages = [
           ...messages,
           {
@@ -859,8 +876,9 @@ export async function runCloudArtifactWebResearch(opts: {
             content:
               `You have ~${remaining} search rounds left. ` +
               "If important facets are still missing (flights, dates, places, hours, prices, nature spots, transfers), " +
-              "call web_search again with a NEW focused query. " +
-              "Otherwise reply briefly that research is done.",
+              "call web_search again with a NEW focused query." +
+              localRoundHint +
+              " Otherwise reply briefly that research is done.",
           },
         ];
       }
