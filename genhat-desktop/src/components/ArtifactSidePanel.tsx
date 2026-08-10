@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { X, FileCode, Table2, Presentation, Code2, Eye } from "lucide-react";
+import { X, FileCode, Table2, Presentation, Code2, Eye, Pencil } from "lucide-react";
 import { prepareArtifactHtmlPreview } from "../app/artifactHtmlPreview";
 import { parseCSV } from "../app/send/csvParse";
 import { sanitizeCsvArtifactBody } from "../app/sanitizeCsvArtifact";
 import { Api } from "../api";
 import ExcelSheetGrid from "./ExcelSheetGrid";
+import ArtifactPreviewEditChat, {
+  type PreviewEditMessage,
+} from "./ArtifactPreviewEditChat";
 
 const PANEL_WIDTH_KEY = "nela.artifactPanelWidthPx";
 const PANEL_MIN_WIDTH = 320;
@@ -29,7 +32,18 @@ export interface ArtifactSidePanelProps {
   csv?: string;
   /** Finished file path — panel can stay open after stream ends. */
   savedPath?: string | null;
+  /**
+   * True only while the first generation is still streaming (no saved file yet).
+   * Must not flip on during later edits — that hid the Edit button.
+   */
+  streamActive?: boolean;
   onClose: () => void;
+  /** Apply an edit from the in-preview chat (keeps the panel open). */
+  onPreviewEdit?: (
+    text: string,
+    artifactPath: string,
+    onStatus: (message: string, kind: "progress" | "done" | "error") => void
+  ) => void | Promise<void>;
 }
 
 function HtmlSourceStream({
@@ -104,9 +118,13 @@ export default function ArtifactSidePanel({
   html,
   csv,
   savedPath,
+  streamActive = false,
   onClose,
+  onPreviewEdit,
 }: ArtifactSidePanelProps) {
-  const streaming = !savedPath;
+  // Only treat as "streaming generation" when there is no saved file yet.
+  // Edits briefly change artifactStage away from LivePreview — that must not hide Edit.
+  const streaming = Boolean(streamActive) || !savedPath;
   const [htmlView, setHtmlView] = useState<"code" | "preview">("code");
   const [sheetView, setSheetView] = useState<"sheet" | "code">("sheet");
   const [displayHtml, setDisplayHtml] = useState("");
@@ -116,12 +134,16 @@ export default function ArtifactSidePanel({
   const [xlsxLoading, setXlsxLoading] = useState(false);
   const [panelWidth, setPanelWidth] = useState(loadPanelWidth);
   const [resizing, setResizing] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [editBusy, setEditBusy] = useState(false);
+  const [editMessages, setEditMessages] = useState<PreviewEditMessage[]>([]);
   const panelRef = useRef<HTMLElement>(null);
   const dragRef = useRef<{ startX: number; startWidth: number } | null>(null);
   const throttleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latestHtml = useRef(html ?? "");
   const paintedOnce = useRef(false);
   const prevSaved = useRef(savedPath);
+  const editMsgId = useRef(0);
 
   const clampWidth = useCallback((width: number) => {
     const parentWidth =
@@ -205,9 +227,13 @@ export default function ArtifactSidePanel({
         setHtmlView("preview");
         setSheetView("sheet");
       }
+      // New artifact path from an edit — keep edit chat, clear only when path stem changes a lot.
+      if (prevSaved.current && !editOpen) {
+        setEditMessages([]);
+      }
     }
     prevSaved.current = savedPath;
-  }, [savedPath]);
+  }, [savedPath, editOpen]);
 
   // Load HTML from durable disk path when session was restored without the body.
   useEffect(() => {
@@ -334,6 +360,52 @@ export default function ArtifactSidePanel({
     showHtmlChrome && streaming && htmlView === "preview" && !displayHtml
       ? "code"
       : htmlView;
+  const canEdit = Boolean(savedPath && onPreviewEdit);
+
+  const pushEditMessage = (
+    role: "user" | "assistant",
+    content: string,
+    kind?: PreviewEditMessage["kind"]
+  ) => {
+    editMsgId.current += 1;
+    setEditMessages((prev) => [
+      ...prev,
+      { id: `pe-${editMsgId.current}`, role, content, kind },
+    ]);
+  };
+
+  const handlePreviewSend = async (text: string) => {
+    if (!savedPath || !onPreviewEdit || editBusy) return;
+    pushEditMessage("user", text);
+    setEditBusy(true);
+    let lastAssistantId: string | null = null;
+    const onStatus = (message: string, kind: "progress" | "done" | "error") => {
+      const plain = message.replace(/\*\*/g, "");
+      if (lastAssistantId) {
+        setEditMessages((prev) =>
+          prev.map((m) =>
+            m.id === lastAssistantId ? { ...m, content: plain, kind } : m
+          )
+        );
+      } else {
+        editMsgId.current += 1;
+        lastAssistantId = `pe-${editMsgId.current}`;
+        setEditMessages((prev) => [
+          ...prev,
+          { id: lastAssistantId!, role: "assistant", content: plain, kind },
+        ]);
+      }
+    };
+    try {
+      await onPreviewEdit(text, savedPath, onStatus);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      onStatus(message || "Edit failed.", "error");
+    } finally {
+      setEditBusy(false);
+      if (type === "text/html") setHtmlView("preview");
+    }
+  };
 
   return (
     <aside
@@ -467,6 +539,21 @@ export default function ArtifactSidePanel({
             </button>
           </div>
         )}
+        {canEdit ? (
+          <button
+            type="button"
+            className={`px-2 py-1 rounded-lg text-[0.68rem] flex items-center gap-1 shrink-0 border ${
+              editOpen
+                ? "border-neon/40 bg-neon/10 text-neon"
+                : "border-glass-border text-txt-muted hover:text-txt hover:bg-void-600"
+            }`}
+            onClick={() => setEditOpen((v) => !v)}
+            title="Edit this artifact in the preview"
+          >
+            <Pencil size={12} />
+            Edit
+          </button>
+        ) : null}
         <button
           type="button"
           className="p-1.5 rounded-lg text-txt-muted hover:text-txt hover:bg-void-600"
@@ -476,34 +563,45 @@ export default function ArtifactSidePanel({
           <X size={16} />
         </button>
       </header>
-      <div className="flex-1 min-h-0 bg-void-900">
-        {type === "text/csv" ? (
-          sheetView === "code" ? (
-            <CsvSourceStream csv={csv ?? ""} follow={streaming} />
-          ) : xlsxLoading && !sheetRows.length ? (
-            <div className="p-4 text-sm text-txt-muted flex items-center gap-2">
-              <span className="w-3.5 h-3.5 border-2 border-neon border-t-transparent rounded-full animate-spin" />
-              Opening workbook…
-            </div>
-          ) : (
-            <ExcelSheetGrid
-              rows={sheetRows}
-              sheetName={sheetName}
-              streaming={streaming && !savedPath}
+      <div className="flex-1 min-h-0 bg-void-900 flex flex-col">
+        <div className="flex-1 min-h-0">
+          {type === "text/csv" ? (
+            sheetView === "code" ? (
+              <CsvSourceStream csv={csv ?? ""} follow={streaming} />
+            ) : xlsxLoading && !sheetRows.length ? (
+              <div className="p-4 text-sm text-txt-muted flex items-center gap-2">
+                <span className="w-3.5 h-3.5 border-2 border-neon border-t-transparent rounded-full animate-spin" />
+                Opening workbook…
+              </div>
+            ) : (
+              <ExcelSheetGrid
+                rows={sheetRows}
+                sheetName={sheetName}
+                streaming={streaming && !savedPath}
+              />
+            )
+          ) : effectiveHtmlView === "code" ? (
+            <HtmlSourceStream html={effectiveHtml} follow={streaming && !savedPath} />
+          ) : displayHtml ? (
+            <iframe
+              title={title || "Artifact preview"}
+              className="w-full h-full border-0 bg-white"
+              sandbox="allow-scripts allow-same-origin"
+              srcDoc={displayHtml}
             />
-          )
-        ) : effectiveHtmlView === "code" ? (
-          <HtmlSourceStream html={effectiveHtml} follow={streaming && !savedPath} />
-        ) : displayHtml ? (
-          <iframe
-            title={title || "Artifact preview"}
-            className="w-full h-full border-0 bg-white"
-            sandbox="allow-scripts allow-same-origin"
-            srcDoc={displayHtml}
+          ) : (
+            <div className="p-4 text-sm text-txt-muted">Waiting for HTML…</div>
+          )}
+        </div>
+        {canEdit ? (
+          <ArtifactPreviewEditChat
+            open={editOpen}
+            busy={editBusy}
+            messages={editMessages}
+            onClose={() => setEditOpen(false)}
+            onSend={(t) => void handlePreviewSend(t)}
           />
-        ) : (
-          <div className="p-4 text-sm text-txt-muted">Waiting for HTML…</div>
-        )}
+        ) : null}
       </div>
     </aside>
   );

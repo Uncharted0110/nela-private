@@ -57,6 +57,41 @@ export async function handleSend(text: string): Promise<void> {
   await executeHandleSend(text);
 }
 
+/**
+ * Edit the open artifact from the preview panel chat.
+ * Does not close the panel or route through main chat intent resolution.
+ */
+export async function handlePreviewArtifactEdit(
+  text: string,
+  artifactPath: string,
+  onStatus?: (message: string, kind: "progress" | "done" | "error") => void
+): Promise<void> {
+  const trimmed = text.trim();
+  if (!trimmed || !artifactPath) return;
+
+  const sessionStore = useSessionStore.getState();
+  const sid = sessionStore.activeSessionId;
+  if (!sid) return;
+
+  const session = sessionStore.sessions.find((s) => s.id === sid);
+  if (!session || session.loading) return;
+
+  const { buildSendHandlerContext } = await import("./send/buildContext");
+  const { handleArtifactEdit } = await import("./send/handleArtifactEdit");
+  const ctx = buildSendHandlerContext();
+  const ctrl = new AbortController();
+  abortControllers.set(sid, ctrl);
+
+  try {
+    await handleArtifactEdit(trimmed, artifactPath, sid, ctx, ctrl, {
+      previewMode: true,
+      onStatus,
+    });
+  } finally {
+    abortControllers.delete(sid);
+  }
+}
+
 export function handleModeSwitch(mode: ChatMode): void {
   const sessionStore = useSessionStore.getState();
   const chatModeStore = useChatModeStore.getState();

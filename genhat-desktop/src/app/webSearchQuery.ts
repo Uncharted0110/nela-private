@@ -32,6 +32,18 @@ export function extractWebSearchQuery(text: string): string {
   return q.slice(0, 120);
 }
 
+/**
+ * Web query for a single presentation / PPT slide about a topic.
+ * Reuses extractWebSearchQuery cleanup, then adds fact-oriented framing
+ * (same spirit as presentation_synthesis grounding).
+ */
+export function slideTopicWebQuery(topic: string): string {
+  const cleaned =
+    extractWebSearchQuery(`about ${topic}`.trim()).trim() || topic.trim();
+  // Keep it a short keyword query; research profile fetches full pages.
+  return `${cleaned} key facts history`.slice(0, 120);
+}
+
 /** Prefer full-page fetch when web is combined with artifact generation. */
 export function webSearchOptionsForArtifact(
   schemaId: string,

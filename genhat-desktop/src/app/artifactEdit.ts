@@ -17,7 +17,7 @@ export const MAX_EDIT_SPREADSHEET_ROWS = 800;
 export const MAX_EDIT_SAMPLE_ROWS = 35;
 
 const EDIT_VERBS =
-  /\b(edit|modify|update|change|revise|fix|adjust|tweak|improve|enhance|refine|rewrite|reformat|add|remove|delete|insert|replace|shorten|expand|polish|correct|amend|patch)\b/i;
+  /\b(edit|modify|update|change|revise|fix|adjust|tweak|improve|enhance|refine|rewrite|reformat|add|remove|delete|insert|replace|shorten|expand|increase|enrich|polish|correct|amend|patch)\b/i;
 
 const STRONG_CREATE_ONLY =
   /\b(create|make|build|generate|synthesize|from scratch|brand new|new presentation|new spreadsheet|new deck|new html page)\b/i;
@@ -31,6 +31,14 @@ const INFORMATION_SEEKING =
 
 const STRUCTURAL_ARTIFACT_EDIT =
   /\b((add|remove|delete|insert|append|reorder|move)\b[\s\S]{0,40}\bslides?\b|\bslides?\b[\s\S]{0,40}\b(add|remove|delete|insert|append|reorder|move)\b|change\s+(the\s+)?theme|update\s+(the\s+)?theme|change\s+(the\s+)?title|add\s+(a\s+)?(column|row)|remove\s+(a\s+)?(column|row)|delete\s+(a\s+)?(column|row))\b/i;
+
+/** Style / look tweaks that should edit an open deck without requiring "this presentation". */
+const STYLE_ARTIFACT_EDIT =
+  /\b(change|update|set|make|switch|use|apply|fix)\b[\s\S]{0,50}\b(font|fonts|typeface|typography|colou?rs?|accent|theme|background|palette|style|styling|contrast)\b|\b(darker|lighter|bluer|greener|more\s+minimal|more\s+corporate)\b|\b(font\s+to|colou?r\s+to|theme\s+to)\b|\b(text|font)s?\s+colou?rs?\b|\b(not visible|hard to read|unreadable)\b/i;
+
+/** Explicit full-deck rewrite — fall back to regenerating the whole plan. */
+const FULL_DECK_REWRITE =
+  /\b(rewrite|regenerate|redo|restructure|overhaul|from\s+scratch|replace\s+all|rebuild)\b[\s\S]{0,40}\b(deck|presentation|slides?|ppt|pptx)\b|\b(rewrite|regenerate|redo|rebuild)\s+(the\s+)?(entire|whole|full)\b/i;
 
 const EDITABLE_EXTENSIONS = new Set([
   ".html",
@@ -115,17 +123,23 @@ export function matchesArtifactEditIntent(
   }
 
   // Open session artifact alone is not enough — require an explicit "this deck"
-  // style hint, an attached file, or a clear structural edit request.
+  // style hint, an attached file, a structural edit, or a style tweak.
   if (hasSessionArtifact && !hasAttachedEditable) {
     if (
       !EDIT_FILE_HINT.test(trimmed) &&
-      !STRUCTURAL_ARTIFACT_EDIT.test(trimmed)
+      !STRUCTURAL_ARTIFACT_EDIT.test(trimmed) &&
+      !STYLE_ARTIFACT_EDIT.test(trimmed)
     ) {
       return false;
     }
   }
 
   return true;
+}
+
+/** True when the user wants a full deck rewrite (not a surgical op list). */
+export function isPresentationFullRewriteRequest(prompt: string): boolean {
+  return FULL_DECK_REWRITE.test(prompt.trim());
 }
 
 /** Truncate large HTML for patch generation while preserving head/tail context. */
@@ -179,13 +193,312 @@ export function isNelaPresentationDeckHtml(content: string): boolean {
 const ADD_SLIDE_REQUEST =
   /\b(add|insert|append)\b[\s\S]{0,80}\b(slide|slides)\b|\b(at the (end|last|start|beginning|first)|to the (end|last|start|beginning|first)|starting\s+slide|opening\s+slide)\b[\s\S]{0,40}\b(slide|slides)?\b/i;
 
+const REMOVE_SLIDE_REQUEST =
+  /\b(remove|delete)\b[\s\S]{0,100}\bslides?\b|\bslides?\b[\s\S]{0,40}\b(remove|delete)\b/i;
+
 const COMPLEX_DECK_REWRITE =
-  /\b(remove|delete|rewrite|replace all|restructure|reorder|move slide|swap slide)\b/i;
+  /\b(rewrite|replace all|restructure|swap all slides)\b/i;
+
+const MOVE_SLIDE_REQUEST =
+  /\b(move|shift|relocate)\b[\s\S]{0,60}\bslides?\b|\bslides?\b[\s\S]{0,40}\b(move|shift|relocate)\b|\b(swap)\b[\s\S]{0,40}\bslides?\b/i;
 
 /** User wants to append one or more slides (not a full deck rewrite). */
 export function isPresentationSlideAddRequest(prompt: string): boolean {
   if (COMPLEX_DECK_REWRITE.test(prompt)) return false;
+  if (MOVE_SLIDE_REQUEST.test(prompt)) return false;
+  if (REMOVE_SLIDE_REQUEST.test(prompt)) return false;
   return ADD_SLIDE_REQUEST.test(prompt);
+}
+
+/** User wants to remove/delete a slide (not a full deck rewrite). */
+export function isPresentationSlideRemoveRequest(prompt: string): boolean {
+  if (COMPLEX_DECK_REWRITE.test(prompt)) return false;
+  if (MOVE_SLIDE_REQUEST.test(prompt)) return false;
+  return REMOVE_SLIDE_REQUEST.test(prompt.trim());
+}
+
+/** User wants to move/reorder a slide (deterministic — no LLM). */
+export function isPresentationSlideMoveRequest(prompt: string): boolean {
+  if (COMPLEX_DECK_REWRITE.test(prompt)) return false;
+  if (isPresentationSlideAddRequest(prompt)) return false;
+  if (REMOVE_SLIDE_REQUEST.test(prompt.trim())) return false;
+  return MOVE_SLIDE_REQUEST.test(prompt.trim());
+}
+
+const EXPAND_SLIDE_REQUEST =
+  /\b(increase|expand|enrich|lengthen|grow|fatten|extend)\b[\s\S]{0,50}\b(content|body|text|copy|bullets?|details?)\b|\b(more|extra|additional)\s+(content|detail|text|bullets?|copy)\b|\b(add|put)\s+more\s+(content|detail|text|bullets?|copy)\b/i;
+
+/** User wants richer copy on an existing slide (deterministic web enrich). */
+export function isPresentationSlideExpandRequest(prompt: string): boolean {
+  if (COMPLEX_DECK_REWRITE.test(prompt)) return false;
+  if (isPresentationSlideAddRequest(prompt)) return false;
+  if (isPresentationSlideRemoveRequest(prompt)) return false;
+  if (isPresentationSlideMoveRequest(prompt)) return false;
+  const trimmed = prompt.trim();
+  if (!EXPAND_SLIDE_REQUEST.test(trimmed)) return false;
+  // Prefer an explicit slide target (number / last / titled).
+  return (
+    /\bslides?\b/i.test(trimmed) ||
+    /\b(last|final|this|current)\b/i.test(trimmed)
+  );
+}
+
+/**
+ * Which slide to expand. Prefer numbered ("slide 9"), then last, then title match.
+ */
+export function parseSlideExpandIndex(
+  prompt: string,
+  slideCount: number,
+  slideTitles: string[] = []
+): SlideInsertPosition | null {
+  if (slideCount < 1) return null;
+  const lower = prompt.toLowerCase();
+
+  const numbered = lower.match(
+    new RegExp(
+      `\\b(?:slide\\s+)?(?:number\\s+)?${SLIDE_NUM_TOKEN}\\b(?:\\s+slide)?`
+    )
+  );
+  // Prefer "slide 9" / "9th slide" near expand verbs — scan all matches.
+  const allNums = [
+    ...lower.matchAll(
+      new RegExp(`\\bslide\\s+${SLIDE_NUM_TOKEN}\\b`, "g")
+    ),
+    ...lower.matchAll(
+      new RegExp(`\\b${SLIDE_NUM_TOKEN}\\s+slide\\b`, "g")
+    ),
+  ];
+  for (const m of allNums) {
+    const one = parseOneBasedSlideNumber(m[1]);
+    const n = one == null ? null : resolveOneBased(one, slideCount);
+    if (n != null) {
+      return { index: n - 1, label: `slide ${n}` };
+    }
+  }
+  if (numbered && !allNums.length) {
+    const one = parseOneBasedSlideNumber(numbered[1]);
+    const n = one == null ? null : resolveOneBased(one, slideCount);
+    if (n != null) return { index: n - 1, label: `slide ${n}` };
+  }
+
+  if (/\b(last|final|end)\b/.test(lower)) {
+    return { index: slideCount - 1, label: "the last slide" };
+  }
+
+  const about = lower.match(
+    /\b(?:about|titled|called|named)\s+[""']?([^""'\n,.]+?)[""']?(?:\s|$)/i
+  );
+  if (about) {
+    const needle = about[1].trim().toLowerCase();
+    const idx = slideTitles.findIndex((t) => {
+      const title = t.trim().toLowerCase();
+      return title === needle || title.includes(needle) || needle.includes(title);
+    });
+    if (idx >= 0) {
+      return { index: idx, label: `“${slideTitles[idx] || needle}”` };
+    }
+  }
+
+  return null;
+}
+
+const WORD_ORDINALS: Record<string, number> = {
+  first: 1,
+  second: 2,
+  third: 3,
+  fourth: 4,
+  fifth: 5,
+  sixth: 6,
+  seventh: 7,
+  eighth: 8,
+  ninth: 9,
+  tenth: 10,
+  eleventh: 11,
+  twelfth: 12,
+  thirteenth: 13,
+  fourteenth: 14,
+  fifteenth: 15,
+  last: -1,
+};
+
+const SLIDE_NUM_TOKEN =
+  "(\\d{1,2}(?:st|nd|rd|th)?|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|last)";
+
+/** Parse "3", "3rd", "third" → 1-based slide number. `last` → -1. */
+export function parseOneBasedSlideNumber(token: string): number | null {
+  const t = token.trim().toLowerCase();
+  if (t in WORD_ORDINALS) return WORD_ORDINALS[t];
+  const m = t.match(/^(\d{1,2})(?:st|nd|rd|th)?$/);
+  if (m) {
+    const n = parseInt(m[1], 10);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  }
+  return null;
+}
+
+function resolveOneBased(
+  oneBased: number,
+  slideCount: number
+): number | null {
+  if (slideCount < 1) return null;
+  if (oneBased === -1) return slideCount;
+  if (oneBased < 1 || oneBased > slideCount) return null;
+  return oneBased;
+}
+
+/**
+ * Resolve which slide to remove. Prefer title match ("thank you"), then
+ * last/end, then numbered slide. Returns null if no clear target.
+ */
+export function parseSlideRemoveIndex(
+  prompt: string,
+  slideCount: number,
+  slideTitles: string[] = []
+): SlideInsertPosition | null {
+  if (slideCount < 1) return null;
+  const lower = prompt.toLowerCase();
+
+  const named =
+    lower.match(
+      /\b(?:remove|delete)\s+(?:the\s+)?(?:slide\s+)?(?:about|titled|called|named|saying)?\s*[""']?([^""'\n,.]+?)[""']?\s+(?:slide\b|at the\b|from\b|$)/i
+    ) ??
+    lower.match(/\b(?:thank\s*you|thanks)\b/i);
+  if (named) {
+    const needle = (named[1] ?? named[0]).replace(/\s+slide$/i, "").trim().toLowerCase();
+    if (needle) {
+      const idx = slideTitles.findIndex((t) => {
+        const title = t.trim().toLowerCase();
+        return title === needle || title.includes(needle) || needle.includes(title);
+      });
+      if (idx >= 0) {
+        return { index: idx, label: `“${slideTitles[idx] || needle}”` };
+      }
+      // "thank you" with no title parse — still treat as last-slide thank-you convention
+      if (/thank\s*you|thanks/.test(needle) && slideCount > 0) {
+        const thankIdx = slideTitles.findIndex((t) => /thank\s*you|thanks/i.test(t));
+        if (thankIdx >= 0) {
+          return { index: thankIdx, label: `“${slideTitles[thankIdx]}”` };
+        }
+      }
+    }
+  }
+
+  if (/\b(last|end|final|closing)\b/.test(lower)) {
+    return { index: slideCount - 1, label: "the last slide" };
+  }
+
+  const num = lower.match(/\b(?:slide\s+)?(?:number\s+)?(\d{1,2})\b/);
+  if (num) {
+    const n = parseInt(num[1], 10);
+    const index = Math.max(0, Math.min(slideCount - 1, n - 1));
+    return { index, label: `slide ${n}` };
+  }
+
+  if (/\bfirst\b/.test(lower)) {
+    return { index: 0, label: "the first slide" };
+  }
+
+  return null;
+}
+
+/** True when a surgical op-list edit is preferable over full plan regen. */
+export function prefersSurgicalPresentationEdit(prompt: string): boolean {
+  if (isPresentationFullRewriteRequest(prompt)) return false;
+  const trimmed = prompt.trim();
+  return (
+    STYLE_ARTIFACT_EDIT.test(trimmed) ||
+    STRUCTURAL_ARTIFACT_EDIT.test(trimmed) ||
+    isPresentationSlideAddRequest(trimmed) ||
+    isPresentationSlideRemoveRequest(trimmed) ||
+    EDIT_VERBS.test(trimmed)
+  );
+}
+
+const THEME_STYLE_TOKENS =
+  /\b(theme|background|palette|colours?|colors?|gradient|font|fonts|typeface|typography|accent|styling|style)\b/i;
+
+/**
+ * Theme / color / font look changes that can run without a local model.
+ * Excludes slide add/remove and full rewrites.
+ */
+export function isPresentationThemeStyleRequest(prompt: string): boolean {
+  if (isPresentationFullRewriteRequest(prompt)) return false;
+  if (isPresentationSlideAddRequest(prompt)) return false;
+  if (isPresentationSlideRemoveRequest(prompt)) return false;
+  if (isPresentationSlideMoveRequest(prompt)) return false;
+  if (isPresentationSlideExpandRequest(prompt)) return false;
+  const trimmed = prompt.trim();
+  // STYLE_ARTIFACT_EDIT already includes make/switch/use/apply/set — those are
+  // not in EDIT_VERBS (to avoid treating "make a new deck" as an edit verb alone).
+  if (STYLE_ARTIFACT_EDIT.test(trimmed)) return true;
+  if (!EDIT_VERBS.test(trimmed)) return false;
+  return THEME_STYLE_TOKENS.test(trimmed);
+}
+
+export type SlideMovePosition = {
+  /** 0-based source index. */
+  from: number;
+  /** 0-based destination index (final position). */
+  to: number;
+  label: string;
+};
+
+/**
+ * Parse "move slide 9 to slide 4" / "move the 9th slide to the 4th".
+ * Returns null when the request is not a clear single-slide move.
+ */
+export function parseSlideMove(
+  prompt: string,
+  slideCount: number,
+  slideTitles: string[] = []
+): SlideMovePosition | null {
+  if (slideCount < 2) return null;
+  const lower = prompt.toLowerCase();
+
+  const numbered = lower.match(
+    new RegExp(
+      `\\b(?:move|shift|relocate)\\s+(?:the\\s+)?(?:slide\\s+)?${SLIDE_NUM_TOKEN}\\s+(?:to|into)\\s+(?:the\\s+)?(?:slide\\s+)?(?:position\\s+)?${SLIDE_NUM_TOKEN}\\b`
+    )
+  );
+  if (numbered) {
+    const fromOne = parseOneBasedSlideNumber(numbered[1]);
+    const toOne = parseOneBasedSlideNumber(numbered[2]);
+    if (fromOne == null || toOne == null) return null;
+    const fromN = resolveOneBased(fromOne, slideCount);
+    const toN = resolveOneBased(toOne, slideCount);
+    if (fromN == null || toN == null) return null;
+    return {
+      from: fromN - 1,
+      to: toN - 1,
+      label: `slide ${fromN} → slide ${toN}`,
+    };
+  }
+
+  // "move Camp Nou to slide 4"
+  const named = lower.match(
+    new RegExp(
+      `\\b(?:move|shift|relocate)\\s+(?:the\\s+)?(?:slide\\s+)?(?:about\\s+|titled\\s+|called\\s+|named\\s+)?[""']?([^""'\\n]+?)[""']?\\s+(?:to|into)\\s+(?:the\\s+)?(?:slide\\s+)?(?:position\\s+)?${SLIDE_NUM_TOKEN}\\b`
+    )
+  );
+  if (named) {
+    const needle = named[1].replace(/\s+slide$/i, "").trim().toLowerCase();
+    const toOne = parseOneBasedSlideNumber(named[2]);
+    if (!needle || toOne == null) return null;
+    const toN = resolveOneBased(toOne, slideCount);
+    if (toN == null) return null;
+    const from = slideTitles.findIndex((t) => {
+      const title = t.trim().toLowerCase();
+      return title === needle || title.includes(needle) || needle.includes(title);
+    });
+    if (from < 0) return null;
+    return {
+      from,
+      to: toN - 1,
+      label: `“${slideTitles[from] || needle}” → slide ${toN}`,
+    };
+  }
+
+  return null;
 }
 
 export type SlideInsertPosition = {
@@ -216,18 +529,44 @@ export function parseSlideInsertIndex(
 ): SlideInsertPosition {
   const lower = prompt.toLowerCase();
 
-  const beforeNum = lower.match(/\bbefore\s+(?:slide\s+)?(\d{1,2})\b/);
-  if (beforeNum) {
-    const n = parseInt(beforeNum[1], 10);
-    const index = Math.max(0, Math.min(slideCount, n - 1));
-    return { index, label: `before slide ${n}` };
+  // "before the last slide" / "before last" — must run before generic "last" → end.
+  if (/\bbefore\s+(the\s+)?last\b/.test(lower)) {
+    const index = Math.max(0, slideCount - 1);
+    return { index, label: "before the last slide" };
+  }
+  if (/\bafter\s+(the\s+)?last\b/.test(lower)) {
+    return { index: slideCount, label: "after the last slide" };
+  }
+  if (/\bafter\s+(the\s+)?first\b/.test(lower)) {
+    const index = Math.min(1, slideCount);
+    return { index, label: "after the first slide" };
+  }
+  if (/\bbefore\s+(the\s+)?first\b/.test(lower)) {
+    return { index: 0, label: "before the first slide" };
   }
 
-  const afterNum = lower.match(/\bafter\s+(?:slide\s+)?(\d{1,2})\b/);
+  const beforeNum = lower.match(
+    new RegExp(`\\bbefore\\s+(?:the\\s+)?(?:slide\\s+)?${SLIDE_NUM_TOKEN}\\b`)
+  );
+  if (beforeNum) {
+    const one = parseOneBasedSlideNumber(beforeNum[1]);
+    if (one != null) {
+      const n = one === -1 ? slideCount : one;
+      const index = Math.max(0, Math.min(slideCount, n - 1));
+      return { index, label: `before slide ${n}` };
+    }
+  }
+
+  const afterNum = lower.match(
+    new RegExp(`\\bafter\\s+(?:the\\s+)?(?:slide\\s+)?${SLIDE_NUM_TOKEN}\\b`)
+  );
   if (afterNum) {
-    const n = parseInt(afterNum[1], 10);
-    const index = Math.max(0, Math.min(slideCount, n));
-    return { index, label: `after slide ${n}` };
+    const one = parseOneBasedSlideNumber(afterNum[1]);
+    if (one != null) {
+      const n = one === -1 ? slideCount : one;
+      const index = Math.max(0, Math.min(slideCount, n));
+      return { index, label: `after slide ${n}` };
+    }
   }
 
   const between = lower.match(
@@ -334,6 +673,25 @@ export function parseAddSlideFromPrompt(
       bullets: [],
       layout: inferLayoutForNewSlide(content, insertIndex),
     };
+  }
+
+  // "add a slide about Camp Nou before the last slide"
+  const about = prompt.match(
+    /\b(?:about|on|covering|featuring)\s+(.+?)(?:\s+(?:at|before|after|to the|in the)\s+|\s*$|\.)/i
+  );
+  if (about) {
+    let content = stripOuterQuotes(about[1].trim());
+    content = content
+      .replace(/\s+(?:at the|before|after|to the)\s+.*$/i, "")
+      .replace(/[,\/#!$%\^&\*;:{}=`~()?]+$/g, "")
+      .trim();
+    if (content) {
+      return {
+        title: content,
+        bullets: [],
+        layout: inferLayoutForNewSlide(content, insertIndex),
+      };
+    }
   }
 
   if (/thank\s*you/i.test(prompt)) {

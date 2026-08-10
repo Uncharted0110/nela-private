@@ -913,6 +913,16 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
             planObj.html = embedPoolImagesInHtml(planObj.html, imagePool);
           }
         }
+        if (typeof planObj.html === "string" && planObj.html.trim()) {
+          try {
+            const { applyThemeFromPrompt } = await import(
+              "./freeformHtmlThemeEdit"
+            );
+            planObj.html = applyThemeFromPrompt(planObj.html, text).html;
+          } catch (themeErr) {
+            console.warn("HTML plan theme inject failed:", themeErr);
+          }
+        }
       }
 
       if (schemaId === "presentation_synthesis" && imagePool.length) {
@@ -1209,16 +1219,28 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
                   imagePool:
                     streamedArtifactType === "text/html" ? imagePool : undefined,
                 });
-                // Keep side-panel HTML in sync with embedded images.
+                // Keep side-panel HTML in sync with embedded images + theme override.
                 if (
                   streamedArtifactType === "text/html" &&
-                  imagePool.length &&
                   streamedArtifactBody
                 ) {
-                  streamedArtifactBody = embedPoolImagesInHtml(
-                    streamedArtifactBody,
-                    imagePool
-                  );
+                  if (imagePool.length) {
+                    streamedArtifactBody = embedPoolImagesInHtml(
+                      streamedArtifactBody,
+                      imagePool
+                    );
+                  }
+                  try {
+                    const { applyThemeFromPrompt } = await import(
+                      "./freeformHtmlThemeEdit"
+                    );
+                    streamedArtifactBody = applyThemeFromPrompt(
+                      streamedArtifactBody,
+                      text
+                    ).html;
+                  } catch (themeErr) {
+                    console.warn("Preview theme sync failed:", themeErr);
+                  }
                 }
                 const filename = result.path.split(/[/\\]/).pop() ?? "artifact";
                 const title =
@@ -1374,11 +1396,20 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
                       planJson,
                       text
                     );
+                    let themedHtml = parsedHtml.html;
+                    try {
+                      const { applyThemeFromPrompt } = await import(
+                        "./freeformHtmlThemeEdit"
+                      );
+                      themedHtml = applyThemeFromPrompt(themedHtml, text).html;
+                    } catch (themeErr) {
+                      console.warn("HTML fallback theme inject failed:", themeErr);
+                    }
                     const result = await Api.generateHtml({
                       title: parsedHtml.title,
                       archetype: "landing",
                       sections: [],
-                      html: parsedHtml.html,
+                      html: themedHtml,
                       output_name: parsedHtml.output_name,
                     });
                     ctx.updateSession(sid, { loading: false });

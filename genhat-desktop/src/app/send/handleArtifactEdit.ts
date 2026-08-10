@@ -5,10 +5,21 @@ import {
   artifactKindFromPath,
   findSessionArtifactPath,
   isEditableArtifactPath,
+  isPresentationSlideAddRequest,
+  isPresentationSlideExpandRequest,
+  isPresentationSlideMoveRequest,
+  isPresentationSlideRemoveRequest,
   type ArtifactEditKind,
 } from "../artifactEdit";
 import { extractAmbientSearchQuery } from "../ambientSearch";
 import type { SendHandlerContext } from "./types";
+
+export type ArtifactEditOptions = {
+  attachedPaths?: string[];
+  /** Edit from the preview panel — keep panel open; report status via onStatus. */
+  previewMode?: boolean;
+  onStatus?: (message: string, kind: "progress" | "done" | "error") => void;
+};
 
 export async function handleArtifactEdit(
   text: string,
@@ -16,7 +27,7 @@ export async function handleArtifactEdit(
   sid: string,
   ctx: SendHandlerContext,
   ctrl: AbortController,
-  options?: { attachedPaths?: string[] }
+  options?: ArtifactEditOptions
 ): Promise<void> {
   const session = ctx.sessions.find((s) => s.id === sid);
 
@@ -71,43 +82,66 @@ export async function handleArtifactEdit(
     return;
   }
 
+  const previewMode = !!options?.previewMode;
+  const fileLabel = artifactPath.split(/[/\\]/).pop() ?? "artifact";
+
   ctx.updateSession(sid, (prev) => ({
     loading: true,
     artifactStage: "CrunchingMetrics",
-    messages: [
-      ...prev.messages,
-      {
-        role: "assistant",
-        content: `Applying edits to **${artifactPath.split(/[/\\]/).pop()}**: "${text}"`,
-        artifactStage: "CrunchingMetrics",
-        artifactPath,
-      },
-    ],
+    ...(previewMode ? { artifactPanelOpen: true } : {}),
+    messages: previewMode
+      ? prev.messages
+      : [
+          ...prev.messages,
+          {
+            role: "assistant" as const,
+            content: `Applying edits to **${fileLabel}**: "${text}"`,
+            artifactStage: "CrunchingMetrics" as const,
+            artifactPath,
+          },
+        ],
   }));
+
+  options?.onStatus?.(`Editing **${fileLabel}**…`, "progress");
 
   const updateEditMsg = (
     stage: PipelineStageKind,
     path: string | null = null,
     contentOverride?: string
   ) => {
+    if (contentOverride) {
+      const kind =
+        stage === "Error" ? "error" : stage === "LivePreview" ? "done" : "progress";
+      options?.onStatus?.(contentOverride, kind);
+    }
     ctx.updateSession(sid, (prev) => {
+      const nextPath = path !== null ? path : prev.artifactPath;
+      // Never leave the panel stuck on Error after an edit attempt — that hid Edit.
+      const sessionStage: PipelineStageKind =
+        stage === "Error" && nextPath ? "LivePreview" : stage;
       const updated = [...prev.messages];
-      const idx = updated
-        .map((m, i) => ({ m, i }))
-        .reverse()
-        .find(({ m }) => m.role === "assistant" && m.artifactStage !== undefined)?.i;
-      if (idx !== undefined && updated[idx]) {
-        updated[idx] = {
-          ...updated[idx],
-          artifactStage: stage,
-          ...(path !== null ? { artifactPath: path } : {}),
-          ...(contentOverride !== undefined ? { content: contentOverride } : {}),
-        };
+      if (!previewMode) {
+        const idx = updated
+          .map((m, i) => ({ m, i }))
+          .reverse()
+          .find(({ m }) => m.role === "assistant" && m.artifactStage !== undefined)?.i;
+        if (idx !== undefined && updated[idx]) {
+          updated[idx] = {
+            ...updated[idx],
+            artifactStage: sessionStage,
+            ...(path !== null ? { artifactPath: path } : {}),
+            ...(contentOverride !== undefined ? { content: contentOverride } : {}),
+          };
+        }
       }
       return {
-        artifactStage: stage,
+        artifactStage: sessionStage,
         ...(path !== null ? { artifactPath: path } : {}),
-        messages: updated,
+        ...(previewMode ? { artifactPanelOpen: true } : {}),
+        ...(previewMode ? {} : { messages: updated }),
+        ...(sessionStage === "LivePreview" || stage === "Error"
+          ? { loading: false }
+          : {}),
       };
     });
   };
@@ -128,6 +162,40 @@ export async function handleArtifactEdit(
     }
 
     if (effectiveEditKind === "presentation_deck") {
+      // Slide add/remove/move + theme are deterministic — never wait on a local/cloud model.
+      const { runDeterministicSlideRemove } = await import("./runDeterministicSlideRemove");
+      if (await runDeterministicSlideRemove(text, artifactPath, sid, ctx, updateEditMsg)) {
+        return;
+      }
+      const { runDeterministicSlideAdd } = await import("./runDeterministicSlideAdd");
+      if (await runDeterministicSlideAdd(text, artifactPath, sid, ctx, updateEditMsg)) {
+        return;
+      }
+      const { runDeterministicSlideMove } = await import("./runDeterministicSlideMove");
+      if (await runDeterministicSlideMove(text, artifactPath, sid, ctx, updateEditMsg)) {
+        return;
+      }
+      const { runDeterministicSlideExpand } = await import("./runDeterministicSlideExpand");
+      if (await runDeterministicSlideExpand(text, artifactPath, sid, ctx, updateEditMsg)) {
+        return;
+      }
+      const { runDeterministicThemeEdit } = await import("./runDeterministicThemeEdit");
+      if (await runDeterministicThemeEdit(text, artifactPath, sid, ctx, updateEditMsg)) {
+        return;
+      }
+
+      const { runPptxArtifactOps } = await import("./runPptxArtifactOps");
+      const surgical = await runPptxArtifactOps(
+        text,
+        artifactPath,
+        sid,
+        ctx,
+        ctrl,
+        generationOptions,
+        updateEditMsg
+      );
+      if (surgical) return;
+
       const { runPresentationDeckEdit } = await import("./runPresentationDeckEdit");
       await runPresentationDeckEdit(
         text,
@@ -142,6 +210,42 @@ export async function handleArtifactEdit(
     }
 
     if (effectiveEditKind === "html") {
+      // Freeform HTML slide decks — add/remove/move/theme without LLM.
+      if (
+        isPresentationSlideAddRequest(text) ||
+        isPresentationSlideRemoveRequest(text) ||
+        isPresentationSlideMoveRequest(text) ||
+        isPresentationSlideExpandRequest(text)
+      ) {
+        const { runDeterministicSlideRemove } = await import("./runDeterministicSlideRemove");
+        if (await runDeterministicSlideRemove(text, artifactPath, sid, ctx, updateEditMsg)) {
+          return;
+        }
+        const { runDeterministicSlideAdd } = await import("./runDeterministicSlideAdd");
+        if (await runDeterministicSlideAdd(text, artifactPath, sid, ctx, updateEditMsg)) {
+          return;
+        }
+        const { runDeterministicSlideMove } = await import("./runDeterministicSlideMove");
+        if (await runDeterministicSlideMove(text, artifactPath, sid, ctx, updateEditMsg)) {
+          return;
+        }
+        const { runDeterministicSlideExpand } = await import("./runDeterministicSlideExpand");
+        if (await runDeterministicSlideExpand(text, artifactPath, sid, ctx, updateEditMsg)) {
+          return;
+        }
+        ctx.updateSession(sid, { loading: false });
+        updateEditMsg(
+          "Error",
+          null,
+          "Couldn't find slide markers in this HTML page, so I can't edit slides. " +
+            "Open the presentation preview, then try again."
+        );
+        return;
+      }
+      const { runDeterministicThemeEdit } = await import("./runDeterministicThemeEdit");
+      if (await runDeterministicThemeEdit(text, artifactPath, sid, ctx, updateEditMsg)) {
+        return;
+      }
       const { runHtmlArtifactPatch } = await import("./runHtmlArtifactPatch");
       await runHtmlArtifactPatch(
         text,
@@ -169,6 +273,42 @@ export async function handleArtifactEdit(
       return;
     }
 
+    // Native PPTX / PPT — deterministic slide/theme ops first, then surgical ops, then full regen.
+    {
+      const { runDeterministicSlideRemove } = await import("./runDeterministicSlideRemove");
+      if (await runDeterministicSlideRemove(text, artifactPath, sid, ctx, updateEditMsg)) {
+        return;
+      }
+      const { runDeterministicSlideAdd } = await import("./runDeterministicSlideAdd");
+      if (await runDeterministicSlideAdd(text, artifactPath, sid, ctx, updateEditMsg)) {
+        return;
+      }
+      const { runDeterministicSlideMove } = await import("./runDeterministicSlideMove");
+      if (await runDeterministicSlideMove(text, artifactPath, sid, ctx, updateEditMsg)) {
+        return;
+      }
+      const { runDeterministicSlideExpand } = await import("./runDeterministicSlideExpand");
+      if (await runDeterministicSlideExpand(text, artifactPath, sid, ctx, updateEditMsg)) {
+        return;
+      }
+      const { runDeterministicThemeEdit } = await import("./runDeterministicThemeEdit");
+      if (await runDeterministicThemeEdit(text, artifactPath, sid, ctx, updateEditMsg)) {
+        return;
+      }
+
+      const { runPptxArtifactOps } = await import("./runPptxArtifactOps");
+      const surgical = await runPptxArtifactOps(
+        text,
+        artifactPath,
+        sid,
+        ctx,
+        ctrl,
+        generationOptions,
+        updateEditMsg
+      );
+      if (surgical) return;
+    }
+
     const { runPresentationArtifactEdit } = await import("./runPresentationArtifactEdit");
     await runPresentationArtifactEdit(
       text,
@@ -182,7 +322,6 @@ export async function handleArtifactEdit(
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("Artifact edit failed:", err);
-    ctx.updateSession(sid, { loading: false });
     updateEditMsg("Error", null, friendlyErrorFromUnknown(message));
   }
 }

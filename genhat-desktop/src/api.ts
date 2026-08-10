@@ -1277,6 +1277,15 @@ export const Api = {
     return invoke<ArtifactResult>("edit_presentation_deck", { request });
   },
 
+  /** Apply surgical presentation ops (theme/font/color/slide insert-patch-remove). */
+  async applyPresentationOps(request: {
+    path: string;
+    ops: Record<string, unknown>[];
+    outputName?: string;
+  }): Promise<ArtifactResult> {
+    return invoke<ArtifactResult>("apply_presentation_ops", { request });
+  },
+
   /** Generate HTML artifact using the HTML sidecar. */
   async generateHtml(plan: HtmlPlan): Promise<ArtifactResult> {
     return invoke<ArtifactResult>("generate_html", { plan });
@@ -1312,6 +1321,22 @@ export const Api = {
    */
   async applyDiffPatch(path: string, patch: string): Promise<string> {
     return invoke<string>("apply_diff_patch", { path, patch });
+  },
+
+  /**
+   * Write full text as a **new** artifact file (original path unchanged).
+   * Used for deterministic freeform HTML slide inserts.
+   */
+  async writeArtifactCopy(
+    path: string,
+    contents: string,
+    outputName?: string
+  ): Promise<string> {
+    return invoke<string>("write_artifact_copy", {
+      path,
+      contents,
+      outputName: outputName ?? null,
+    });
   },
 
   /** Write base64-encoded bytes to an absolute path (used by deck export). */

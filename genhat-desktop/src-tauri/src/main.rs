@@ -459,6 +459,7 @@ fn main() {
             app_lib::commands::artifact::generate_presentation,
             app_lib::commands::artifact::parse_presentation_deck,
             app_lib::commands::artifact::edit_presentation_deck,
+            app_lib::commands::artifact::apply_presentation_ops,
             app_lib::commands::artifact::generate_html,
             app_lib::commands::artifact::parse_spreadsheet_data,
             app_lib::commands::artifact_images::download_image_data_uri,
@@ -466,6 +467,7 @@ fn main() {
             app_lib::commands::artifact::get_governor_state,
             app_lib::commands::artifact::get_schema_grammar,
             app_lib::commands::artifact::apply_diff_patch,
+            app_lib::commands::artifact::write_artifact_copy,
             app_lib::commands::artifact::save_binary_file,
         ])
         .build(tauri::generate_context!())

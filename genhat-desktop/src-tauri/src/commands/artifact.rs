@@ -123,15 +123,21 @@ pub struct ParsedPresentationDeck {
     pub is_nela_deck: bool,
 }
 
-/// Parse a NELA HTML slide deck into a compact plan (for edit flows).
+/// Parse a NELA HTML slide deck (or native PPTX) into a compact plan (for edit flows).
 #[tauri::command]
 pub fn parse_presentation_deck(
     request: ParsePresentationDeckRequest,
 ) -> Result<ParsedPresentationDeck, String> {
-    let html = std::fs::read_to_string(&request.path)
-        .map_err(|e| format!("Failed to read presentation: {e}"))?;
-    let is_nela_deck = crate::presentation::is_nela_presentation_html(&html);
-    let plan = crate::presentation::parse_presentation_html(&html)?;
+    let lower = request.path.to_ascii_lowercase();
+    let is_pptx = lower.ends_with(".pptx") || lower.ends_with(".ppt");
+    let plan = crate::presentation::load_presentation_plan(&request.path)?;
+    let is_nela_deck = if is_pptx {
+        false
+    } else {
+        let html = std::fs::read_to_string(&request.path)
+            .map_err(|e| format!("Failed to read presentation: {e}"))?;
+        crate::presentation::is_nela_presentation_html(&html)
+    };
     let slides: Vec<serde_json::Value> = plan
         .slides
         .iter()
@@ -196,6 +202,43 @@ pub async fn edit_presentation_deck(
     } else {
         return Err("No slides to append and no replacement plan provided".to_string());
     };
+
+    emit_stage(
+        &app,
+        PipelineStage::LivePreview {
+            path: out_path.to_string_lossy().to_string(),
+        },
+    );
+
+    Ok(ArtifactResult {
+        path: out_path.to_string_lossy().to_string(),
+        kind: "html".to_string(),
+        warning: None,
+    })
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplyPresentationOpsRequest {
+    pub path: String,
+    pub ops: Vec<crate::presentation::PresentationEditOp>,
+    #[serde(default)]
+    pub output_name: Option<String>,
+}
+
+/// Apply a surgical op list to a NELA HTML deck or native PPTX (writes a new HTML deck).
+#[tauri::command]
+pub async fn apply_presentation_ops(
+    request: ApplyPresentationOpsRequest,
+    app: AppHandle,
+) -> Result<ArtifactResult, String> {
+    emit_stage(&app, PipelineStage::WritingCode);
+
+    let out_path = crate::presentation::apply_ops_to_deck(
+        &request.path,
+        request.ops,
+        request.output_name,
+    )?;
 
     emit_stage(
         &app,
@@ -381,6 +424,29 @@ fn emit_stage(app: &AppHandle, stage: PipelineStage) {
     if let Err(e) = app.emit("pipeline-stage", &stage) {
         log::debug!("Failed to emit pipeline-stage event: {e}");
     }
+}
+
+/// Write full text contents as a **new** artifact copy next to the source naming.
+/// Used for deterministic freeform HTML deck edits (no LLM / no diff).
+#[tauri::command]
+pub async fn write_artifact_copy(
+    path: String,
+    contents: String,
+    output_name: Option<String>,
+) -> Result<String, String> {
+    let stem = output_name
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| crate::presentation::edited_output_name(&path));
+    let ext = std::path::Path::new(&path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("html");
+    let out_dir = crate::paths::artifacts_dir();
+    std::fs::create_dir_all(&out_dir).map_err(|e| format!("Create output dir: {e}"))?;
+    let out_path = crate::paths::unique_artifact_path(&out_dir, &stem, ext);
+    std::fs::write(&out_path, contents.as_bytes())
+        .map_err(|e| format!("Failed to write artifact copy: {e}"))?;
+    Ok(out_path.to_string_lossy().to_string())
 }
 
 /// Apply a unified diff patch to a file, writing a **new** artifact copy.

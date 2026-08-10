@@ -35,7 +35,20 @@ const THEME_KEYWORDS: Record<PresentationTheme, { aliases: string[]; topics: str
     topics: ["ai", "machine learning", "artificial intelligence", "software", "programming", "cybersecurity", "security", "blockchain", "crypto", "cloud", "devops", "data science", "neural", "algorithm", "robotics", "quantum"],
   },
   ocean: {
-    aliases: ["ocean", "aqua", "marine", "blue", "sea", "water"],
+    aliases: [
+      "ocean",
+      "aqua",
+      "marine",
+      "blue",
+      "bluish",
+      "blueish",
+      "blue gradient",
+      "bluish gradient",
+      "azure",
+      "sky blue",
+      "sea",
+      "water",
+    ],
     topics: ["health", "wellness", "medical", "medicine", "healthcare", "ocean", "water", "climate ocean", "fishery", "diving", "hydro", "calm", "meditation"],
   },
   forest: {
@@ -43,7 +56,7 @@ const THEME_KEYWORDS: Record<PresentationTheme, { aliases: string[]; topics: str
     topics: ["environment", "sustainability", "climate", "renewable", "ecology", "biology", "agriculture", "conservation", "carbon", "green energy", "plant", "wildlife", "farming"],
   },
   sunset: {
-    aliases: ["sunset", "warm", "vibrant", "colorful", "energetic"],
+    aliases: ["sunset", "warm", "vibrant", "colorful", "energetic", "orange", "tangerine", "amber"],
     topics: ["marketing", "campaign", "branding", "social media", "advertising", "growth", "launch", "event", "festival", "travel", "food", "lifestyle"],
   },
   lavender: {

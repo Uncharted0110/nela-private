@@ -12,6 +12,7 @@ import DocumentViewer from "./DocumentViewer";
 import PlaygroundMode from "./PlaygroundMode";
 import ArtifactSidePanel from "./ArtifactSidePanel";
 import { useSessionStore } from "../stores/sessionStore";
+import { handlePreviewArtifactEdit } from "../app/sessionSendActions";
 
 
 interface ModeOption {
@@ -218,7 +219,7 @@ export default function AppMainContentArea({
           />
           </div>
           <ArtifactSidePanel
-            key={activeSession.artifactPath || "streaming"}
+            key={`${activeSession.id}-artifact-panel`}
             active={showArtifactPanel}
             title={activeSession.streamingArtifactTitle}
             type={
@@ -230,12 +231,16 @@ export default function AppMainContentArea({
             }
             html={activeSession.streamingArtifactHtml}
             csv={activeSession.streamingArtifactCsv}
-            savedPath={
-              activeSession.artifactStage === "LivePreview"
-                ? activeSession.artifactPath
-                : null
+            savedPath={activeSession.artifactPath ?? null}
+            streamActive={
+              Boolean(activeSession.artifactStreamActive) &&
+              activeSession.artifactStage !== "LivePreview" &&
+              !activeSession.artifactPath
             }
             onClose={closeArtifactPanel}
+            onPreviewEdit={(text, path, onStatus) =>
+              handlePreviewArtifactEdit(text, path, onStatus)
+            }
           />
         </div>
       )}

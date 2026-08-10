@@ -18,6 +18,24 @@ import {
   looksLikePresentationJsonPlan,
 } from "./artifactHtmlOutput";
 import type { NelaArtifactMime } from "./streamArtifactParser";
+import { applyThemeFromPrompt } from "./send/freeformHtmlThemeEdit";
+
+function withThemeOverride(html: string, topic: string): string {
+  try {
+    // Skip NELA shell decks — they already use CSS vars / named themes.
+    if (
+      html.includes("deck-container") &&
+      html.includes("slide-stage") &&
+      html.includes('class="slide')
+    ) {
+      return html;
+    }
+    return applyThemeFromPrompt(html, topic).html;
+  } catch (err) {
+    console.warn("Theme palette inject failed:", err);
+    return html;
+  }
+}
 
 export async function saveStreamedHtmlArtifact(input: {
   rawBody: string;
@@ -35,11 +53,12 @@ export async function saveStreamedHtmlArtifact(input: {
       throw new Error("MODEL_RETURNED_JSON_SLIDE_PLAN");
     }
     const parsed = parsePresentationHtmlArtifactOutput(input.rawBody, input.topic);
+    const themed = withThemeOverride(withImages(parsed.html), input.topic);
     return Api.generateHtml({
       title: parsed.title,
       archetype: "landing",
       sections: [],
-      html: withImages(parsed.html),
+      html: themed,
       output_name: parsed.output_name,
     });
   }
@@ -48,11 +67,12 @@ export async function saveStreamedHtmlArtifact(input: {
     throw new Error("MODEL_RETURNED_JSON_HTML_PLAN");
   }
   const parsed = parseHtmlArtifactOutput(input.rawBody, input.topic);
+  const themed = withThemeOverride(withImages(parsed.html), input.topic);
   return Api.generateHtml({
     title: parsed.title,
     archetype: "landing",
     sections: [],
-    html: withImages(parsed.html),
+    html: themed,
     output_name: parsed.output_name,
   });
 }
