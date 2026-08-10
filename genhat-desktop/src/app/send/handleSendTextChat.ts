@@ -10,6 +10,7 @@ import {
   toContextMessages,
 } from "../contextCompaction";
 import { NELA_CLOUD_SYSTEM_PROMPT, NELA_SYSTEM_PROMPT } from "../nelaSystemPrompt";
+import { CHART_SYSTEM_INSTRUCTION } from "../../prompts/chartPrompt";
 import { NELA_AUTO_ARTIFACT_CRITERIA } from "../autoArtifactPrompt";
 import { canAutoStreamArtifacts } from "../cloudPresentationMode";
 import {
@@ -73,8 +74,8 @@ export async function handleSendTextChat(
     {
       role: "system" as const,
       content: autoArtifacts
-        ? `${identityPrompt}\n\n${NELA_AUTO_ARTIFACT_CRITERIA}`
-        : identityPrompt,
+        ? `${identityPrompt}\n\n${NELA_AUTO_ARTIFACT_CRITERIA}\n\n${CHART_SYSTEM_INSTRUCTION}`
+        : `${identityPrompt}\n\n${CHART_SYSTEM_INSTRUCTION}`,
     },
     ...toContextMessages(fullSessionMessages),
   ];

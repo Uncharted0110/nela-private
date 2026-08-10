@@ -1,6 +1,6 @@
 /**
  * Structured HTML page plans — the model fills content; Rust renders the page.
- * Cloud Smart/Deep use freeform HTML instead of the section template.
+ * Cloud (including Fast) uses freeform HTML; local uses the section JSON template.
  */
 
 export const HTML_PLAN_MAX_TOKENS = 4096;
@@ -29,7 +29,10 @@ CRITICAL CONTENT RULES:
 - Content must be rich and specific to the USER'S TOPIC (real places, offerings, tone).
 - Use web research only as supporting facts — never let off-topic search results replace the subject.
 - Set <title> to a short accurate page title.
-- Self-contained: inline <style> (and minimal <script> only if needed). No external frameworks required.
+- Self-contained: inline <style>. For charts/dashboards, load ECharts from CDN once:
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
+  then mount charts with echarts.init(...) and real data (never fake empty chart shells).
+- When AVAILABLE IMAGES are listed, embed them with <img src="nela-img:0"> (or :1, :2, …). Do not invent image URLs.
 - No markdown fences around the HTML.`;
 
 export const HTML_RENDERER_THEMES = [
@@ -233,11 +236,11 @@ export function buildHtmlArtifactSystemParts(
 ): HtmlArtifactSystemParts {
   if (options?.cloudMode === "html") {
     const imageHint = options.hasImages
-      ? "Image URLs/catalog entries may appear in the user message — use real ones when they fit; otherwise omit images."
+      ? `IMAGES: An AVAILABLE IMAGES catalog is in the user message. Embed with <img src="nela-img:0"> (etc). Prefer placing 1–3 relevant photos in the hero or a media strip — do not invent URLs.`
       : "";
     const dataHint = options.hasSourceData
-      ? "Source spreadsheet data may be attached — visualize real columns when building charts/tables; do not invent numbers."
-      : "";
+      ? "Source spreadsheet data may be attached — build a dashboard with ECharts charts/tables from real columns; do not invent numbers."
+      : "If the user asked for a dashboard or charts, include interactive ECharts charts with realistic series data.";
     return {
       cacheable: HTML_CLOUD_FREEFORM_STATIC,
       dynamic: [imageHint, dataHint].filter(Boolean).join("\n\n"),
@@ -294,6 +297,7 @@ export function htmlPlanRequest(
     return (
       `Write a complete HTML webpage for: "${text}". ` +
       `Stay on this exact subject. ` +
+      `If this is a dashboard / analytics request, embed interactive ECharts charts with the data. ` +
       `Wrap the document in <nela-artifact type="text/html" title="...">...</nela-artifact>. ` +
       `Invent your own design — do not use a JSON section template.`
     );

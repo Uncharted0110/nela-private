@@ -192,10 +192,19 @@ export default function ArtifactSidePanel({
       setSheetView("sheet");
       setXlsxRows(null);
       setHydratedHtml("");
+      setDisplayHtml("");
+      paintedOnce.current = false;
     }
-    if (savedPath && !prevSaved.current) {
-      setHtmlView("preview");
-      setSheetView("sheet");
+    if (savedPath && savedPath !== prevSaved.current) {
+      // Switching between artifacts — drop prior body so we reload from disk.
+      setHydratedHtml("");
+      setDisplayHtml("");
+      setXlsxRows(null);
+      paintedOnce.current = false;
+      if (!prevSaved.current) {
+        setHtmlView("preview");
+        setSheetView("sheet");
+      }
     }
     prevSaved.current = savedPath;
   }, [savedPath]);
@@ -205,7 +214,7 @@ export default function ArtifactSidePanel({
     if (type !== "text/html" || !savedPath || !/\.html?$/i.test(savedPath)) {
       return;
     }
-    if ((html && html.trim().length > 0) || hydratedHtml.trim()) return;
+    if (html && html.trim().length > 0) return;
     let cancelled = false;
     Api.readFileText(savedPath)
       .then((text) => {
@@ -220,7 +229,7 @@ export default function ArtifactSidePanel({
     return () => {
       cancelled = true;
     };
-  }, [savedPath, type, html, hydratedHtml]);
+  }, [savedPath, type, html]);
 
   // Load real .xlsx grid after save / restore.
   useEffect(() => {

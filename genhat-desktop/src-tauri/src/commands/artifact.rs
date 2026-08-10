@@ -383,7 +383,8 @@ fn emit_stage(app: &AppHandle, stage: PipelineStage) {
     }
 }
 
-/// Apply a unified diff patch to a file.
+/// Apply a unified diff patch to a file, writing a **new** artifact copy.
+/// The original path is left unchanged. Returns the new file path.
 #[tauri::command]
 pub async fn apply_diff_patch(path: String, patch: String) -> Result<String, String> {
     let original = std::fs::read_to_string(&path)
@@ -398,10 +399,19 @@ pub async fn apply_diff_patch(path: String, patch: String) -> Result<String, Str
         );
     }
 
-    std::fs::write(&path, &patched)
+    let stem = crate::presentation::edited_output_name(&path);
+    let ext = std::path::Path::new(&path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("html");
+    let out_dir = crate::paths::artifacts_dir();
+    std::fs::create_dir_all(&out_dir).map_err(|e| format!("Create output dir: {e}"))?;
+    let out_path = crate::paths::unique_artifact_path(&out_dir, &stem, ext);
+
+    std::fs::write(&out_path, &patched)
         .map_err(|e| format!("Failed to write patched file: {e}"))?;
 
-    Ok(patched)
+    Ok(out_path.to_string_lossy().to_string())
 }
 
 fn apply_patch(original: &str, patch: &str) -> Result<String, String> {

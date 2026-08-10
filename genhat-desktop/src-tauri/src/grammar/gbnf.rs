@@ -26,7 +26,7 @@ ws     ::= ([ \t\n] ws)?
 pub const SPREADSHEET_PLAN_GBNF: &str = r#"root      ::= "{" ws "\"ops\"" ws ":" ws "[" ws op-list "]" ws ("," ws output-field)? ws "}"
 output-field ::= "\"output_name\"" ws ":" ws string
 op-list   ::= op ("," ws op)*
-op        ::= sum-op | avg-op | pivot-op | sort-desc-op | sort-asc-op | filter-op | count-op | add-col-op | write-data-op | rename-op
+op        ::= sum-op | avg-op | pivot-op | sort-desc-op | sort-asc-op | filter-op | count-op | add-col-op | write-data-op | rename-op | add-chart-op
 
 sum-op    ::= "{" ws "\"op\"" ws ":" ws "\"SUM_COLUMN\"" ws "," ws "\"col\"" ws ":" ws string ws ("," ws "\"label\"" ws ":" ws string)? ws "}"
 avg-op    ::= "{" ws "\"op\"" ws ":" ws "\"AVERAGE_BY_GROUP\"" ws "," ws "\"value_col\"" ws ":" ws string ws "," ws "\"group_col\"" ws ":" ws string ws "}"
@@ -38,6 +38,8 @@ count-op  ::= "{" ws "\"op\"" ws ":" ws "\"COUNT_BY_GROUP\"" ws "," ws "\"group_
 add-col-op ::= "{" ws "\"op\"" ws ":" ws "\"ADD_COLUMN\"" ws "," ws "\"name\"" ws ":" ws string ws "," ws "\"formula\"" ws ":" ws string ws "}"
 write-data-op ::= "{" ws "\"op\"" ws ":" ws "\"WRITE_DATA\"" ws "," ws "\"headers\"" ws ":" ws str-array ws "," ws "\"rows\"" ws ":" ws str-array-array ws "}"
 rename-op ::= "{" ws "\"op\"" ws ":" ws "\"RENAME_SHEET\"" ws "," ws "\"name\"" ws ":" ws string ws "}"
+add-chart-op ::= "{" ws "\"op\"" ws ":" ws "\"ADD_CHART\"" ws "," ws "\"chart_type\"" ws ":" ws chart-type ws "," ws "\"category_col\"" ws ":" ws string ws ("," ws "\"value_col\"" ws ":" ws string)? ("," ws "\"title\"" ws ":" ws string)? ws "}"
+chart-type ::= "\"column\"" | "\"bar\"" | "\"line\"" | "\"pie\""
 
 str-array ::= "[" ws (string ("," ws string)*)? "]" ws
 str-array-array ::= "[" ws (str-array ("," ws str-array)*)? "]" ws

@@ -1307,7 +1307,8 @@ export const Api = {
   },
 
   /**
-   * Apply a unified diff patch to a file (revamp P5)
+   * Apply a unified diff patch, writing a **new** artifact file.
+   * The original path is preserved. Returns the new file path.
    */
   async applyDiffPatch(path: string, patch: string): Promise<string> {
     return invoke<string>("apply_diff_patch", { path, patch });

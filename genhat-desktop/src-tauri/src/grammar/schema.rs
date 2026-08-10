@@ -74,6 +74,23 @@ pub enum SpreadsheetOp {
     /// Rename the active worksheet.
     #[serde(rename = "RENAME_SHEET")]
     RenameSheet { name: String },
+
+    /// Embed a native Excel chart (column/bar/line/pie) from category + value columns.
+    /// When `value_col` is omitted, counts unique values in `category_col`.
+    #[serde(rename = "ADD_CHART")]
+    AddChart {
+        #[serde(default = "default_chart_type")]
+        chart_type: String,
+        category_col: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        value_col: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        title: Option<String>,
+    },
+}
+
+fn default_chart_type() -> String {
+    "column".to_string()
 }
 
 /// A complete spreadsheet synthesis plan emitted by the SLM.

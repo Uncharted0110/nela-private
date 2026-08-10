@@ -218,6 +218,7 @@ export default function AppMainContentArea({
           />
           </div>
           <ArtifactSidePanel
+            key={activeSession.artifactPath || "streaming"}
             active={showArtifactPanel}
             title={activeSession.streamingArtifactTitle}
             type={

@@ -94,7 +94,7 @@ export const SPREADSHEET_SCHEMA_STATIC = `You are a professional assistant that 
 You must return ONLY a JSON object conforming to the schema contract. Do NOT include markdown formatting, code fences (e.g. \`\`\`json), or thinking/explanations.
 
 Schema Contract:
-{"ops": [{"op": "SUM_COLUMN" | "AVERAGE_BY_GROUP" | "PIVOT" | "SORT_DESC" | "SORT_ASC" | "FILTER_ROWS" | "COUNT_BY_GROUP" | "ADD_COLUMN" | "RENAME_SHEET" | "WRITE_DATA", ...}], "output_name": "optional_filename_without_extension"}
+{"ops": [{"op": "SUM_COLUMN" | "AVERAGE_BY_GROUP" | "PIVOT" | "SORT_DESC" | "SORT_ASC" | "FILTER_ROWS" | "COUNT_BY_GROUP" | "ADD_COLUMN" | "RENAME_SHEET" | "WRITE_DATA" | "ADD_CHART", ...}], "output_name": "optional_filename_without_extension"}
 
 Allowed Operations:
 - SUM_COLUMN: { "col": "col_name", "label": "optional_label" } — adds a total row for a numeric column
@@ -107,10 +107,13 @@ Allowed Operations:
 - ADD_COLUMN: { "name": "new_col_name", "formula": "col_a + col_b" } — simple arithmetic using column names
 - RENAME_SHEET: { "name": "sheet_name" } — short tab name only (max 31 characters, e.g. "Top Movies")
 - WRITE_DATA: { "headers": ["col1", "col2"], "rows": [["v1", "v2"], ...] }
+- ADD_CHART: { "chart_type": "column"|"bar"|"line"|"pie", "category_col": "col_name", "value_col": "optional_numeric_col", "title": "optional" }
+  — embeds a native Excel chart. Omit value_col to count unique category values. Use for dashboards / analysis visuals.
 
 Output rules:
 - Include "output_name" (no extension) describing the spreadsheet topic.
 - Include RENAME_SHEET with a SHORT tab name (31 characters max — e.g. "Top Movies", not the full request).
+- For dashboards, analysis, or "chart/visualize" requests: include at least one ADD_CHART after the data is present.
 - For document/form extraction, prefer columns like "Field" and "Value", or logical domain columns.
 - When web search excerpts are provided, treat them as the only source of truth — never fabricate data not in those excerpts.
 - Keep cell values as strings; numbers without currency symbols unless requested.`;
@@ -289,6 +292,16 @@ function normalizeOp(raw: Record<string, unknown>): SpreadsheetOp | null {
         headers: asStringArray(raw.headers),
         rows: asStringMatrix(raw.rows),
       };
+    case "ADD_CHART":
+      return {
+        op: "ADD_CHART",
+        chart_type: String(raw.chart_type ?? "column"),
+        category_col: String(raw.category_col ?? ""),
+        ...(raw.value_col != null && String(raw.value_col).trim()
+          ? { value_col: String(raw.value_col) }
+          : {}),
+        ...(raw.title != null ? { title: String(raw.title) } : {}),
+      };
     default:
       return null;
   }
@@ -350,6 +363,34 @@ export function normalizeSpreadsheetPlan(
       if (op.op === "RENAME_SHEET") {
         op.name = sanitizeExcelSheetName(op.name);
       }
+    }
+  }
+
+  // Auto-embed a chart when the user asked for a dashboard / visualization.
+  const wantsChart = /\b(dashboard|chart|visuali[sz]e|graph|plot)\b/i.test(
+    options.prompt
+  );
+  if (wantsChart && !ops.some((op) => op.op === "ADD_CHART")) {
+    const headers =
+      (Array.isArray(plan.headers)
+        ? plan.headers.map((h) => String(h ?? ""))
+        : null) ??
+      (ops.find((op) => op.op === "WRITE_DATA") as
+        | Extract<SpreadsheetOp, { op: "WRITE_DATA" }>
+        | undefined)?.headers ??
+      [];
+    if (headers.length >= 1) {
+      const category_col = headers[0]!;
+      const value_col =
+        headers.find((h, i) => i > 0 && /revenue|sales|amount|value|count|total|score|price/i.test(h)) ??
+        headers[1];
+      ops.push({
+        op: "ADD_CHART",
+        chart_type: "column",
+        category_col,
+        ...(value_col ? { value_col } : {}),
+        title: "Dashboard",
+      });
     }
   }
 

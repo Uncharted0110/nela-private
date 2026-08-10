@@ -11,6 +11,8 @@ import { openPath } from "@tauri-apps/plugin-opener";
 import { Api } from "../api";
 import type { SearchHit } from "../types";
 import { SourceCitation } from "./SourceCitation";
+import { ChartViewer } from "./ChartViewer";
+import { tryParseChartPayload } from "../prompts/chartPrompt";
 
 interface MarkdownRendererProps {
   content: string;
@@ -229,6 +231,25 @@ function buildMarkdownComponents(sources?: SearchHit[] | null): Components {
       const match = /language-(\w+)/.exec(className || "");
       const codeString = extractText(children).replace(/\n$/, "");
       const isBlock = match || codeString.includes("\n");
+      const lang = (match?.[1] || "").toLowerCase();
+
+      // Interactive ECharts: ```json (or ```echarts) with "type":"chart"|"echarts"
+      if (
+        isBlock &&
+        (lang === "json" || lang === "echarts" || lang === "") &&
+        codeString.trim().startsWith("{")
+      ) {
+        const chart = tryParseChartPayload(codeString);
+        if (chart) {
+          return (
+            <ChartViewer
+              option={chart.option}
+              title={chart.title}
+              height="400px"
+            />
+          );
+        }
+      }
 
       if (isBlock) {
         return (

@@ -29,6 +29,7 @@ import {
   attachImagesToHtmlPlan,
   attachImagesToPresentationPlan,
   buildArtifactImagePool,
+  embedPoolImagesInHtml,
   formatImageCatalogForPrompt,
 } from "../artifactImagePool";
 import {
@@ -336,6 +337,7 @@ export async function handleArtifactGeneration(
     let supplementalContext = "";
 
     let webHitsForImages: import("../../types").SearchHit[] = [];
+    let galleryUrlsForImages: string[] = [];
     const rowPlan =
       schemaId === "spreadsheet_synthesis"
         ? extractSpreadsheetRowCount(text)
@@ -478,6 +480,9 @@ export async function handleArtifactGeneration(
             supplementalContext += grounding + `${trimmedWeb}\n\n`;
           }
           webHitsForImages = merged.results ?? [];
+          galleryUrlsForImages = (merged.images ?? []).filter(
+            (u): u is string => typeof u === "string" && /^https?:\/\//i.test(u)
+          );
           useChatModeStore
             .getState()
             .setLiveToolStatus(
@@ -548,6 +553,7 @@ export async function handleArtifactGeneration(
 
     const imagePool = await buildArtifactImagePool({
       webHits: webHitsForImages,
+      galleryUrls: galleryUrlsForImages,
       documentPath: attachedFile,
     });
     const imageCatalog = formatImageCatalogForPrompt(imagePool);
@@ -607,8 +613,7 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
       containsFileContext,
       userConfirmedCloudContext: cloudConfirmed,
     });
-    // Free/fast models can't finish freeform HTML (truncate mid-CSS → blank page).
-    // Use structured JSON → NELA renderer for those; freeform streaming for Smart/Deep.
+    // Local stays on grammar/JSON plans; cloud (including Fast) streams freeform HTML/CSV.
     const artifactKind =
       schemaId === "presentation_synthesis"
         ? "presentation"
@@ -702,6 +707,7 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
             slideCountInstruction,
             sourceDocumentRules,
             cloudMode: cloudPresentationMode ?? "local",
+            hasImages: imagePool.length > 0,
           })
         : null;
 
@@ -848,6 +854,9 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
         }
         if (imagePool.length) {
           planObj = attachImagesToHtmlPlan(planObj, imagePool);
+          if (typeof planObj.html === "string" && planObj.html.trim()) {
+            planObj.html = embedPoolImagesInHtml(planObj.html, imagePool);
+          }
         }
       }
 
@@ -1134,7 +1143,20 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
                   topic: text,
                   title: streamedArtifactTitle || undefined,
                   asPresentation: schemaId === "presentation_synthesis",
+                  imagePool:
+                    streamedArtifactType === "text/html" ? imagePool : undefined,
                 });
+                // Keep side-panel HTML in sync with embedded images.
+                if (
+                  streamedArtifactType === "text/html" &&
+                  imagePool.length &&
+                  streamedArtifactBody
+                ) {
+                  streamedArtifactBody = embedPoolImagesInHtml(
+                    streamedArtifactBody,
+                    imagePool
+                  );
+                }
                 const filename = result.path.split(/[/\\]/).pop() ?? "artifact";
                 const title =
                   streamedArtifactTitle ||

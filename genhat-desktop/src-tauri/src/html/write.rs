@@ -45,7 +45,7 @@ pub fn write_html_plan(plan: HtmlPlan) -> Result<PathBuf, String> {
 
     let out_dir = crate::paths::artifacts_dir();
     std::fs::create_dir_all(&out_dir).map_err(|e| format!("Create output dir: {e}"))?;
-    let path = out_dir.join(format!("{slug}.html"));
+    let path = crate::paths::unique_artifact_path(&out_dir, &slug, "html");
 
     let html = render_html_plan(plan);
     if html.trim().is_empty() {

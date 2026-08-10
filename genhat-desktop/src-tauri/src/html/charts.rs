@@ -1,4 +1,4 @@
-//! Chart data resolution and SVG rendering for dashboard HTML pages.
+//! Chart data resolution and ECharts embedding for dashboard HTML pages.
 
 use std::collections::HashMap;
 
@@ -289,17 +289,10 @@ pub fn render_chart_section(
         );
     }
 
-    let series_json = serde_json::to_string(&points)
-        .unwrap_or_else(|_| "[]".to_string())
+    let option = echarts_option(chart_type, &points, theme, &section.title);
+    let option_json = serde_json::to_string(&option)
+        .unwrap_or_else(|_| "{}".to_string())
         .replace('<', "\\u003c");
-    let palette = chart_palette(theme);
-    let svg = match chart_type {
-        ChartType::Bar => render_bar_svg(&id, &points, &palette),
-        ChartType::Pie => render_pie_svg(&id, &points, &palette),
-        ChartType::Line => render_line_svg(&id, &points, &palette),
-    };
-
-    let legend = render_legend(&id, &points, &palette);
     let type_name = match chart_type {
         ChartType::Bar => "bar",
         ChartType::Pie => "pie",
@@ -311,14 +304,80 @@ pub fn render_chart_section(
   <div class="container">
     <h2 class="section-title">{title}</h2>
     {subtitle}
-    <div class="chart-panel" data-chart-id="{id}" data-chart-type="{type_name}" data-series='{series_json}'>
-      <div class="chart-svg-wrap">{svg}</div>
-      {legend}
-      <div class="chart-tooltip" id="{id}-tooltip" role="tooltip" hidden></div>
+    <div class="chart-panel echarts-panel" data-chart-id="{id}" data-chart-type="{type_name}">
+      <div class="echarts-host" id="{id}" style="width:100%;height:360px;"></div>
+      <script type="application/json" class="echarts-option" id="{id}-option">{option_json}</script>
     </div>
   </div>
 </section>"#
     )
+}
+
+fn echarts_option(
+    chart_type: ChartType,
+    points: &[ChartPoint],
+    theme: &str,
+    title: &str,
+) -> serde_json::Value {
+    let palette: Vec<&str> = chart_palette(theme);
+    let labels: Vec<&str> = points.iter().map(|p| p.label.as_str()).collect();
+    let values: Vec<f64> = points.iter().map(|p| p.value).collect();
+    let colors: Vec<&str> = points
+        .iter()
+        .enumerate()
+        .map(|(i, _)| palette[i % palette.len()])
+        .collect();
+
+    match chart_type {
+        ChartType::Pie => serde_json::json!({
+            "color": colors,
+            "tooltip": { "trigger": "item" },
+            "legend": { "orient": "horizontal", "bottom": 0 },
+            "series": [{
+                "name": title,
+                "type": "pie",
+                "radius": ["36%", "68%"],
+                "itemStyle": { "borderRadius": 6 },
+                "data": points.iter().map(|p| serde_json::json!({
+                    "name": p.label,
+                    "value": p.value
+                })).collect::<Vec<_>>()
+            }]
+        }),
+        ChartType::Line => serde_json::json!({
+            "color": palette,
+            "tooltip": { "trigger": "axis" },
+            "grid": { "containLabel": true, "left": "3%", "right": "4%", "bottom": "8%", "top": "12%" },
+            "legend": { "show": false },
+            "xAxis": { "type": "category", "data": labels, "boundaryGap": false },
+            "yAxis": { "type": "value" },
+            "series": [{
+                "name": title,
+                "type": "line",
+                "smooth": true,
+                "areaStyle": { "opacity": 0.12 },
+                "data": values
+            }]
+        }),
+        ChartType::Bar => serde_json::json!({
+            "color": palette,
+            "tooltip": { "trigger": "axis" },
+            "grid": { "containLabel": true, "left": "3%", "right": "4%", "bottom": "8%", "top": "12%" },
+            "legend": { "show": false },
+            "xAxis": { "type": "category", "data": labels },
+            "yAxis": { "type": "value" },
+            "series": [{
+                "name": title,
+                "type": "bar",
+                "barMaxWidth": 48,
+                "itemStyle": { "borderRadius": [6, 6, 0, 0] },
+                "data": values.iter().enumerate().map(|(i, v)| serde_json::json!({
+                    "value": v,
+                    "itemStyle": { "color": colors[i % colors.len()] }
+                })).collect::<Vec<_>>()
+            }]
+        }),
+    }
 }
 
 fn chart_palette(theme: &str) -> Vec<&'static str> {
@@ -340,227 +399,35 @@ fn chart_palette(theme: &str) -> Vec<&'static str> {
     }
 }
 
-fn render_bar_svg(id: &str, points: &[ChartPoint], palette: &[&str]) -> String {
-    let w = 640.0;
-    let h = 320.0;
-    let pad_l = 48.0;
-    let pad_b = 40.0;
-    let pad_t = 16.0;
-    let pad_r = 16.0;
-    let chart_w = w - pad_l - pad_r;
-    let chart_h = h - pad_b - pad_t;
-    let max_val = points
-        .iter()
-        .map(|p| p.value)
-        .fold(0.0_f64, f64::max)
-        .max(1.0);
-    let bar_gap = 12.0;
-    let bar_w = (chart_w - bar_gap * (points.len() as f64 + 1.0)) / points.len().max(1) as f64;
-
-    let mut bars = String::new();
-    for (i, p) in points.iter().enumerate() {
-        let color = palette[i % palette.len()];
-        let bh = (p.value / max_val) * chart_h;
-        let x = pad_l + bar_gap + i as f64 * (bar_w + bar_gap);
-        let y = pad_t + chart_h - bh;
-        let label = super::render::escape_html(&p.label);
-        let val = format_chart_number(p.value);
-        bars.push_str(&format!(
-            r#"<rect class="chart-bar" data-label="{label}" data-value="{val}" x="{x:.1}" y="{y:.1}" width="{bar_w:.1}" height="{bh:.1}" fill="{color}" rx="4" />"#,
-        ));
-        bars.push_str(&format!(
-            r#"<text class="chart-axis-label" x="{:.1}" y="{:.0}" text-anchor="middle" fill="currentColor" font-size="11">{label}</text>"#,
-            x + bar_w / 2.0,
-            h - 12.0,
-        ));
-    }
-
-    format!(
-        r#"<svg class="chart-svg" id="{id}-svg" viewBox="0 0 {:.0} {:.0}" role="img" aria-label="Bar chart">
-  <line x1="{pad_l:.0}" y1="{pad_t:.0}" x2="{pad_l:.0}" y2="{:.0}" stroke="currentColor" stroke-opacity="0.2" />
-  <line x1="{pad_l:.0}" y1="{:.0}" x2="{:.0}" y2="{:.0}" stroke="currentColor" stroke-opacity="0.2" />
-  {bars}
-</svg>"#,
-        w,
-        h,
-        pad_t + chart_h,
-        pad_t + chart_h,
-        w - pad_r,
-        pad_t + chart_h,
-    )
-}
-
-fn render_pie_svg(id: &str, points: &[ChartPoint], palette: &[&str]) -> String {
-    let w = 360;
-    let h = 360;
-    let cx = w as f64 / 2.0;
-    let cy = h as f64 / 2.0;
-    let r = 140.0;
-    let total: f64 = points.iter().map(|p| p.value).sum();
-    let total = if total <= 0.0 { 1.0 } else { total };
-
-    let mut slices = String::new();
-    let mut start_angle = -std::f64::consts::FRAC_PI_2;
-
-    for (i, p) in points.iter().enumerate() {
-        let fraction = p.value / total;
-        let sweep = fraction * std::f64::consts::TAU;
-        let end_angle = start_angle + sweep;
-        let x1 = cx + r * start_angle.cos();
-        let y1 = cy + r * start_angle.sin();
-        let x2 = cx + r * end_angle.cos();
-        let y2 = cy + r * end_angle.sin();
-        let large = if sweep > std::f64::consts::PI { 1 } else { 0 };
-        let color = palette[i % palette.len()];
-        let label = super::render::escape_html(&p.label);
-        let val = format_chart_number(p.value);
-        slices.push_str(&format!(
-            r#"<path class="chart-slice" data-label="{label}" data-value="{val}" fill="{color}" d="M {cx:.1} {cy:.1} L {x1:.1} {y1:.1} A {r} {r} 0 {large} 1 {x2:.1} {y2:.1} Z" />"#,
-        ));
-        start_angle = end_angle;
-    }
-
-    format!(
-        r#"<svg class="chart-svg" id="{id}-svg" viewBox="0 0 {w} {h}" role="img" aria-label="Pie chart">{slices}</svg>"#
-    )
-}
-
-fn render_line_svg(id: &str, points: &[ChartPoint], palette: &[&str]) -> String {
-    let w = 640.0;
-    let h = 320.0;
-    let pad_l = 48.0;
-    let pad_b = 40.0;
-    let pad_t = 16.0;
-    let pad_r = 16.0;
-    let chart_w = w - pad_l - pad_r;
-    let chart_h = h - pad_b - pad_t;
-    let max_val = points
-        .iter()
-        .map(|p| p.value)
-        .fold(0.0_f64, f64::max)
-        .max(1.0);
-    let n = points.len().max(1);
-    let step = chart_w / (n - 1).max(1) as f64;
-    let color = palette[0];
-
-    let mut coords = Vec::new();
-    let mut dots = String::new();
-    for (i, p) in points.iter().enumerate() {
-        let x = pad_l + i as f64 * step;
-        let y = pad_t + chart_h - (p.value / max_val) * chart_h;
-        coords.push(format!("{x:.1},{y:.1}"));
-        let label = super::render::escape_html(&p.label);
-        let val = format_chart_number(p.value);
-        dots.push_str(&format!(
-            r#"<circle class="chart-dot" data-label="{label}" data-value="{val}" cx="{x:.1}" cy="{y:.1}" r="5" fill="{color}" />"#,
-        ));
-    }
-
-    format!(
-        r#"<svg class="chart-svg" id="{id}-svg" viewBox="0 0 {:.0} {:.0}" role="img" aria-label="Line chart">
-  <polyline class="chart-line" fill="none" stroke="{color}" stroke-width="2.5" points="{}" />
-  {dots}
-</svg>"#,
-        w,
-        h,
-        coords.join(" ")
-    )
-}
-
-fn render_legend(id: &str, points: &[ChartPoint], palette: &[&str]) -> String {
-    let items: String = points
-        .iter()
-        .enumerate()
-        .map(|(i, p)| {
-            let color = palette[i % palette.len()];
-            let label = super::render::escape_html(&p.label);
-            let val = format_chart_number(p.value);
-            format!(
-                r#"<button type="button" class="chart-legend-item" data-label="{label}" data-chart="{id}">
-      <span class="chart-swatch" style="background:{color}"></span>
-      <span class="chart-legend-text">{label}</span>
-      <span class="chart-legend-val">{val}</span>
-    </button>"#
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n    ");
-
-    format!(
-        r#"<div class="chart-legend" id="{id}-legend">
-    <div class="chart-filter-bar">
-      <button type="button" class="chart-filter-btn active" data-filter="all" data-chart="{id}">All</button>
-      {items}
-    </div>
-  </div>"#
-    )
-}
-
 pub const CHART_INTERACTION_JS: &str = r#"
 (function() {
-  var activeFilters = {};
-
-  function showTooltip(panel, text, x, y) {
-    var tip = panel.querySelector('.chart-tooltip');
-    if (!tip) return;
-    tip.textContent = text;
-    tip.hidden = false;
-    tip.style.left = x + 'px';
-    tip.style.top = y + 'px';
-  }
-
-  function hideTooltip(panel) {
-    var tip = panel.querySelector('.chart-tooltip');
-    if (tip) tip.hidden = true;
-  }
-
-  function applyFilter(chartId, label) {
-    activeFilters[chartId] = label;
-    var panel = document.querySelector('[data-chart-id="' + chartId + '"]');
-    if (!panel) return;
-    var match = label === 'all' ? null : label;
-    panel.querySelectorAll('[data-label]').forEach(function(el) {
-      if (!el.getAttribute('data-label')) return;
-      var on = !match || el.getAttribute('data-label') === match;
-      el.style.opacity = on ? '1' : '0.2';
-      el.style.pointerEvents = on ? 'auto' : 'none';
-    });
-    panel.querySelectorAll('.chart-filter-btn, .chart-legend-item').forEach(function(btn) {
-      var bl = btn.getAttribute('data-filter') || btn.getAttribute('data-label');
-      btn.classList.toggle('active', bl === label || (label === 'all' && bl === 'all'));
+  function boot() {
+    if (typeof echarts === 'undefined') return;
+    document.querySelectorAll('.echarts-host').forEach(function(el) {
+      if (el.getAttribute('data-echarts-ready')) return;
+      var optEl = document.getElementById(el.id + '-option');
+      if (!optEl) return;
+      try {
+        var option = JSON.parse(optEl.textContent || '{}');
+        var chart = echarts.init(el, null, { renderer: 'svg' });
+        chart.setOption(option);
+        el.setAttribute('data-echarts-ready', '1');
+        window.addEventListener('resize', function() { chart.resize(); });
+      } catch (err) {
+        console.warn('ECharts init failed', el.id, err);
+      }
     });
   }
-
-  document.querySelectorAll('.chart-panel[data-chart-id]').forEach(function(panel) {
-    var chartId = panel.getAttribute('data-chart-id');
-    panel.querySelectorAll('.chart-bar, .chart-slice, .chart-dot').forEach(function(el) {
-      el.addEventListener('mouseenter', function(e) {
-        var lbl = el.getAttribute('data-label') || '';
-        var val = el.getAttribute('data-value') || '';
-        var rect = panel.getBoundingClientRect();
-        showTooltip(panel, lbl + ': ' + val, e.clientX - rect.left + 8, e.clientY - rect.top - 28);
-      });
-      el.addEventListener('mousemove', function(e) {
-        var lbl = el.getAttribute('data-label') || '';
-        var val = el.getAttribute('data-value') || '';
-        var rect = panel.getBoundingClientRect();
-        showTooltip(panel, lbl + ': ' + val, e.clientX - rect.left + 8, e.clientY - rect.top - 28);
-      });
-      el.addEventListener('mouseleave', function() { hideTooltip(panel); });
-      el.addEventListener('click', function() {
-        var lbl = el.getAttribute('data-label');
-        if (lbl) applyFilter(chartId, lbl);
-      });
-    });
-    panel.querySelectorAll('.chart-filter-btn, .chart-legend-item').forEach(function(btn) {
-      btn.addEventListener('click', function() {
-        var filter = btn.getAttribute('data-filter') || btn.getAttribute('data-label') || 'all';
-        applyFilter(chartId, filter);
-      });
-    });
-  });
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', boot);
+  } else {
+    boot();
+  }
 })();
 "#;
+
+pub const ECHARTS_CDN: &str =
+    r#"<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>"#;
 
 pub const CHART_CSS: &str = r#"
 .chart-section .chart-panel {
@@ -568,38 +435,18 @@ pub const CHART_CSS: &str = r#"
   background: var(--surface);
   border-radius: 16px;
   border: 1px solid color-mix(in srgb, var(--text) 10%, transparent);
-  padding: 1.25rem;
+  padding: 1rem 1rem 0.75rem;
   margin-top: .5rem;
+  overflow: hidden;
 }
-.chart-svg-wrap { overflow-x: auto; }
-.chart-svg { width: 100%; max-width: 640px; height: auto; display: block; color: var(--muted); }
-.chart-bar, .chart-slice, .chart-dot { cursor: pointer; transition: opacity .2s ease, transform .15s ease; }
-.chart-bar:hover, .chart-slice:hover, .chart-dot:hover { opacity: .85; }
-.chart-axis-label { fill: var(--muted); }
-.chart-legend { margin-top: 1rem; }
-.chart-filter-bar { display: flex; flex-wrap: wrap; gap: .5rem; }
-.chart-filter-btn, .chart-legend-item {
-  display: inline-flex; align-items: center; gap: .4rem;
-  padding: .35rem .65rem; border-radius: 999px; font-size: .82rem;
-  border: 1px solid color-mix(in srgb, var(--text) 12%, transparent);
-  background: color-mix(in srgb, var(--bg) 60%, var(--surface));
-  color: var(--text); cursor: pointer;
+.chart-section .echarts-host {
+  min-height: 320px;
+  width: 100%;
 }
-.chart-filter-btn.active, .chart-legend-item.active {
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 15%, var(--surface));
+.chart-section .chart-empty {
+  padding: 2rem;
+  text-align: center;
 }
-.chart-swatch { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
-.chart-legend-val { color: var(--muted); margin-left: .25rem; }
-.chart-tooltip {
-  position: absolute; z-index: 20; pointer-events: none;
-  background: var(--surface); color: var(--text);
-  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
-  padding: .35rem .55rem; border-radius: 8px; font-size: .8rem;
-  box-shadow: 0 8px 24px rgba(0,0,0,.25);
-  white-space: nowrap;
-}
-.chart-empty { text-align: center; padding: 2rem; }
 .layout-dashboard .chart-section { padding: 1rem 0; }
 .layout-dashboard .charts-grid {
   display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1rem;

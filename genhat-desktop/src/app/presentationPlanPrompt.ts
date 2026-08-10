@@ -1,5 +1,5 @@
 /**
- * Presentation prompts — local JSON+GBNF, cloud JSON (free/fast), cloud HTML (capable).
+ * Presentation prompts — local JSON+GBNF; cloud streams freeform HTML.
  */
 
 /** Local / constrained schema (used with GBNF on device). */
@@ -13,15 +13,17 @@ Layouts (pick to fit content):
 - SECTION: section divider with 1–3 real intro lines.
 - BULLET: 4–6 bullets, each 15–40 words with a claim + brief explanation or example.
 - TWO_COLUMN / IMAGE_LEFT: 4–6 concrete points.
-- STAT: bullets[0] = headline metric/fact; then 2–3 supporting specifics.
+- STAT: bullets[0] = headline metric/fact; then 2–3 supporting specifics. Prefer STAT when the topic has numbers.
 - QUOTE: takeaway + attribution/context.
 - CARDS: 3–4 items as "Label: 1–2 sentence specifics".
 - COMPARISON: 3–5 points per side; left_title/right_title must be real domain terms (e.g. Classical vs Quantum), never "Primary approach".
 - CENTERED: 2–4 short paragraphs of real takeaways.
+- IMAGE_LEFT: set image_index from the AVAILABLE IMAGES catalog when present.
 
 Content rules:
 - First slide TITLE; last slide CENTERED with a concrete takeaway about THIS topic.
 - Slide 1–2 must DEFINE the topic (what it is / how it works). Later slides need named examples (algorithms, products, people, events, case studies — whatever fits).
+- When statistics exist, include at least one STAT slide with real figures.
 - Every bullet must be specifically about the user's topic. No vague fluff ("transformative potential", "continuous innovation") unless tied to a fact.
 - Use ≥4 different layouts. Avoid Q&A / References / Final Thoughts unless asked.
 - Theme must match the topic.`;
@@ -33,12 +35,13 @@ Content rules:
 export const PRESENTATION_CLOUD_JSON_STATIC = `You generate ONLY a JSON presentation plan. No markdown, no code fences, no commentary.
 
 Schema:
-{"slides":[{"title":"string","layout":"TITLE"|"SECTION"|"BULLET"|"TWO_COLUMN"|"IMAGE_LEFT"|"STAT"|"QUOTE"|"CARDS"|"COMPARISON"|"CENTERED","bullets":["string"],"notes":"string","left_title":"string","right_title":"string","left":["string"],"right":["string"]}],"theme":"midnight"|"corporate"|"sunset"|"minimal"|"academic"|"cyber"|"ocean"|"forest"|"lavender"|"neon"|"rose"|"slate","output_name":"string"}
+{"slides":[{"title":"string","layout":"TITLE"|"SECTION"|"BULLET"|"TWO_COLUMN"|"IMAGE_LEFT"|"STAT"|"QUOTE"|"CARDS"|"COMPARISON"|"CENTERED","bullets":["string"],"notes":"string","left_title":"string","right_title":"string","left":["string"],"right":["string"],"image_index":0}],"theme":"midnight"|"corporate"|"sunset"|"minimal"|"academic"|"cyber"|"ocean"|"forest"|"lavender"|"neon"|"rose"|"slate","output_name":"string"}
 
 Content rules:
 - Answer the USER'S REQUEST exactly. Never pivot to worksheets, crafts, card projects, or unrelated products.
 - Pack each slide with concrete facts (names, dates, places, figures). Bullets should be 15–40 words when possible — not one-word stubs.
 - First slide TITLE; later slides use varied layouts. Prefer 6–10 slides unless the user asked for a count.
+- When statistics exist, include at least one STAT slide. When AVAILABLE IMAGES exist, use IMAGE_LEFT with image_index.
 - Theme should fit the tone (somber history → midnight/rose; business → corporate).
 - Set output_name to a short filename-friendly title.`;
 
@@ -63,6 +66,8 @@ CRITICAL CONTENT RULES:
 - Mark each slide with class="slide". First slide must include class="slide active" so something is visible immediately.
 - Complete creative freedom on colors/fonts — but content first, polish second.
 - Content must be RICH and specific. Prefer 6–10 slides unless the user asked for a count.
+- When the topic has statistics, include STAT slides (headline metric + supporting bullets) and/or small SVG/CSS bar visuals with real numbers.
+- When AVAILABLE IMAGES are listed, embed with <img src="nela-img:0"> on relevant slides (hero / IMAGE_LEFT style layouts). Never invent image URLs.
 - Stay on the USER'S TOPIC. Ignore off-topic web results (worksheets, crafts, product listings).
 - Set <title> to a short accurate deck title.
 - No markdown fences around the HTML.`;
@@ -80,10 +85,17 @@ export function buildPresentationSystemParts(options: {
   /** @deprecated Prefer cloudMode */
   cloudFreeform?: boolean;
   cloudMode?: CloudPresentationMode;
+  hasImages?: boolean;
 }): PresentationSystemParts {
   const mode: CloudPresentationMode =
     options.cloudMode ??
     (options.cloudFreeform ? "html" : "local");
+
+  const imageHint = options.hasImages
+    ? mode === "html"
+      ? "- AVAILABLE IMAGES are listed in the user message — embed with <img src=\"nela-img:0\"> (etc) on 1–3 slides."
+      : "- AVAILABLE IMAGES are listed — set image_index on IMAGE_LEFT slides (and prefer at least one IMAGE_LEFT layout)."
+    : "";
 
   const dynamic = [
     `- ${options.slideCountInstruction}`,
@@ -91,6 +103,7 @@ export function buildPresentationSystemParts(options: {
     mode !== "local"
       ? "- Honor the user's topic exactly. Web research is optional supporting context — never let it replace the requested subject."
       : "",
+    imageHint,
   ]
     .filter(Boolean)
     .join("\n");

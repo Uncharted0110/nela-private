@@ -459,7 +459,14 @@ export type SpreadsheetOp =
   | { op: "COUNT_BY_GROUP"; group_col: string }
   | { op: "ADD_COLUMN"; name: string; formula: string }
   | { op: "WRITE_DATA"; headers: string[]; rows: string[][] }
-  | { op: "RENAME_SHEET"; name: string };
+  | { op: "RENAME_SHEET"; name: string }
+  | {
+      op: "ADD_CHART";
+      chart_type?: "column" | "bar" | "line" | "pie" | string;
+      category_col: string;
+      value_col?: string;
+      title?: string;
+    };
 
 export interface SpreadsheetPlan {
   ops: SpreadsheetOp[];

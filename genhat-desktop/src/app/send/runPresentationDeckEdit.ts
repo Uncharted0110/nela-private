@@ -165,7 +165,7 @@ Return the complete updated slides array with the requested changes applied.`;
             updateEditMsg(
               "LivePreview",
               result.path,
-              `Updated presentation deck: **${filename}**`
+              `Saved an updated deck copy: **${filename}** (original left unchanged).`
             );
             resolve();
           } catch (execErr: unknown) {

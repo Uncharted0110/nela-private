@@ -303,9 +303,9 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
   enrichmentStatus = null,
   ragEnabled = false,
   onToggleRagEnabled,
-  webEnabled = false,
+  webEnabled = true,
   onToggleWebEnabled,
-  fileIndexerEnabled = false,
+  fileIndexerEnabled = true,
   onToggleFileIndexerEnabled,
   onIngestFile,
   onIngestDir,
@@ -1069,16 +1069,15 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
                                 "text/html";
                               const panelOpen = Boolean(
                                 session &&
-                                  session.artifactPanelOpen !== false &&
-                                  (session.artifactStreamActive ||
-                                    session.streamingArtifactHtml ||
-                                    session.streamingArtifactCsv ||
-                                    Boolean(msg.artifactPath))
+                                  session.artifactPanelOpen === true &&
+                                  msg.artifactPath &&
+                                  session.artifactPath === msg.artifactPath
                               );
                               const showChip =
                                 Boolean(msg.artifactPath) ||
-                                Boolean(session?.streamingArtifactHtml) ||
-                                Boolean(session?.streamingArtifactCsv) ||
+                                (idx === messages.length - 1 &&
+                                  (Boolean(session?.streamingArtifactHtml) ||
+                                    Boolean(session?.streamingArtifactCsv))) ||
                                 stage === "LivePreview" ||
                                 stage === "WritingCode";
 
@@ -1139,10 +1138,36 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
                                       loading={generating || !msg.artifactPath}
                                       onTogglePanel={() => {
                                         if (!session) return;
+                                        const path = msg.artifactPath;
+                                        if (!path) {
+                                          updateSession(session.id, {
+                                            artifactPanelOpen: !panelOpen,
+                                            artifactStreamActive: true,
+                                          });
+                                          return;
+                                        }
+                                        if (panelOpen) {
+                                          updateSession(session.id, {
+                                            artifactPanelOpen: false,
+                                          });
+                                          return;
+                                        }
+                                        const inferredType: "text/html" | "text/csv" =
+                                          msg.streamingArtifactType ||
+                                          (/\.xlsx?$/i.test(path)
+                                            ? "text/csv"
+                                            : "text/html");
                                         updateSession(session.id, {
-                                          artifactPanelOpen: !panelOpen,
-                                          // Ensure reopen still has a body reference.
+                                          artifactPanelOpen: true,
                                           artifactStreamActive: true,
+                                          artifactPath: path,
+                                          artifactStage: "LivePreview",
+                                          // Clear any other artifact's streamed body so the
+                                          // panel reloads this message's file from disk.
+                                          streamingArtifactHtml: undefined,
+                                          streamingArtifactCsv: undefined,
+                                          streamingArtifactType: inferredType,
+                                          streamingArtifactTitle: chipTitle,
                                         });
                                       }}
                                     />

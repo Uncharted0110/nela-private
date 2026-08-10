@@ -91,10 +91,9 @@ export const useChatModeStore = create<ChatModeState & ChatModeActions>((set) =>
   ragDocs: [],
   ragIngesting: false,
   enrichmentStatus: null,
-  // Match preferred mode: web search stays OFF until the user enables it.
-  // Searching only runs when the LLM calls web_search (never auto-forced).
-  webEnabled: false,
-  fileIndexerEnabled: false,
+  // Tools available to the LLM by default; it still decides whether to call them.
+  webEnabled: true,
+  fileIndexerEnabled: true,
   liveToolStatus: null,
   imagePath: null,
   imagePreview: null,

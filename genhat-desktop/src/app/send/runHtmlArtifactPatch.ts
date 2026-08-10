@@ -52,18 +52,27 @@ ${currentContent}
           cleanPatch = lines.join("\n").trim();
         }
 
-        await Api.applyDiffPatch(artifactPath, cleanPatch);
+        const newPath = await Api.applyDiffPatch(artifactPath, cleanPatch);
 
         import("@tauri-apps/api/event").then(({ emit }) => {
-          emit("artifact-patch", { patch: cleanPatch, path: artifactPath });
+          emit("artifact-patch", { patch: cleanPatch, path: newPath });
         });
 
-        ctx.updateSession(sid, { loading: false });
-        const filename = artifactPath.split(/[/\\]/).pop();
+        ctx.updateSession(sid, {
+          loading: false,
+          artifactPath: newPath,
+          artifactStage: "LivePreview",
+          artifactPanelOpen: true,
+          artifactStreamActive: true,
+          streamingArtifactHtml: undefined,
+          streamingArtifactCsv: undefined,
+        });
+        const filename = newPath.split(/[/\\]/).pop();
+        const sourceName = artifactPath.split(/[/\\]/).pop();
         updateEditMsg(
           "LivePreview",
-          artifactPath,
-          `Updated **${filename}** with your changes.`
+          newPath,
+          `Saved an updated copy as **${filename}** (original **${sourceName}** unchanged).`
         );
       } catch (execErr: unknown) {
         const message = execErr instanceof Error ? execErr.message : String(execErr);

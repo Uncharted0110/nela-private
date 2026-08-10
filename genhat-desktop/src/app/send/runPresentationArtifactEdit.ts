@@ -115,7 +115,7 @@ Produce an updated presentation plan that applies these edits. Use the "${themeH
             updateEditMsg(
               "LivePreview",
               result.path,
-              `Updated presentation: **${filename}**\nPath: \`${result.path}\``
+              `Saved an updated presentation copy: **${filename}**\nPath: \`${result.path}\`\n(Original file left unchanged.)`
             );
             resolve();
           } catch (execErr: unknown) {

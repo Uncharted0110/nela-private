@@ -5,7 +5,7 @@ use crate::grammar::schema::{
 };
 
 use super::layout::{layout_for, ArchetypeLayout, GridVariant, HeroVariant, ARCHETYPE_CSS};
-use super::charts::{self, CHART_CSS, CHART_INTERACTION_JS};
+use super::charts::{self, CHART_CSS, CHART_INTERACTION_JS, ECHARTS_CDN};
 
 const DEFAULT_INTERACTIVE_POOL: &[(&str, &str, &str)] = &[
     ("The Grand Budapest Hotel", "A whimsical caper through a luxurious European hotel.", "2014 · Comedy"),
@@ -226,6 +226,7 @@ pub fn render_html_plan(plan: HtmlPlan) -> String {
     );
     let footer_note = escape_html(layout.footer_note);
     let chart_css = if has_charts { CHART_CSS } else { "" };
+    let chart_cdn = if has_charts { ECHARTS_CDN } else { "" };
     let chart_js = if has_charts {
         CHART_INTERACTION_JS
     } else {
@@ -246,6 +247,7 @@ pub fn render_html_plan(plan: HtmlPlan) -> String {
 {archetype_css}
 {chart_css}
 </style>
+{chart_cdn}
 </head>
 <body class="{body_class}">
   <header class="site-header">
@@ -285,6 +287,7 @@ pub fn render_html_plan(plan: HtmlPlan) -> String {
         base_css = BASE_CSS,
         archetype_css = ARCHETYPE_CSS,
         chart_css = chart_css,
+        chart_cdn = chart_cdn,
         chart_js = chart_js,
     )
 }

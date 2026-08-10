@@ -4,8 +4,13 @@
 
 import { Api } from "../api";
 import type { ArtifactResult } from "../types";
+import {
+  embedPoolImagesInHtml,
+  type ImagePoolEntry,
+} from "./artifactImagePool";
 import { parseCSV } from "./send/csvParse";
 import { sanitizeCsvArtifactBody } from "./sanitizeCsvArtifact";
+import { normalizeSpreadsheetPlan } from "./spreadsheetPlan";
 import {
   parseHtmlArtifactOutput,
   parsePresentationHtmlArtifactOutput,
@@ -18,7 +23,13 @@ export async function saveStreamedHtmlArtifact(input: {
   rawBody: string;
   topic: string;
   asPresentation?: boolean;
+  imagePool?: ImagePoolEntry[];
 }): Promise<ArtifactResult> {
+  const withImages = (html: string) =>
+    input.imagePool?.length
+      ? embedPoolImagesInHtml(html, input.imagePool)
+      : html;
+
   if (input.asPresentation) {
     if (looksLikePresentationJsonPlan(input.rawBody)) {
       throw new Error("MODEL_RETURNED_JSON_SLIDE_PLAN");
@@ -28,7 +39,7 @@ export async function saveStreamedHtmlArtifact(input: {
       title: parsed.title,
       archetype: "landing",
       sections: [],
-      html: parsed.html,
+      html: withImages(parsed.html),
       output_name: parsed.output_name,
     });
   }
@@ -41,7 +52,7 @@ export async function saveStreamedHtmlArtifact(input: {
     title: parsed.title,
     archetype: "landing",
     sections: [],
-    html: parsed.html,
+    html: withImages(parsed.html),
     output_name: parsed.output_name,
   });
 }
@@ -70,16 +81,21 @@ export async function saveStreamedCsvArtifact(input: {
     .trim()
     .slice(0, 80);
 
-  return Api.generateSpreadsheet({
-    ops: [
-      { op: "WRITE_DATA", headers: cleanHeaders, rows: cleanRows },
+  return Api.generateSpreadsheet(
+    normalizeSpreadsheetPlan(
       {
-        op: "RENAME_SHEET",
-        name: (outputName || "Sheet").slice(0, 31),
+        ops: [
+          { op: "WRITE_DATA", headers: cleanHeaders, rows: cleanRows },
+          {
+            op: "RENAME_SHEET",
+            name: (outputName || "Sheet").slice(0, 31),
+          },
+        ],
+        output_name: outputName || "spreadsheet",
       },
-    ],
-    output_name: outputName || "spreadsheet",
-  });
+      { prompt: input.topic, hasSourceData: false }
+    )
+  );
 }
 
 export async function saveStreamedArtifact(input: {
@@ -88,6 +104,7 @@ export async function saveStreamedArtifact(input: {
   topic: string;
   title?: string;
   asPresentation?: boolean;
+  imagePool?: ImagePoolEntry[];
 }): Promise<ArtifactResult> {
   if (input.type === "text/csv") {
     return saveStreamedCsvArtifact({
@@ -100,5 +117,6 @@ export async function saveStreamedArtifact(input: {
     rawBody: input.rawBody,
     topic: input.topic,
     asPresentation: input.asPresentation,
+    imagePool: input.imagePool,
   });
 }

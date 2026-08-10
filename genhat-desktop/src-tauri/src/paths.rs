@@ -58,6 +58,33 @@ pub fn artifacts_dir() -> PathBuf {
     fallback
 }
 
+/// Resolve a non-colliding path under `dir` for `{stem}.{ext}`.
+/// If the preferred name exists, appends a short timestamp (and counter if needed).
+pub fn unique_artifact_path(dir: &std::path::Path, stem: &str, ext: &str) -> PathBuf {
+    let ext = ext.trim_start_matches('.');
+    let preferred = dir.join(format!("{stem}.{ext}"));
+    if !preferred.exists() {
+        return preferred;
+    }
+
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    for n in 0u32..10_000 {
+        let name = if n == 0 {
+            format!("{stem}_{millis}.{ext}")
+        } else {
+            format!("{stem}_{millis}_{n}.{ext}")
+        };
+        let candidate = dir.join(name);
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    dir.join(format!("{stem}_{millis}_x.{ext}"))
+}
+
 fn runtime_llama_root() -> Option<&'static PathBuf> {
     RUNTIME_LLAMA_ROOT.get()
 }

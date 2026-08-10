@@ -155,7 +155,7 @@ Produce a plan that applies the requested changes to this spreadsheet.`;
             updateEditMsg(
               "LivePreview",
               result.path,
-              `Updated spreadsheet: **${filename}**\nPath: \`${result.path}\``
+              `Saved an updated spreadsheet copy: **${filename}**\nPath: \`${result.path}\`\n(Original file left unchanged.)`
             );
             resolve();
           } catch (execErr: unknown) {

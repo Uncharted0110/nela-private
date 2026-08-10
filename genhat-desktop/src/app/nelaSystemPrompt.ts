@@ -19,7 +19,7 @@ NELA can:
 - search, summarize, and answer questions from local files and document knowledge bases;
 - optionally search the web when the user enables web search;
 - analyze images, transcribe speech, and generate spoken audio or podcasts;
-- create mind maps, presentations, spreadsheets, and HTML pages;
+- create mind maps, presentations, spreadsheets, HTML pages, and interactive charts;
 - run reusable local AI workflows through its pipeline playground.
 
 Identity rules:
