@@ -22,7 +22,7 @@ import type {
 type StreamCallbacks = {
   onChunk: (chunk: string) => void;
   onThinking: (thinking: string) => void;
-  onFinish: (meta?: { tool_calls?: CloudToolCall[] }) => void;
+  onFinish: (meta?: { tool_calls?: CloudToolCall[]; model?: string }) => void;
   onError: (err: unknown) => void;
 };
 
@@ -145,11 +145,15 @@ function runLocalStream(args: StreamArgs): void {
       role: m.role as "system" | "user" | "assistant",
       content: m.content ?? "",
     }));
+  const localModel =
+    args.modelId?.trim() ||
+    useModelStore.getState().selectedModel?.trim() ||
+    undefined;
   Api.streamChat(
     localMessages,
     args.onChunk,
     args.onThinking,
-    () => args.onFinish(),
+    () => args.onFinish(localModel ? { model: localModel } : undefined),
     args.onError,
     undefined,
     args.modelId,
@@ -277,9 +281,10 @@ async function runCloudStream(args: StreamArgs): Promise<void> {
         done: boolean;
         error?: string;
         tool_calls?: CloudToolCall[];
+        model?: string;
       }>("cloud-chat-stream", (event) => {
         if (settled) return;
-        const { chunk, done, error, tool_calls } = event.payload;
+        const { chunk, done, error, tool_calls, model } = event.payload;
         if (error) {
           finish(() => {
             unlisten();
@@ -297,7 +302,12 @@ async function runCloudStream(args: StreamArgs): Promise<void> {
         if (done) {
           finish(() => {
             unlisten();
-            args.onFinish(tool_calls?.length ? { tool_calls } : undefined);
+            const meta: { tool_calls?: CloudToolCall[]; model?: string } = {};
+            if (tool_calls?.length) meta.tool_calls = tool_calls;
+            if (model?.trim()) meta.model = model.trim();
+            args.onFinish(
+              meta.tool_calls || meta.model ? meta : undefined
+            );
             resolve();
           });
         }

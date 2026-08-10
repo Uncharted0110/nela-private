@@ -172,7 +172,8 @@ export async function handleSendTextChat(
   const finishOk = async (
     response: string,
     thinking: string,
-    web: WebSearchResult | null
+    web: WebSearchResult | null,
+    generatedByModel?: string | null
   ) => {
     chunkFlusher.flushNow();
     if (streamParser) {
@@ -282,6 +283,9 @@ export async function handleSendTextChat(
             ...(followup ? { artifactFollowup: followup } : {}),
             thinking: thinking || undefined,
             webSearchResult: web ?? undefined,
+            ...(generatedByModel?.trim()
+              ? { generatedByModel: generatedByModel.trim() }
+              : {}),
             generateTime: totalTime,
             firstTokenTime:
               timeToFirstToken !== null ? timeToFirstToken : undefined,
@@ -402,7 +406,8 @@ export async function handleSendTextChat(
         void finishOk(
           fullResponse || result.content,
           fullThinking || result.thinking,
-          webSearchResult
+          webSearchResult,
+          result.model
         );
       })
       .catch((err) => {
@@ -424,8 +429,8 @@ export async function handleSendTextChat(
     generationOptions,
     onChunk,
     onThinking,
-    onFinish: () => {
-      void finishOk(fullResponse, fullThinking, null);
+    onFinish: (meta) => {
+      void finishOk(fullResponse, fullThinking, null, meta?.model);
     },
     onError: finishErr,
   });

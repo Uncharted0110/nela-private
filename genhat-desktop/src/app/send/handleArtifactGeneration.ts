@@ -152,6 +152,7 @@ export async function handleArtifactGeneration(
   }));
 
   let artifactWebSearchResult: WebSearchResult | null = null;
+  let artifactGeneratedByModel: string | undefined;
 
   const updateArtifactMsg = (
     stage: PipelineStageKind,
@@ -187,6 +188,9 @@ export async function handleArtifactGeneration(
           content: nextContent,
           ...(artifactWebSearchResult
             ? { webSearchResult: artifactWebSearchResult }
+            : {}),
+          ...(artifactGeneratedByModel
+            ? { generatedByModel: artifactGeneratedByModel }
             : {}),
         };
       }
@@ -1159,7 +1163,15 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
         }
       },
       onThinking: () => {},
-      onFinish: () => {
+      onFinish: (meta) => {
+        if (meta?.model?.trim()) {
+          artifactGeneratedByModel = meta.model.trim();
+        } else if (!artifactGeneratedByModel) {
+          artifactGeneratedByModel =
+            ctx.selectedModel?.trim() ||
+            useModelStore.getState().selectedModel?.trim() ||
+            undefined;
+        }
         void (async () => {
           useChatModeStore.getState().setLiveToolStatus(null);
           updateArtifactMsg("WritingCode");

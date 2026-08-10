@@ -26,6 +26,7 @@ import { knowledgeBaseToSearchResult, fileUrlToPath, isLocalFileHitUrl } from ".
 import type { GenerationOptions } from "./types";
 import { MAX_WEB_SEARCH_TOOL_ROUNDS } from "./webSearchLimits";
 import { useDocGraphStore } from "../../stores/docGraphStore";
+import { useModelStore } from "../../stores/modelStore";
 
 const MAX_TOOL_ROUNDS = MAX_WEB_SEARCH_TOOL_ROUNDS;
 
@@ -57,6 +58,8 @@ export interface CloudNativeToolLoopResult {
   thinking: string;
   webSearchResult: WebSearchResult | null;
   artifacts: ArtifactResult[];
+  /** OpenRouter / local model id from the last generation round. */
+  model?: string;
 }
 
 function toCloudMessages(messages: ChatContextMessage[]): CloudChatMessage[] {
@@ -84,7 +87,7 @@ function streamCloudRound(
   tools: CloudToolDefinition[],
   opts: CloudNativeToolLoopOptions,
   toolChoice: "auto" | "required" | { type: "function"; function: { name: string } } = "auto"
-): Promise<{ content: string; tool_calls?: CloudToolCall[] }> {
+): Promise<{ content: string; tool_calls?: CloudToolCall[]; model?: string }> {
   return new Promise((resolve, reject) => {
     let content = "";
     let settled = false;
@@ -128,6 +131,7 @@ function streamCloudRound(
           resolve({
             content,
             tool_calls: meta?.tool_calls,
+            model: meta?.model,
           })
         );
       },
@@ -457,6 +461,11 @@ export async function runCloudAwareToolLoop(
       thinking: local.thinking,
       webSearchResult: local.webSearchResult,
       artifacts: [] as ArtifactResult[],
+      model:
+        local.model ||
+        opts.modelId?.trim() ||
+        useModelStore.getState().selectedModel?.trim() ||
+        undefined,
     };
   };
 
@@ -529,6 +538,7 @@ export async function runCloudNativeToolLoop(
   const artifacts: ArtifactResult[] = [];
   let thinking = "";
   let lastContent = "";
+  let lastModel: string | undefined;
 
   try {
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
@@ -560,6 +570,7 @@ export async function runCloudNativeToolLoop(
       );
 
       lastContent = decision.content;
+      if (decision.model?.trim()) lastModel = decision.model.trim();
 
       let toolCalls = decision.tool_calls ?? [];
 
@@ -590,6 +601,7 @@ export async function runCloudNativeToolLoop(
             thinking,
             webSearchResult,
             artifacts,
+            model: lastModel,
           };
         } else {
           break;
@@ -603,6 +615,7 @@ export async function runCloudNativeToolLoop(
           thinking,
           webSearchResult,
           artifacts,
+          model: lastModel,
         };
       }
 
@@ -660,37 +673,42 @@ export async function runCloudNativeToolLoop(
     }
 
     // Final prose turn without tools
-    const finale = await new Promise<{ content: string }>((resolve, reject) => {
-      let content = "";
-      streamChatByMode({
-        messages,
-        intent: "quick_chat",
-        containsFileContext: opts.containsFileContext ?? false,
-        userConfirmedCloudContext: opts.userConfirmedCloudContext,
-        contextSource: opts.contextSource,
-        modelId: opts.modelId,
-        signal: opts.signal,
-        disableThinking: opts.disableThinking,
-        disableLocalFallback: true,
-        generationOptions: opts.generationOptions,
-        onChunk: (chunk) => {
-          content += chunk;
-          opts.onChunk(chunk);
-        },
-        onThinking: (t) => {
-          thinking += t;
-          opts.onThinking(t);
-        },
-        onFinish: () => resolve({ content }),
-        onError: reject,
-      });
-    });
+    const finale = await new Promise<{ content: string; model?: string }>(
+      (resolve, reject) => {
+        let content = "";
+        streamChatByMode({
+          messages,
+          intent: "quick_chat",
+          containsFileContext: opts.containsFileContext ?? false,
+          userConfirmedCloudContext: opts.userConfirmedCloudContext,
+          contextSource: opts.contextSource,
+          modelId: opts.modelId,
+          signal: opts.signal,
+          disableThinking: opts.disableThinking,
+          disableLocalFallback: true,
+          generationOptions: opts.generationOptions,
+          onChunk: (chunk) => {
+            content += chunk;
+            opts.onChunk(chunk);
+          },
+          onThinking: (t) => {
+            thinking += t;
+            opts.onThinking(t);
+          },
+          onFinish: (meta) =>
+            resolve({ content, model: meta?.model }),
+          onError: reject,
+        });
+      }
+    );
+    if (finale.model?.trim()) lastModel = finale.model.trim();
 
     return {
       content: finale.content || lastContent,
       thinking,
       webSearchResult,
       artifacts,
+      model: lastModel,
     };
   } finally {
     opts.onToolStatus?.(null);

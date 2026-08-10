@@ -982,7 +982,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
           const isNew = idx >= prevMsgCount;
           return (
             <React.Fragment key={idx}>
-              <div className={`${isNew ? "animate-msg-fade" : ""} flex gap-3 mb-6 max-w-3xl mx-auto ${msg.role === "user" ? "justify-end" : ""}`}>
+              <div className={`${isNew ? "animate-msg-fade" : ""} group/msg flex gap-3 mb-6 max-w-3xl mx-auto ${msg.role === "user" ? "justify-end" : ""}`}>
                 {msg.role === "user" ? (
                   <>
                     <div className="flex flex-col items-end flex-1 min-w-0">
@@ -1226,7 +1226,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
                         {mediaAssets[idx] && msg.artifactUseSidePanel && (
                           <MediaGallery assets={mediaAssets[idx]} />
                         )}
-                        <div className="flex items-center gap-1 mt-2 pt-1.5">
+                        <div className="flex items-center gap-1 mt-2 pt-1.5 min-h-[1.5rem]">
                           <CopyMsgButton text={msg.content} label="Copy response" />
                           {/* Read response aloud button */}
                           <SpeakButton text={msg.content} compact />
@@ -1235,6 +1235,14 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
                               Generated in {msg.generateTime}s {msg.firstTokenTime !== undefined && `• First token in ${msg.firstTokenTime}s`}
                             </span>
                           )}
+                          {msg.generatedByModel ? (
+                            <span
+                              className="ml-auto max-w-[55%] truncate text-[0.72rem] text-txt-muted opacity-0 transition-opacity duration-150 group-hover/msg:opacity-100"
+                              title={msg.generatedByModel}
+                            >
+                              {msg.generatedByModel}
+                            </span>
+                          ) : null}
                         </div>
                       </div>
                       {/* Render AudioPlayer after assistant message if audioUrl is present */}

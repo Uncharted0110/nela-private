@@ -68,6 +68,8 @@ export interface ChatMessage {
   streamingArtifactCsv?: string;
   streamingArtifactType?: "text/html" | "text/csv";
   streamingArtifactTitle?: string;
+  /** OpenRouter / local model id that produced this assistant turn. */
+  generatedByModel?: string;
 }
 
 export interface ChatContextMessage {

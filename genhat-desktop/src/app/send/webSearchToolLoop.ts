@@ -86,6 +86,8 @@ export interface WebSearchToolLoopResult {
   content: string;
   thinking: string;
   webSearchResult: WebSearchResult | null;
+  /** Local model id used for this turn. */
+  model?: string;
 }
 
 function buildHostToolSystem(opts: {
@@ -363,6 +365,7 @@ export async function runWebSearchToolLoop(
             content: decision.content,
             thinking,
             webSearchResult,
+            model: opts.modelId?.trim() || undefined,
           };
         }
         break;
@@ -535,6 +538,7 @@ export async function runWebSearchToolLoop(
       content: streamed.content,
       thinking: thinking + (streamed.thinking || ""),
       webSearchResult,
+      model: opts.modelId?.trim() || undefined,
     };
   } finally {
     opts.onToolStatus?.(null);

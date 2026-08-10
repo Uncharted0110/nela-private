@@ -616,6 +616,13 @@ pub async fn chat_stream(
         return Err(read_error_body(resp).await);
     }
 
+    let mut stream_model: Option<String> = resp
+        .headers()
+        .get("x-nela-selected-model")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+
     let content_type = resp
         .headers()
         .get(reqwest::header::CONTENT_TYPE)
@@ -680,11 +687,18 @@ pub async fn chat_stream(
                 if data == "[DONE]" {
                     if !emitted_done {
                         emitted_done = true;
-                        emit_stream_done(app, &tool_acc);
+                        emit_stream_done(app, &tool_acc, stream_model.as_deref());
                     }
                     continue;
                 }
                 if let Ok(value) = serde_json::from_str::<Value>(data) {
+                    if stream_model.is_none() {
+                        if let Some(m) = value.get("model").and_then(|v| v.as_str()) {
+                            if !m.is_empty() {
+                                stream_model = Some(m.to_string());
+                            }
+                        }
+                    }
                     if let Some(text) = extract_stream_delta(&value) {
                         if !text.is_empty() {
                             let _ = app.emit(
@@ -699,7 +713,7 @@ pub async fn chat_stream(
         }
 
         if !emitted_done {
-            emit_stream_done(app, &tool_acc);
+            emit_stream_done(app, &tool_acc, stream_model.as_deref());
         }
         return Ok(());
     }
@@ -715,18 +729,34 @@ pub async fn chat_stream(
         );
     }
     let tool_calls = extract_message_tool_calls(&value);
+    let model = value
+        .get("model")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            value
+                .pointer("/nela/selectedModel")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+        });
     let mut payload = serde_json::json!({ "chunk": "", "done": true });
     if let Some(calls) = tool_calls {
         payload["tool_calls"] = calls;
+    }
+    if let Some(m) = model {
+        payload["model"] = serde_json::json!(m);
     }
     let _ = app.emit("cloud-chat-stream", payload);
     Ok(())
 }
 
-fn emit_stream_done(app: &AppHandle, tool_acc: &ToolCallAccumulator) {
+fn emit_stream_done(app: &AppHandle, tool_acc: &ToolCallAccumulator, model: Option<&str>) {
     let mut payload = serde_json::json!({ "chunk": "", "done": true });
     if let Some(calls) = tool_acc.finish() {
         payload["tool_calls"] = calls;
+    }
+    if let Some(m) = model.filter(|s| !s.is_empty()) {
+        payload["model"] = serde_json::json!(m);
     }
     let _ = app.emit("cloud-chat-stream", payload);
 }
