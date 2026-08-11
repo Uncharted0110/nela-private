@@ -707,6 +707,18 @@ pub async fn chat_stream(
                             );
                         }
                     }
+                    if let Some(thinking) = extract_stream_reasoning(&value) {
+                        if !thinking.is_empty() {
+                            let _ = app.emit(
+                                "cloud-chat-stream",
+                                serde_json::json!({
+                                    "chunk": "",
+                                    "thinking": thinking,
+                                    "done": false
+                                }),
+                            );
+                        }
+                    }
                     tool_acc.ingest_delta(&value);
                 }
             }
@@ -857,6 +869,47 @@ fn extract_stream_delta(value: &Value) -> Option<String> {
     value
         .pointer("/choices/0/delta/content")
         .and_then(content_to_plain)
+}
+
+/// OpenRouter reasoning deltas: `reasoning`, `reasoning_content`, or `reasoning_details`.
+fn extract_stream_reasoning(value: &Value) -> Option<String> {
+    let delta = value.pointer("/choices/0/delta").or_else(|| value.get("delta"));
+    let Some(delta) = delta else {
+        return None;
+    };
+
+    if let Some(text) = delta.get("reasoning").and_then(content_to_plain) {
+        if !text.is_empty() {
+            return Some(text);
+        }
+    }
+    if let Some(text) = delta.get("reasoning_content").and_then(content_to_plain) {
+        if !text.is_empty() {
+            return Some(text);
+        }
+    }
+
+    let details = delta.get("reasoning_details")?.as_array()?;
+    let mut out = String::new();
+    for part in details {
+        let kind = part.get("type").and_then(|v| v.as_str()).unwrap_or("");
+        if kind == "reasoning.text" || kind.ends_with(".text") {
+            if let Some(text) = part.get("text").and_then(|v| v.as_str()) {
+                out.push_str(text);
+            }
+        } else if kind == "reasoning.summary" || kind.ends_with(".summary") {
+            if let Some(text) = part.get("summary").and_then(|v| v.as_str()) {
+                out.push_str(text);
+            }
+        } else if let Some(text) = part.get("text").and_then(|v| v.as_str()) {
+            out.push_str(text);
+        }
+    }
+    if out.is_empty() {
+        None
+    } else {
+        Some(out)
+    }
 }
 
 /// OpenRouter / OpenAI deltas may send `content` as a string or as text parts.

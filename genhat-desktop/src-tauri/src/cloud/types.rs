@@ -287,6 +287,9 @@ pub struct CloudChatRequest {
     pub tool_choice: Option<Value>,
     #[serde(rename = "response_format", skip_serializing_if = "Option::is_none")]
     pub response_format: Option<CloudResponseFormat>,
+    /// When true, OpenRouter should include reasoning tokens in the SSE stream.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub include_reasoning: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client: Option<CloudChatClientMeta>,
 }

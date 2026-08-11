@@ -28,10 +28,10 @@ use std::time::{Duration, Instant};
 
 /// Legacy flat cap (kept for callers); discovery uses [`max_file_bytes_for_ext`].
 pub const MAX_FILE_BYTES: u64 = 3_000_000;
-/// Truncate individual content blocks before graph storage.
+/// Soft cap for a single ContentBlock; oversize text is split, never truncated.
 pub const MAX_BLOCK_CHARS: usize = 1_500;
-/// Max content blocks retained per document (large manuals / books).
-pub const MAX_BLOCKS_PER_DOC: usize = 250;
+/// Max content blocks retained per document (raised so split chunks are not dropped).
+pub const MAX_BLOCKS_PER_DOC: usize = 2_000;
 
 /// Extension-aware discovery size limits (bytes).
 pub fn max_file_bytes_for_ext(ext: &str) -> u64 {
@@ -92,6 +92,9 @@ pub struct PipelineReport {
     pub errors: Vec<String>,
     /// Absolute paths queued for Pass 2 background retry.
     pub deferred_files: Vec<String>,
+    /// Successful Pass-1 fingerprints (with extraction quality) for manifest upsert.
+    #[serde(skip)]
+    pub fingerprints: HashMap<String, FileFingerprint>,
 }
 
 /// Status of the Pass 2 background retry worker.
@@ -107,21 +110,103 @@ pub struct BackgroundIndexStatus {
 
 pub type ProgressCallback = Arc<dyn Fn(IndexingProgress) + Send + Sync>;
 
-fn truncate_block(s: &str) -> String {
-    if s.chars().count() <= MAX_BLOCK_CHARS {
-        s.to_string()
-    } else {
-        format!("{}…", s.chars().take(MAX_BLOCK_CHARS).collect::<String>())
+/// Recursively split text exceeding `max_chars` on paragraph (`\n\n`) then
+/// sentence (`. `) boundaries. Never drops content or appends ellipsis.
+pub fn split_large_block(text: &str, max_chars: usize) -> Vec<String> {
+    let max_chars = max_chars.max(1);
+    if text.chars().count() <= max_chars {
+        return if text.is_empty() {
+            Vec::new()
+        } else {
+            vec![text.to_string()]
+        };
     }
+
+    // Prefer paragraph boundaries.
+    if text.contains("\n\n") {
+        let mut out = Vec::new();
+        for part in text.split("\n\n") {
+            let trimmed = part.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            out.extend(split_large_block(trimmed, max_chars));
+        }
+        if !out.is_empty() {
+            return out;
+        }
+    }
+
+    // Fall back to sentence boundaries.
+    if text.contains(". ") {
+        let mut out = Vec::new();
+        let mut buf = String::new();
+        for sentence in text.split_inclusive(". ") {
+            let candidate = if buf.is_empty() {
+                sentence.to_string()
+            } else {
+                format!("{buf}{sentence}")
+            };
+            if !buf.is_empty() && candidate.chars().count() > max_chars {
+                out.extend(split_large_block(&buf, max_chars));
+                buf = sentence.to_string();
+            } else {
+                buf = candidate;
+            }
+        }
+        if !buf.is_empty() {
+            if buf.chars().count() > max_chars {
+                out.extend(hard_split_chars(&buf, max_chars));
+            } else {
+                out.push(buf);
+            }
+        }
+        if !out.is_empty() {
+            return out;
+        }
+    }
+
+    hard_split_chars(text, max_chars)
+}
+
+fn hard_split_chars(text: &str, max_chars: usize) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut buf = String::new();
+    let mut count = 0usize;
+    for ch in text.chars() {
+        if count >= max_chars && !buf.is_empty() {
+            out.push(std::mem::take(&mut buf));
+            count = 0;
+        }
+        buf.push(ch);
+        count += 1;
+    }
+    if !buf.is_empty() {
+        out.push(buf);
+    }
+    out
 }
 
 fn cap_document(mut doc: ParsedDocument) -> ParsedDocument {
-    let mut kept = 0usize;
+    // Expand oversize blocks into sequential siblings (same parent container).
     for c in &mut doc.containers {
-        for b in &mut c.blocks {
-            b.content = truncate_block(&b.content);
+        let mut expanded = Vec::new();
+        for b in std::mem::take(&mut c.blocks) {
+            let pieces = split_large_block(&b.content, MAX_BLOCK_CHARS);
+            if pieces.is_empty() {
+                continue;
+            }
+            for piece in pieces {
+                expanded.push(crate::doc_graph::parsers::traits::ParsedContentBlock {
+                    content: piece,
+                    block_type: b.block_type.clone(),
+                });
+            }
         }
+        c.blocks = expanded;
     }
+
+    let mut kept = 0usize;
     for c in &mut doc.containers {
         if kept >= MAX_BLOCKS_PER_DOC {
             c.blocks.clear();
@@ -377,7 +462,7 @@ pub fn run_pipeline(
     // Rewrite manifest for every non-deferred discovered file.
     let mut manifest = IndexManifest {
         root: root.to_string_lossy().to_string(),
-        files: HashMap::new(),
+        ..Default::default()
     };
     for path in &files {
         if report
@@ -387,7 +472,10 @@ pub fn run_pipeline(
         {
             continue;
         }
-        if let Some(fp) = FileFingerprint::from_path(path) {
+        let key = IndexManifest::key(path);
+        if let Some(fp) = report.fingerprints.get(&key).cloned() {
+            manifest.upsert(path, fp);
+        } else if let Some(fp) = FileFingerprint::from_path(path) {
             manifest.upsert(path, fp);
         }
     }
@@ -434,7 +522,7 @@ pub fn run_incremental_sync(
         );
         manifest = IndexManifest {
             root: root.to_string_lossy().to_string(),
-            files: HashMap::new(),
+            ..Default::default()
         };
     }
     if manifest.root.is_empty() {
@@ -502,6 +590,7 @@ pub fn run_incremental_sync(
             },
             errors: Vec::new(),
             deferred_files: Vec::new(),
+            fingerprints: HashMap::new(),
         });
     }
 
@@ -537,7 +626,10 @@ pub fn run_incremental_sync(
         {
             continue;
         }
-        if let Some(fp) = FileFingerprint::from_path(path) {
+        let key = IndexManifest::key(path);
+        if let Some(fp) = report.fingerprints.get(&key).cloned() {
+            manifest.upsert(path, fp);
+        } else if let Some(fp) = FileFingerprint::from_path(path) {
             manifest.upsert(path, fp);
         }
     }
@@ -645,7 +737,8 @@ pub fn sync_paths(
         }
 
         match FileFingerprint::from_path(&path) {
-            Some(fp) if manifest.matches(&path, &fp) => {}
+            Some(fp)
+                if manifest.matches(&path, &fp) && !manifest.needs_reparse(&path) => {}
             Some(_) | None => {
                 let key = IndexManifest::key(&path);
                 if seen_index.insert(key) {
@@ -709,6 +802,7 @@ pub fn sync_paths(
             },
             errors: Vec::new(),
             deferred_files: Vec::new(),
+            fingerprints: HashMap::new(),
         }
     } else {
         let mut report = index_paths_batch(
@@ -733,7 +827,10 @@ pub fn sync_paths(
         {
             continue;
         }
-        if let Some(fp) = FileFingerprint::from_path(path) {
+        let key = IndexManifest::key(path);
+        if let Some(fp) = report.fingerprints.get(&key).cloned() {
+            manifest.upsert(path, fp);
+        } else if let Some(fp) = FileFingerprint::from_path(path) {
             manifest.upsert(path, fp);
         }
     }
@@ -868,7 +965,13 @@ fn index_paths_batch(
     });
 
     let t_asm = Instant::now();
+    let mut fingerprints: HashMap<String, FileFingerprint> = HashMap::new();
     for doc in &mapped {
+        if let Some(fp) =
+            FileFingerprint::from_path_with_extraction(&doc.path, &doc.parsed.extraction)
+        {
+            fingerprints.insert(IndexManifest::key(&doc.path), fp);
+        }
         if let Err(e) = assemble_graph_only(kb, &doc.path, &doc.parsed) {
             push_error(&mut errors, format!("assemble {}: {e}", doc.path.display()));
         }
@@ -928,16 +1031,18 @@ fn index_paths_batch(
             .into_iter()
             .map(|p| p.to_string_lossy().to_string())
             .collect(),
+        fingerprints,
     })
 }
 
 /// Index a single deferred file (Pass 2). Caller holds whatever locks it needs.
+/// Returns `(chunks_indexed, fingerprint)`.
 pub fn index_one_deferred(
     path: &Path,
     kb: &mut KnowledgeBase,
     index: &TantivyIndex,
     registry: &Arc<ParserRegistry>,
-) -> Result<usize, ParserError> {
+) -> Result<(usize, FileFingerprint), ParserError> {
     let (path, parsed) =
         parse_pass2_with_timeout(registry.clone(), path.to_path_buf(), PARSE_TIMEOUT_PASS2)
             .map_err(|(_p, e)| e)?;
@@ -946,7 +1051,12 @@ pub fn index_one_deferred(
     index_prepared_chunks(index, &prepared).map_err(|e| ParserError::ParseFailure(e.to_string()))?;
     assemble_graph_only(kb, &path, &parsed)
         .map_err(|e| ParserError::ParseFailure(e.to_string()))?;
-    Ok(n)
+    let fp = FileFingerprint::from_path_with_extraction(&path, &parsed.extraction)
+        .or_else(|| FileFingerprint::from_path(&path))
+        .ok_or_else(|| {
+            ParserError::ParseFailure(format!("{}: cannot fingerprint path", path.display()))
+        })?;
+    Ok((n, fp))
 }
 
 pub fn query_kb(
@@ -1010,3 +1120,29 @@ pub const EXCLUDED_DIR_NAMES: &[&str] = &[
     "knowledge_base",
     "knowledge_base_bench",
 ];
+
+#[cfg(test)]
+mod split_tests {
+    use super::split_large_block;
+
+    #[test]
+    fn split_preserves_all_chars() {
+        let long = "Hello world. ".repeat(200); // ~2600 chars
+        let parts = split_large_block(&long, 1500);
+        assert!(parts.len() >= 2);
+        let joined: String = parts.concat();
+        assert_eq!(joined, long);
+        assert!(!joined.contains('…'));
+    }
+
+    #[test]
+    fn split_on_paragraphs() {
+        let a = "a".repeat(800);
+        let b = "b".repeat(800);
+        let text = format!("{a}\n\n{b}");
+        let parts = split_large_block(&text, 1500);
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[0], a);
+        assert_eq!(parts[1], b);
+    }
+}

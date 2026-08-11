@@ -84,6 +84,6 @@ impl DocumentParser for XlsxParser {
             });
         }
 
-        Ok(ParsedDocument { title, containers })
+        Ok(ParsedDocument { title, containers, ..Default::default() })
     }
 }

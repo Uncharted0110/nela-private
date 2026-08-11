@@ -18,7 +18,8 @@ pub struct ExpandedSource {
     pub container_index: u32,
     /// Petgraph index of the document root.
     pub document_index: u32,
-    /// Ordered ContentBlock indices in the ±radius window (same container only).
+    /// Ordered ContentBlock indices in the ±radius window (may include one
+    /// peek block from the next container at page/section boundaries).
     pub window_block_indices: Vec<u32>,
     pub context_blocks: Vec<String>,
     /// Total character length of all ContentBlocks under this document.
@@ -76,8 +77,10 @@ pub fn ordered_blocks_in_container(kb: &KnowledgeBase, container: NodeIndex) -> 
     blocks
 }
 
-/// Retrieve ContentBlocks within `radius` of `hit_idx` **inside the same parent
-/// container**. Does not cross container boundaries (e.g. Slide 1 ↛ Slide 2).
+/// Retrieve ContentBlocks within `radius` of `hit_idx` inside the parent
+/// container. When the hit is near the end of a container and `radius` would
+/// reach past the last block, peek into the first block of the next sibling
+/// container so page-boundary sentences are not severed.
 pub fn get_chunk_window(
     kb: &KnowledgeBase,
     hit_idx: NodeIndex,
@@ -102,7 +105,26 @@ pub fn get_chunk_window(
     let focus_pos = ordered.iter().position(|n| *n == hit_idx).unwrap_or(0);
     let start = focus_pos.saturating_sub(radius);
     let end = (focus_pos + radius + 1).min(ordered.len());
-    ordered[start..end].to_vec()
+    let mut window = ordered[start..end].to_vec();
+
+    // Container-boundary peek: last block + forward radius → first block of next page/section.
+    if radius > 0 && focus_pos + radius >= ordered.len() {
+        if let Some(peek) = first_block_of_next_container(kb, container) {
+            if !window.contains(&peek) {
+                window.push(peek);
+            }
+        }
+    }
+
+    window
+}
+
+fn first_block_of_next_container(kb: &KnowledgeBase, container: NodeIndex) -> Option<NodeIndex> {
+    let document = parent_document(kb, container)?;
+    let containers = ordered_containers(kb, document);
+    let pos = containers.iter().position(|c| *c == container)?;
+    let next = *containers.get(pos + 1)?;
+    ordered_blocks_in_container(kb, next).into_iter().next()
 }
 
 pub fn expand_context(kb: &KnowledgeBase, chunk_id: &str) -> Option<ExpandedSource> {
@@ -349,7 +371,7 @@ mod tests {
     };
     use std::path::PathBuf;
 
-    fn tiny_kb() -> (KnowledgeBase, NodeIndex, NodeIndex, NodeIndex) {
+    fn tiny_kb() -> (KnowledgeBase, NodeIndex, NodeIndex, NodeIndex, NodeIndex) {
         let mut kb = KnowledgeBase::new();
         let doc = kb.graph.add_node(NodeType::Document {
             file_name: "deck.pptx".into(),
@@ -423,7 +445,7 @@ mod tests {
             prev = Some(b);
             blocks.push(b);
         }
-        // Block on slide 2 — must not enter slide-1 windows.
+        // Block on slide 2 — peeked only when the hit is the last block of slide 1.
         let other = kb.graph.add_node(NodeType::ContentBlock {
             content: "OTHER".into(),
             block_type: BlockType::Paragraph,
@@ -439,28 +461,28 @@ mod tests {
             },
         );
 
-        (kb, blocks[0], blocks[1], blocks[2])
+        (kb, blocks[0], blocks[1], blocks[2], other)
     }
 
     #[test]
-    fn chunk_window_stays_inside_container() {
-        let (kb, a, b, c) = tiny_kb();
+    fn chunk_window_stays_inside_container_for_interior_hits() {
+        let (kb, a, b, c, other) = tiny_kb();
         let win = get_chunk_window(&kb, b, 1);
         assert_eq!(win, vec![a, b, c]);
-        let texts: Vec<_> = win
-            .iter()
-            .filter_map(|n| match &kb.graph[*n] {
-                NodeType::ContentBlock { content, .. } => Some(content.as_str()),
-                _ => None,
-            })
-            .collect();
-        assert!(!texts.contains(&"OTHER"));
+        assert!(!win.contains(&other));
     }
 
     #[test]
     fn chunk_window_edge_clamps() {
-        let (kb, a, b, _) = tiny_kb();
+        let (kb, a, b, _, _) = tiny_kb();
         let win = get_chunk_window(&kb, a, 1);
         assert_eq!(win, vec![a, b]);
+    }
+
+    #[test]
+    fn chunk_window_peeks_next_container_at_boundary() {
+        let (kb, _, b, c, other) = tiny_kb();
+        let win = get_chunk_window(&kb, c, 1);
+        assert_eq!(win, vec![b, c, other]);
     }
 }

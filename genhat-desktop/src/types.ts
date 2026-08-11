@@ -738,6 +738,8 @@ export interface CloudChatRequest {
   tools?: CloudToolDefinition[];
   tool_choice?: CloudToolChoice;
   response_format?: { type: "json_object" | "text" };
+  /** When true, ask OpenRouter to include streamed reasoning tokens. */
+  includeReasoning?: boolean;
   client?: {
     appVersion?: string;
     platform?: string;

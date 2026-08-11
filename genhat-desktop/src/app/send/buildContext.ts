@@ -13,6 +13,7 @@ import {
 import { useModelStore } from "../../stores/modelStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import type { SendHandlerContext } from "./types";
+import { shouldStreamCloudReasoning } from "./cloudReasoning";
 
 export const abortControllersRef: MutableRefObject<Map<string, AbortController>> = {
   get current() {
@@ -73,7 +74,7 @@ export function buildSendHandlerContext(): SendHandlerContext {
     selectedTtsEngine: modelStore.selectedTtsEngine,
     ttsVoice: modelStore.ttsVoice,
     ttsSpeed: modelStore.ttsSpeed,
-    thinkingEnabled: advanced ? chatModeStore.thinkingEnabled : false,
+    thinkingEnabled: shouldStreamCloudReasoning(chatModeStore.thinkingEnabled),
     abortControllersRef,
     visionUnlistenRef,
     generalIntervalRef,

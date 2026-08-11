@@ -165,7 +165,7 @@ export async function handleSendDirectDocs(
       undefined,
       ctx.selectedModel || undefined,
       ctrl.signal,
-      !ctx.thinkingEnabled,
+      true, // local direct-docs path — never stream llama reasoning into chat UI
       generationOptions
     );
   } catch (e) {

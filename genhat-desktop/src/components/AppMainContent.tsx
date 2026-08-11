@@ -139,7 +139,7 @@ export default function AppMainContent({ networkActive: networkActiveProp }: App
 
   // ── Derived state ─────────────────────────────────────────────────────────
   const effectiveRagEnabled = advanced ? ragEnabled : true;
-  const effectiveThinkingEnabled = advanced ? thinkingEnabled : false;
+  const effectiveThinkingEnabled = thinkingEnabled;
 
   const activeMindmapGraph = activeMindmapOverlay
     ? (mindmapsBySession[activeMindmapOverlay.sessionId] ?? []).find(

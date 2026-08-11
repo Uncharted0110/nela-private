@@ -166,7 +166,7 @@ export async function handleSendRag(
         setup.llama_port,
         ctx.selectedModel || undefined,
         ctrl.signal,
-        !ctx.thinkingEnabled,
+        true, // local RAG path — never stream llama reasoning into chat UI
         generationOptions
       );
     }

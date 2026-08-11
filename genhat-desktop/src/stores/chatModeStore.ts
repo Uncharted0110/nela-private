@@ -86,7 +86,7 @@ interface ChatModeActions {
 export const useChatModeStore = create<ChatModeState & ChatModeActions>((set) => ({
   // Initial state
   chatMode: "text",
-  thinkingEnabled: false,
+  thinkingEnabled: true,
   ragEnabled: false,
   ragDocs: [],
   ragIngesting: false,

@@ -130,6 +130,6 @@ impl DocumentParser for HtmlParser {
             }
         }
 
-        Ok(ParsedDocument { title, containers })
+        Ok(ParsedDocument { title, containers, ..Default::default() })
     }
 }

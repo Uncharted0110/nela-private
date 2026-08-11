@@ -12,6 +12,7 @@ import type { GenerationProgressMode } from "../app/generationProgress";
 import { useCloudStore } from "../stores/cloudStore";
 import { useChatModeStore } from "../stores/chatModeStore";
 import ChatMessageItem, { GenerationTimer } from "./ChatMessageItem";
+import ReasoningDisclosure from "./ReasoningDisclosure";
 import { scrubChatArtifactProtocol } from "../app/streamArtifactParser";
 import "./ModeBanner.css";
 import "./WebSearchDisclosure.css";
@@ -852,20 +853,15 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
                   <span>{liveToolStatus}</span>
                 </div>
               )}
-              {advanced && streamingThinking && (
-                <div className="mb-3 p-3 rounded-lg bg-black/20 border border-white/5 text-xs text-txt-muted leading-relaxed opacity-70">
-                  <div className="flex items-center gap-2 mb-2">
-                    <span className="font-medium">Thinking...</span>
-                  </div>
-                  <pre className="whitespace-pre-wrap font-mono">{streamingThinking}</pre>
-                </div>
-              )}
+              {streamingThinking.trim() ? (
+                <ReasoningDisclosure thinking={streamingThinking} streaming />
+              ) : null}
               {streamingContent && !looksLikeArtifactDump(streamingContent) ? (
                 <MarkdownRenderer
                   content={scrubChatArtifactProtocol(streamingContent)}
                   streaming
                 />
-              ) : !advanced || !streamingThinking ? (
+              ) : !streamingThinking.trim() ? (
                 !liveToolStatus || looksLikeArtifactDump(streamingContent) ? (
                   <GenerationTimer
                     active
