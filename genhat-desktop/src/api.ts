@@ -1295,11 +1295,21 @@ export const Api = {
   async parseSpreadsheetData(
     path: string,
     maxRows?: number
-  ): Promise<{ sheet_name: string; rows: string[][]; truncated?: boolean }> {
-    return invoke<{ sheet_name: string; rows: string[][]; truncated?: boolean }>(
-      "parse_spreadsheet_data",
-      { path, maxRows: maxRows ?? null }
-    );
+  ): Promise<{
+    sheet_name: string;
+    rows: string[][];
+    truncated?: boolean;
+    sheets?: Array<{ sheet_name: string; rows: string[][]; truncated?: boolean }>;
+  }> {
+    return invoke<{
+      sheet_name: string;
+      rows: string[][];
+      truncated?: boolean;
+      sheets?: Array<{ sheet_name: string; rows: string[][]; truncated?: boolean }>;
+    }>("parse_spreadsheet_data", {
+      path,
+      maxRows: maxRows ?? null,
+    });
   },
 
   /** Download a remote image as a base64 data URI for artifact embedding. */

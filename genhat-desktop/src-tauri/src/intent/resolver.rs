@@ -353,13 +353,36 @@ fn matches_artifact_edit_trigger(prompt: &str) -> bool {
         || lower.contains("create a new")
         || lower.contains("make a new")
         || lower.contains("build a new")
-        || lower.contains("generate a new");
+        || lower.contains("generate a new")
+        || lower.contains("new excel")
+        || lower.contains("new spreadsheet")
+        || lower.contains("new workbook")
+        || (lower.contains("create")
+            && (lower.contains("excel")
+                || lower.contains("spreadsheet")
+                || lower.contains("workbook")
+                || lower.contains("presentation")
+                || lower.contains("deck")
+                || lower.contains("html")));
 
     let references_existing = references_existing_artifact(&lower);
     let structural = is_structural_artifact_edit(&lower);
 
     if strong_create && !references_existing {
         return false;
+    }
+    // Create a new artifact even if the prompt says "in the sheet have…" —
+    // that is content instruction, not an edit of an open file.
+    if strong_create {
+        let explicit_edit = (lower.contains("edit ")
+            || lower.contains("modify ")
+            || lower.contains("update ")
+            || lower.contains("revise ")
+            || lower.contains("fix "))
+            && references_existing;
+        if !explicit_edit {
+            return false;
+        }
     }
 
     // Session artifact alone is not enough — require an explicit target hint or
@@ -412,6 +435,8 @@ fn has_edit_verb_word(lower: &str) -> bool {
 }
 
 fn references_existing_artifact(lower: &str) -> bool {
+    // Avoid bare "the sheet" / "the table" — common in create prompts
+    // ("In the sheet have the details…") and must not force edit routing.
     lower.contains("this file")
         || lower.contains("this deck")
         || lower.contains("this slide")
@@ -422,24 +447,28 @@ fn references_existing_artifact(lower: &str) -> bool {
         || lower.contains("this presentation")
         || lower.contains("this ppt")
         || lower.contains("this artifact")
-        || lower.contains("the file")
-        || lower.contains("the deck")
-        || lower.contains("the spreadsheet")
-        || lower.contains("the sheet")
-        || lower.contains("the page")
-        || lower.contains("the presentation")
-        || lower.contains("the ppt")
+        || lower.contains("this excel")
         || lower.contains("my deck")
         || lower.contains("my spreadsheet")
         || lower.contains("my presentation")
+        || lower.contains("my file")
         || lower.contains("current artifact")
+        || lower.contains("current deck")
+        || lower.contains("current spreadsheet")
         || lower.contains("above file")
         || lower.contains("attached file")
+        || lower.contains("attached spreadsheet")
         || lower.contains("open file")
+        || lower.contains("open deck")
         || lower.contains("same file")
         || lower.contains("same deck")
         || lower.contains("existing deck")
+        || lower.contains("existing file")
+        || lower.contains("existing spreadsheet")
         || lower.contains("existing presentation")
+        || lower.contains("the existing")
+        || lower.contains("the attached")
+        || lower.contains("the current")
 }
 
 fn is_structural_artifact_edit(lower: &str) -> bool {
@@ -511,6 +540,21 @@ mod tests {
     fn add_slide_is_structural_edit() {
         assert!(matches_artifact_edit_trigger(
             "add a slide about privacy at the end"
+        ));
+    }
+
+    #[test]
+    fn create_new_excel_with_in_the_sheet_is_not_edit() {
+        let prompt = "I want you to design a 5 day trip and create a new excel sheet. \
+            In the sheet have the details of all the hotels. Add relevant links.";
+        assert!(!matches_artifact_edit_trigger(prompt));
+        assert!(matches_artifact_trigger_excel(&prompt.to_lowercase()));
+    }
+
+    #[test]
+    fn edit_this_spreadsheet_still_matches() {
+        assert!(matches_artifact_edit_trigger(
+            "edit this spreadsheet and add a Budget column"
         ));
     }
 

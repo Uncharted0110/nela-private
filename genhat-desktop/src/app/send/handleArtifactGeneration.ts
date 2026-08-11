@@ -861,11 +861,11 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
             cloudMode: cloudHtmlMode ?? "local",
           })
         : schemaId === "spreadsheet_synthesis" && cloudSpreadsheetFreeform
-          ? `Create a spreadsheet as CSV for: "${text}".` +
+          ? `Create a spreadsheet workbook as CSV for: "${text}".` +
             (rowPlan.explicit && rowPlan.count
-              ? ` Include EXACTLY ${rowPlan.count} data rows.`
+              ? ` Include EXACTLY ${rowPlan.count} data rows on the primary sheet.`
               : "") +
-            ` Wrap it in <nela-artifact type="text/csv" title="...">...</nela-artifact>.`
+            ` When the topic has distinct tables, emit MULTIPLE <nela-artifact type="text/csv" title="ShortTabName">...</nela-artifact> blocks (one Excel sheet each). Use short titles (≤31 chars) for tab names. A single simple table may use one artifact.`
           : `Generate a plan for the user request: "${text}".${rowCountSuffix}`;
     const spreadsheetContext =
       schemaId === "html_synthesis" && spreadsheetData

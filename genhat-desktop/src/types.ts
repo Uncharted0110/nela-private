@@ -472,8 +472,20 @@ export type SpreadsheetOp =
       title?: string;
     };
 
+/** One worksheet inside a workbook. */
+export interface SpreadsheetSheet {
+  name: string;
+  headers?: string[];
+  rows?: string[][];
+  /** Optional per-sheet ops (WRITE_DATA, charts, etc.). */
+  ops?: SpreadsheetOp[];
+}
+
 export interface SpreadsheetPlan {
+  /** Legacy single-sheet ops (used when `sheets` is absent/empty). */
   ops: SpreadsheetOp[];
+  /** Multi-sheet workbook. When present and non-empty, each entry becomes a worksheet. */
+  sheets?: SpreadsheetSheet[];
   source_rows?: string[][];
   headers?: string[];
   output_name?: string;

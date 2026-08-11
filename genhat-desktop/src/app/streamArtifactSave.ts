@@ -13,8 +13,11 @@ import {
   type ChartPoolEntry,
 } from "./artifactChartPool";
 import { parseCSV } from "./send/csvParse";
-import { sanitizeCsvArtifactBody } from "./sanitizeCsvArtifact";
-import { normalizeSpreadsheetPlan } from "./spreadsheetPlan";
+import { extractCsvSheetArtifacts } from "./sanitizeCsvArtifact";
+import {
+  normalizeSpreadsheetPlan,
+  sanitizeExcelSheetName,
+} from "./spreadsheetPlan";
 import {
   parseHtmlArtifactOutput,
   parsePresentationHtmlArtifactOutput,
@@ -96,19 +99,35 @@ export async function saveStreamedCsvArtifact(input: {
   topic: string;
   title?: string;
 }): Promise<ArtifactResult> {
-  let csv = sanitizeCsvArtifactBody(input.rawBody);
-  if (!csv) {
+  const sheetArtifacts = extractCsvSheetArtifacts(input.rawBody);
+  if (!sheetArtifacts.length) {
     throw new Error("Streamed CSV was empty after removing artifact tags");
   }
-  const { headers, rows } = parseCSV(csv);
-  // Drop any residual tag rows that survived as "data".
-  const cleanHeaders = headers.filter((h) => !/<\/?nela-artifact\b/i.test(h));
-  const cleanRows = rows.filter(
-    (row) => !row.some((cell) => /<\/?nela-artifact\b/i.test(cell || ""))
-  );
-  if (!cleanHeaders.length) {
+
+  const sheets = sheetArtifacts
+    .map((sheet, idx) => {
+      const { headers, rows } = parseCSV(sheet.csv);
+      const cleanHeaders = headers.filter((h) => !/<\/?nela-artifact\b/i.test(h));
+      const cleanRows = rows.filter(
+        (row) => !row.some((cell) => /<\/?nela-artifact\b/i.test(cell || ""))
+      );
+      if (!cleanHeaders.length) return null;
+      const name = sanitizeExcelSheetName(
+        sheet.title || input.title || `Sheet${idx + 1}`
+      );
+      return {
+        name,
+        ops: [
+          { op: "WRITE_DATA" as const, headers: cleanHeaders, rows: cleanRows },
+        ],
+      };
+    })
+    .filter((s): s is NonNullable<typeof s> => s !== null);
+
+  if (!sheets.length) {
     throw new Error("Streamed CSV had no header row");
   }
+
   const outputName = (input.title || input.topic || "spreadsheet")
     .replace(/[\\/:*?"<>|]+/g, " ")
     .replace(/\s+/g, " ")
@@ -118,13 +137,8 @@ export async function saveStreamedCsvArtifact(input: {
   return Api.generateSpreadsheet(
     normalizeSpreadsheetPlan(
       {
-        ops: [
-          { op: "WRITE_DATA", headers: cleanHeaders, rows: cleanRows },
-          {
-            op: "RENAME_SHEET",
-            name: (outputName || "Sheet").slice(0, 31),
-          },
-        ],
+        sheets,
+        ops: [],
         output_name: outputName || "spreadsheet",
       },
       { prompt: input.topic, hasSourceData: false }

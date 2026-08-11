@@ -320,6 +320,57 @@ pub fn parse_spreadsheet_plan(mut value: Value) -> Result<SpreadsheetPlan, Strin
         value = serde_json::json!({ "ops": [] });
     }
 
+    // Accept cloud-tool shape: { title, sheets: [{ name, headers, rows }] }
+    if value.get("ops").is_none() {
+        value["ops"] = Value::Array(vec![]);
+    }
+
+    if let Some(title) = value.get("title").and_then(|v| v.as_str()) {
+        if value.get("output_name").and_then(|v| v.as_str()).unwrap_or("").is_empty() {
+            value["output_name"] = Value::String(title.to_string());
+        }
+    }
+
+    if let Some(sheets) = value.get_mut("sheets").and_then(|v| v.as_array_mut()) {
+        for sheet in sheets.iter_mut() {
+            if let Some(obj) = sheet.as_object_mut() {
+                // Normalize rows alias
+                if obj.get("rows").is_none() {
+                    if let Some(sr) = obj.remove("source_rows") {
+                        obj.insert("rows".to_string(), sr);
+                    }
+                }
+                if let Some(ops) = obj.get_mut("ops").and_then(|v| v.as_array_mut()) {
+                    for op in ops.iter_mut() {
+                        normalize_spreadsheet_op(op);
+                    }
+                }
+                // Lift bare headers/rows into WRITE_DATA when ops empty
+                let has_ops = obj
+                    .get("ops")
+                    .and_then(|v| v.as_array())
+                    .is_some_and(|a| !a.is_empty());
+                if !has_ops {
+                    let headers = obj.get("headers").cloned().unwrap_or(Value::Array(vec![]));
+                    let rows = obj
+                        .get("rows")
+                        .cloned()
+                        .unwrap_or(Value::Array(vec![]));
+                    if headers.as_array().is_some_and(|h| !h.is_empty()) {
+                        obj.insert(
+                            "ops".to_string(),
+                            Value::Array(vec![serde_json::json!({
+                                "op": "WRITE_DATA",
+                                "headers": headers,
+                                "rows": rows,
+                            })]),
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     if let Some(ops) = value.get_mut("ops").and_then(|v| v.as_array_mut()) {
         for op in ops.iter_mut() {
             normalize_spreadsheet_op(op);
@@ -331,10 +382,18 @@ pub fn parse_spreadsheet_plan(mut value: Value) -> Result<SpreadsheetPlan, Strin
     let mut plan: SpreadsheetPlan = serde_json::from_value(value)
         .map_err(|e| format!("Invalid spreadsheet plan after repair: {e}"))?;
 
-    if plan.ops.is_empty() {
+    let has_sheets = plan
+        .sheets
+        .as_ref()
+        .is_some_and(|s| !s.is_empty());
+
+    if !has_sheets && plan.ops.is_empty() {
         plan.ops.push(SpreadsheetOp::WriteData {
             headers: vec!["Item".to_string(), "Details".to_string()],
-            rows: vec![vec!["Generated".to_string(), "Add data via WRITE_DATA".to_string()]],
+            rows: vec![vec![
+                "Generated".to_string(),
+                "Add data via WRITE_DATA".to_string(),
+            ]],
         });
     }
 

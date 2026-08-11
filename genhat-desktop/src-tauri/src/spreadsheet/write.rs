@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use rust_xlsxwriter::{Chart, ChartType, Color, Format, FormatBorder, Url, Workbook, Worksheet};
 
-use crate::grammar::schema::{SpreadsheetOp, SpreadsheetPlan};
+use crate::grammar::schema::{SpreadsheetOp, SpreadsheetPlan, SpreadsheetSheet};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // XLSX generation
@@ -19,7 +19,6 @@ pub fn write_spreadsheet_plan(plan: SpreadsheetPlan) -> Result<(PathBuf, Option<
     let path = crate::paths::unique_artifact_path(&out_dir, output_name, "xlsx");
 
     let mut workbook = Workbook::new();
-    let worksheet = workbook.add_worksheet();
 
     let header_fmt = Format::new()
         .set_bold()
@@ -32,9 +31,115 @@ pub fn write_spreadsheet_plan(plan: SpreadsheetPlan) -> Result<(PathBuf, Option<
         .set_border(FormatBorder::Thin)
         .set_border_color(Color::RGB(0xD0D0_D0));
 
+    let sheets = resolve_sheets(&plan);
+    let mut warnings: Vec<String> = Vec::new();
+    let mut used_names: HashMap<String, usize> = HashMap::new();
+
+    for (sheet_idx, sheet) in sheets.iter().enumerate() {
+        let worksheet = workbook.add_worksheet();
+        let sheet_name = unique_sheet_name(&sheet.name, sheet_idx, &mut used_names);
+        if let Err(e) = worksheet.set_name(&sheet_name) {
+            warnings.push(format!("Rename sheet '{sheet_name}': {e}"));
+        }
+
+        if let Err(mut sheet_warnings) =
+            write_one_sheet(worksheet, sheet, &header_fmt, &cell_fmt)
+        {
+            warnings.append(&mut sheet_warnings);
+        }
+    }
+
+    // ── Save the workbook ────────────────────────────────────────────────────
+    workbook
+        .save(&path)
+        .map_err(|e| format!("Save workbook: {e}"))?;
+
+    let warning = if warnings.is_empty() {
+        None
+    } else {
+        Some(warnings.join("; "))
+    };
+
+    Ok((path, warning))
+}
+
+fn resolve_sheets(plan: &SpreadsheetPlan) -> Vec<SpreadsheetSheet> {
+    if let Some(sheets) = &plan.sheets {
+        let nonempty: Vec<SpreadsheetSheet> = sheets
+            .iter()
+            .filter(|s| {
+                !s.ops.is_empty()
+                    || s.headers.as_ref().is_some_and(|h| !h.is_empty())
+                    || s.rows.as_ref().is_some_and(|r| !r.is_empty())
+            })
+            .cloned()
+            .collect();
+        if !nonempty.is_empty() {
+            return nonempty;
+        }
+    }
+
+    // Legacy single-sheet path: top-level ops / headers / source_rows.
+    vec![SpreadsheetSheet {
+        name: sheet_name_from_ops(&plan.ops).unwrap_or_else(|| "Sheet1".into()),
+        headers: plan.headers.clone(),
+        rows: plan.source_rows.clone(),
+        ops: plan.ops.clone(),
+    }]
+}
+
+fn sheet_name_from_ops(ops: &[SpreadsheetOp]) -> Option<String> {
+    ops.iter().find_map(|op| match op {
+        SpreadsheetOp::RenameSheet { name } if !name.trim().is_empty() => Some(name.clone()),
+        _ => None,
+    })
+}
+
+fn unique_sheet_name(
+    raw: &str,
+    sheet_idx: usize,
+    used: &mut HashMap<String, usize>,
+) -> String {
+    let mut cleaned = raw.trim().to_string();
+    cleaned = cleaned.replace(['\\', '/', '*', '?', ':', '[', ']'], "_");
+    if cleaned.is_empty() {
+        cleaned = format!("Sheet{}", sheet_idx + 1);
+    }
+    // Excel max 31 chars
+    let mut chars: Vec<char> = cleaned.chars().collect();
+    if chars.len() > 31 {
+        chars.truncate(31);
+    }
+    cleaned = chars.into_iter().collect::<String>().trim().to_string();
+    if cleaned.is_empty() {
+        cleaned = format!("Sheet{}", sheet_idx + 1);
+    }
+
+    let key = cleaned.to_ascii_lowercase();
+    let n = used.entry(key).or_insert(0);
+    *n += 1;
+    if *n == 1 {
+        cleaned
+    } else {
+        let suffix = format!(" ({n})");
+        let max_base = 31usize.saturating_sub(suffix.len());
+        let mut base: String = cleaned.chars().take(max_base).collect();
+        base.push_str(&suffix);
+        base
+    }
+}
+
+fn write_one_sheet(
+    worksheet: &mut Worksheet,
+    sheet: &SpreadsheetSheet,
+    header_fmt: &Format,
+    cell_fmt: &Format,
+) -> Result<(), Vec<String>> {
+    let mut warnings: Vec<String> = Vec::new();
+
     // Track working table so WRITE_DATA + ADD_CHART share the same columns.
-    let mut working_headers: Vec<String> = plan.headers.clone().unwrap_or_default();
-    let mut working_rows: Vec<Vec<String>> = plan.source_rows.clone().unwrap_or_default();
+    let mut working_headers: Vec<String> = sheet.headers.clone().unwrap_or_default();
+    let mut working_rows: Vec<Vec<String>> = sheet.rows.clone().unwrap_or_default();
 
     // Build column-index map from headers.
     let mut col_index: HashMap<String, usize> = working_headers
@@ -45,59 +150,67 @@ pub fn write_spreadsheet_plan(plan: SpreadsheetPlan) -> Result<(PathBuf, Option<
 
     // Write headers.
     for (col_idx, header) in working_headers.iter().enumerate() {
-        worksheet
-            .write_with_format(0, col_idx as u16, header.as_str(), &header_fmt)
-            .map_err(|e| format!("Write header: {e}"))?;
+        if let Err(e) =
+            worksheet.write_with_format(0, col_idx as u16, header.as_str(), header_fmt)
+        {
+            warnings.push(format!("Write header: {e}"));
+        }
     }
 
     // Write data rows.
     for (row_idx, row) in working_rows.iter().enumerate() {
         for (col_idx, cell) in row.iter().enumerate() {
-            write_smart_cell(
+            if let Err(e) = write_smart_cell(
                 worksheet,
                 row_idx as u32 + 1,
                 col_idx as u16,
                 cell,
-                &cell_fmt,
-            )?;
+                cell_fmt,
+            ) {
+                warnings.push(e);
+            }
         }
     }
 
-    let mut warnings: Vec<String> = Vec::new();
-
     // ── Apply operations ─────────────────────────────────────────────────────
-    // Operations that produce summary rows are appended after the data.
-    let mut next_row = working_rows.len() as u32 + 2; // +1 header, +1 blank gap
+    let mut next_row = if working_headers.is_empty() && working_rows.is_empty() {
+        0u32
+    } else {
+        working_rows.len() as u32 + 2 // +1 header, +1 blank gap
+    };
+    // When the sheet already has a table from headers/rows, WRITE_DATA should
+    // replace rather than append below — start at row 0 if table empty.
+    if working_headers.is_empty() && working_rows.is_empty() {
+        next_row = 0;
+    }
     let mut chart_slot: u16 = 0;
+    let mut wrote_primary_table = !working_headers.is_empty() || !working_rows.is_empty();
 
-    for op in &plan.ops {
+    for op in &sheet.ops {
         match op {
             SpreadsheetOp::SumColumn { col, label } => {
                 let col_letter = excel_col_letter(col_index.get(col.as_str()).copied());
                 let data_rows = working_rows.len() as u32;
 
                 if let Some(&ci) = col_index.get(col.as_str()) {
-                    // Write label in column A, formula in the target column.
                     let default_label = format!("SUM({col})");
                     let lbl = label.as_deref().unwrap_or(&default_label);
-                    worksheet
-                        .write(next_row, 0, lbl)
-                        .map_err(|e| format!("Write SUM label: {e}"))?;
+                    if let Err(e) = worksheet.write(next_row, 0, lbl) {
+                        warnings.push(format!("Write SUM label: {e}"));
+                    }
                     let formula = format!("=SUM({col_letter}2:{col_letter}{})", data_rows + 1);
-                    worksheet
-                        .write_formula(next_row, ci as u16, formula.as_str())
-                        .map_err(|e| format!("Write SUM formula: {e}"))?;
-
+                    if let Err(e) = worksheet.write_formula(next_row, ci as u16, formula.as_str())
+                    {
+                        warnings.push(format!("Write SUM formula: {e}"));
+                    }
                     next_row += 1;
                 } else {
                     warnings.push(format!("SUM_COLUMN: column '{col}' not found in headers"));
                 }
             }
 
-            SpreadsheetOp::RenameSheet { name } => {
-                worksheet
-                    .set_name(name)
-                    .map_err(|e| format!("Rename sheet: {e}"))?;
+            SpreadsheetOp::RenameSheet { .. } => {
+                // Sheet name already applied via sheet.name / unique_sheet_name.
             }
 
             SpreadsheetOp::AverageByGroup { value_col, group_col } => {
@@ -138,25 +251,41 @@ pub fn write_spreadsheet_plan(plan: SpreadsheetPlan) -> Result<(PathBuf, Option<
                     "ADD_COLUMN({name}={formula}): column appended as a note; formula not auto-wired"
                 ));
                 let new_col_idx = working_headers.len() as u16;
-                worksheet
-                    .write_with_format(0, new_col_idx, name.as_str(), &header_fmt)
-                    .map_err(|e| format!("Write ADD_COLUMN header: {e}"))?;
-            }
-            SpreadsheetOp::WriteData { headers: wd_headers, rows: wd_rows } => {
-                for (col_idx, header) in wd_headers.iter().enumerate() {
-                    worksheet
-                        .write_with_format(next_row, col_idx as u16, header.as_str(), &header_fmt)
-                        .map_err(|e| format!("Write WRITE_DATA header: {e}"))?;
+                if let Err(e) =
+                    worksheet.write_with_format(0, new_col_idx, name.as_str(), header_fmt)
+                {
+                    warnings.push(format!("Write ADD_COLUMN header: {e}"));
                 }
-                next_row += 1;
+            }
+            SpreadsheetOp::WriteData {
+                headers: wd_headers,
+                rows: wd_rows,
+            } => {
+                // First WRITE_DATA on an empty sheet writes at the top.
+                let write_at = if !wrote_primary_table { 0 } else { next_row };
+                for (col_idx, header) in wd_headers.iter().enumerate() {
+                    if let Err(e) = worksheet.write_with_format(
+                        write_at,
+                        col_idx as u16,
+                        header.as_str(),
+                        header_fmt,
+                    ) {
+                        warnings.push(format!("Write WRITE_DATA header: {e}"));
+                    }
+                }
+                let mut row_cursor = write_at + 1;
                 for row in wd_rows {
                     for (col_idx, cell) in row.iter().enumerate() {
-                        write_smart_cell(worksheet, next_row, col_idx as u16, cell, &cell_fmt)?;
+                        if let Err(e) =
+                            write_smart_cell(worksheet, row_cursor, col_idx as u16, cell, cell_fmt)
+                        {
+                            warnings.push(e);
+                        }
                     }
-                    next_row += 1;
+                    row_cursor += 1;
                 }
-                // Prefer WRITE_DATA as the working table when source was empty.
-                if working_headers.is_empty() || working_rows.is_empty() {
+                next_row = row_cursor + 1;
+                if !wrote_primary_table || working_headers.is_empty() || working_rows.is_empty() {
                     working_headers = wd_headers.clone();
                     working_rows = wd_rows.clone();
                     col_index = working_headers
@@ -164,6 +293,7 @@ pub fn write_spreadsheet_plan(plan: SpreadsheetPlan) -> Result<(PathBuf, Option<
                         .enumerate()
                         .map(|(i, h)| (h.clone(), i))
                         .collect();
+                    wrote_primary_table = true;
                 }
             }
             SpreadsheetOp::AddChart {
@@ -174,8 +304,8 @@ pub fn write_spreadsheet_plan(plan: SpreadsheetPlan) -> Result<(PathBuf, Option<
             } => {
                 match insert_dashboard_chart(
                     worksheet,
-                    &header_fmt,
-                    &cell_fmt,
+                    header_fmt,
+                    cell_fmt,
                     &working_headers,
                     &working_rows,
                     chart_type,
@@ -191,18 +321,11 @@ pub fn write_spreadsheet_plan(plan: SpreadsheetPlan) -> Result<(PathBuf, Option<
         }
     }
 
-    // ── Save the workbook ────────────────────────────────────────────────────
-    workbook
-        .save(&path)
-        .map_err(|e| format!("Save workbook: {e}"))?;
-
-    let warning = if warnings.is_empty() {
-        None
+    if warnings.is_empty() {
+        Ok(())
     } else {
-        Some(warnings.join("; "))
-    };
-
-    Ok((path, warning))
+        Err(warnings)
+    }
 }
 
 fn insert_dashboard_chart(
@@ -236,8 +359,9 @@ fn insert_dashboard_chart(
         return Err("ADD_CHART: no plottable points".into());
     }
 
-    // Write a compact summary table to the right of the data for the chart series.
-    let base_col = (headers.len() as u16).saturating_add(2).saturating_add(chart_slot * 4);
+    let base_col = (headers.len() as u16)
+        .saturating_add(2)
+        .saturating_add(chart_slot * 4);
     let summary_title = title.unwrap_or("Chart data");
     worksheet
         .write_with_format(0, base_col, "Category", header_fmt)
@@ -335,7 +459,6 @@ fn aggregate_sum(rows: &[Vec<String>], cat_idx: usize, val_idx: usize) -> Vec<(S
     points
 }
 
-/// Return the Excel column letter (A, B, …, Z, AA, …) for a zero-based column index.
 fn excel_col_letter(idx: Option<usize>) -> String {
     let mut n = idx.unwrap_or(0) + 1; // 1-based
     let mut result = String::new();
@@ -347,7 +470,6 @@ fn excel_col_letter(idx: Option<usize>) -> String {
     result
 }
 
-/// First http(s) URL in a cell, if any.
 fn extract_http_url(text: &str) -> Option<&str> {
     let lower = text.to_ascii_lowercase();
     let start = lower.find("https://").or_else(|| lower.find("http://"))?;

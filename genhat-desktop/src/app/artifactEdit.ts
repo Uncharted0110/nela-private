@@ -19,11 +19,21 @@ export const MAX_EDIT_SAMPLE_ROWS = 35;
 const EDIT_VERBS =
   /\b(edit|modify|update|change|revise|fix|adjust|tweak|improve|enhance|refine|rewrite|reformat|add|remove|delete|insert|replace|shorten|expand|increase|enrich|polish|correct|amend|patch)\b/i;
 
+/** Strong signal the user wants a brand-new artifact, not an edit. */
 const STRONG_CREATE_ONLY =
-  /\b(create|make|build|generate|synthesize|from scratch|brand new|new presentation|new spreadsheet|new deck|new html page)\b/i;
+  /\b(create|make|build|generate|synthesize|from scratch|brand new|new presentation|new spreadsheet|new workbook|new excel(?:\s+sheet)?|new (?:csv\s+)?sheet|new deck|new html(?:\s+page)?)\b/i;
 
+/**
+ * Explicit reference to an existing artifact.
+ * Deliberately excludes bare "the sheet" / "the table" — those appear in create
+ * prompts ("In the sheet have…") and were falsely routing generation → edit.
+ */
 const EDIT_FILE_HINT =
-  /\b(this|the|my|that|current|existing|above|attached|open|same)\s+(file|deck|slide|spreadsheet|sheet|workbook|table|page|html|artifact|presentation|ppt|excel|xlsx)\b/i;
+  /\b(this|my|that|current|existing|above|attached|open|same)\s+(file|deck|slide|spreadsheet|sheet|workbook|table|page|html|artifact|presentation|ppt|excel|xlsx)\b|\bthe\s+(existing|current|attached|open|same)\s+(file|deck|slide|spreadsheet|sheet|workbook|table|page|html|artifact|presentation|ppt|excel|xlsx)\b/i;
+
+/** Create/generate a spreadsheet, deck, HTML page, etc. */
+const CREATE_ARTIFACT_REQUEST =
+  /\b(create|make|build|generate|synthesize|design|plan)\b[\s\S]{0,80}\b(excel|spreadsheet|workbook|xlsx|csv|sheet|presentation|deck|slides?|powerpoint|pptx|html\s+page|landing\s+page|webpage|web\s+page)\b|\b(excel|spreadsheet|workbook|presentation|deck)\b[\s\S]{0,40}\b(create|make|build|generate)\b/i;
 
 /** Questions / explain prompts must never become artifact edits. */
 const INFORMATION_SEEKING =
@@ -104,8 +114,6 @@ export function matchesArtifactEditIntent(
 
   if (INFORMATION_SEEKING.test(trimmed)) return false;
 
-  if (!EDIT_VERBS.test(trimmed)) return false;
-
   const attachedEditable = (options.attachedPaths ?? []).filter(
     isEditableArtifactPath
   );
@@ -115,12 +123,19 @@ export function matchesArtifactEditIntent(
   );
   const hasEditableTarget = hasSessionArtifact || hasAttachedEditable;
 
-  if (!hasEditableTarget && !EDIT_FILE_HINT.test(trimmed)) return false;
-
-  // "Create a new deck" should stay on generation, not edit.
-  if (STRONG_CREATE_ONLY.test(trimmed) && !EDIT_FILE_HINT.test(trimmed)) {
-    return false;
+  // Creating a new workbook/deck/page must not fall into edit routing.
+  // Example failure: "create a new excel sheet… Add links… In the sheet have…"
+  // matched EDIT_VERBS ("Add") + EDIT_FILE_HINT ("the sheet") with no target.
+  if (STRONG_CREATE_ONLY.test(trimmed) || CREATE_ARTIFACT_REQUEST.test(trimmed)) {
+    const explicitEditExisting =
+      /\b(edit|modify|update|revise|fix|patch)\b/i.test(trimmed) &&
+      (hasEditableTarget || EDIT_FILE_HINT.test(trimmed));
+    if (!explicitEditExisting) return false;
   }
+
+  if (!EDIT_VERBS.test(trimmed)) return false;
+
+  if (!hasEditableTarget && !EDIT_FILE_HINT.test(trimmed)) return false;
 
   // Open session artifact alone is not enough — require an explicit "this deck"
   // style hint, an attached file, a structural edit, or a style tweak.

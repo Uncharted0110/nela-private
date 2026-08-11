@@ -74,7 +74,7 @@ EDIT MODE RULES:
 - When using WRITE_DATA, include the COMPLETE updated dataset (headers + all rows).
 - Do NOT invent columns that are not in the source unless the user asks for them.
 
-Schema: {"ops": [{"op": "SUM_COLUMN" | "AVERAGE_BY_GROUP" | "PIVOT" | "SORT_DESC" | "SORT_ASC" | "FILTER_ROWS" | "COUNT_BY_GROUP" | "ADD_COLUMN" | "RENAME_SHEET" | "WRITE_DATA", ...}]}`;
+Schema: Prefer {"sheets":[{"name":"Tab","headers":[...],"rows":[...]}, ...]} for multi-sheet edits, or legacy {"ops": [{"op": "SUM_COLUMN" | "AVERAGE_BY_GROUP" | "PIVOT" | "SORT_DESC" | "SORT_ASC" | "FILTER_ROWS" | "COUNT_BY_GROUP" | "ADD_COLUMN" | "RENAME_SHEET" | "WRITE_DATA", ...}]}`;
 
   const userPrompt = `Existing spreadsheet (file: ${artifactPath.split(/[/\\]/).pop()}):
 ${sampleContext}

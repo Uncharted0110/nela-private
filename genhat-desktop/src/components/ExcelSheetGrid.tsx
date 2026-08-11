@@ -1,9 +1,16 @@
-import { useMemo, type CSSProperties } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
+
+export interface ExcelSheetTab {
+  name: string;
+  rows: string[][];
+}
 
 export interface ExcelSheetGridProps {
   /** First row = headers when headerRow is true (default). */
   rows: string[][];
   sheetName?: string;
+  /** Optional multi-sheet workbook tabs. When set, enables tab switching. */
+  sheets?: ExcelSheetTab[];
   /** Treat row 0 as a styled header bar. */
   headerRow?: boolean;
   /** Optional per-cell background colors as `#RRGGBB` (sparse). */
@@ -29,27 +36,45 @@ function cellKey(r: number, c: number): string {
 
 /**
  * Excel-like sheet surface: column letters, row numbers, gridlines, header bar.
- * The grid itself stays Excel-light (like desktop Excel); chrome can sit in either app theme.
+ * Supports multiple worksheet tabs when `sheets` is provided.
  */
 export default function ExcelSheetGrid({
   rows,
   sheetName = "Sheet1",
+  sheets,
   headerRow = true,
   cellFills,
   maxRows = 120,
   streaming = false,
 }: ExcelSheetGridProps) {
+  const tabs: ExcelSheetTab[] =
+    sheets && sheets.length > 0
+      ? sheets
+      : [{ name: sheetName, rows }];
+
+  const [activeIdx, setActiveIdx] = useState(0);
+  const safeIdx = Math.min(Math.max(0, activeIdx), Math.max(0, tabs.length - 1));
+  const active = tabs[safeIdx] ?? { name: sheetName, rows };
+
+  const sheetKey = tabs.map((t) => t.name).join("\0");
+  useEffect(() => {
+    setActiveIdx(0);
+  }, [sheetKey]);
+
   const { colCount, displayRows, truncated } = useMemo(() => {
-    const cols = rows.reduce((m, r) => Math.max(m, r.length), 0);
-    const sliced = rows.slice(0, maxRows);
+    const cols = active.rows.reduce((m, r) => Math.max(m, r.length), 0);
+    const sliced = active.rows.slice(0, maxRows);
     return {
       colCount: Math.max(cols, 1),
       displayRows: sliced,
-      truncated: rows.length > maxRows,
+      truncated: active.rows.length > maxRows,
     };
-  }, [rows, maxRows]);
+  }, [active.rows, maxRows]);
 
-  if (!rows.length || (rows.length === 1 && rows[0]?.every((c) => !c?.trim()))) {
+  if (
+    !active.rows.length ||
+    (active.rows.length === 1 && active.rows[0]?.every((c) => !c?.trim()))
+  ) {
     return (
       <div className="h-full flex items-center justify-center text-sm text-txt-muted p-4">
         Waiting for spreadsheet cells…
@@ -84,7 +109,7 @@ export default function ExcelSheetGrid({
                   <th className="sticky left-0 z-10 w-10 min-w-10 bg-[#e6e6e6] border border-[#c6c6c6] text-center text-[0.65rem] font-normal text-[#666] select-none">
                     {ri + 1}
                   </th>
-                    {Array.from({ length: colCount }, (_, ci) => {
+                  {Array.from({ length: colCount }, (_, ci) => {
                     const value = row[ci] ?? "";
                     const fill = cellFills?.[cellKey(ri, ci)];
                     const style: CSSProperties = {};
@@ -140,13 +165,27 @@ export default function ExcelSheetGrid({
           </tbody>
         </table>
       </div>
-      <div className="shrink-0 flex items-end gap-0 h-7 bg-[#f3f3f3] border-t border-[#c6c6c6] px-1">
-        <div className="flex items-center h-[26px] px-3 rounded-t-sm bg-white border border-[#c6c6c6] border-b-0 text-[0.72rem] font-semibold text-[#217346] shadow-[inset_0_2px_0_0_#217346]">
-          {sheetName}
-        </div>
+      <div className="shrink-0 flex items-end gap-0.5 h-7 bg-[#f3f3f3] border-t border-[#c6c6c6] px-1 overflow-x-auto">
+        {tabs.map((tab, i) => {
+          const activeTab = i === safeIdx;
+          return (
+            <button
+              key={`${tab.name}-${i}`}
+              type="button"
+              onClick={() => setActiveIdx(i)}
+              className={
+                activeTab
+                  ? "flex items-center h-[26px] px-3 rounded-t-sm bg-white border border-[#c6c6c6] border-b-0 text-[0.72rem] font-semibold text-[#217346] shadow-[inset_0_2px_0_0_#217346]"
+                  : "flex items-center h-[26px] px-3 rounded-t-sm bg-[#e6e6e6] border border-transparent text-[0.72rem] font-normal text-[#555] hover:bg-[#ededed]"
+              }
+            >
+              {tab.name}
+            </button>
+          );
+        })}
         {truncated && (
-          <span className="ml-2 mb-1 text-[0.65rem] text-[#666]">
-            Showing {displayRows.length} of {rows.length} rows
+          <span className="ml-2 mb-1 text-[0.65rem] text-[#666] whitespace-nowrap">
+            Showing {displayRows.length} of {active.rows.length} rows
           </span>
         )}
       </div>

@@ -374,44 +374,62 @@ pub fn parse_spreadsheet_data(
     let mut workbook = open_workbook_auto(&path)
         .map_err(|e| format!("Failed to open spreadsheet: {e}"))?;
 
-    let sheet_name = workbook
-        .sheet_names()
-        .first()
-        .cloned()
-        .ok_or_else(|| "No sheets found in workbook".to_string())?;
+    let sheet_names = workbook.sheet_names().to_vec();
+    if sheet_names.is_empty() {
+        return Err("No sheets found in workbook".to_string());
+    }
 
-    let range = workbook
-        .worksheet_range(&sheet_name)
-        .map_err(|e| format!("Failed to read sheet range: {e}"))?;
+    let mut sheets_out = Vec::new();
+    for sheet_name in &sheet_names {
+        let range = match workbook.worksheet_range(sheet_name) {
+            Ok(r) => r,
+            Err(e) => {
+                log::warn!("Failed to read sheet '{sheet_name}': {e}");
+                continue;
+            }
+        };
 
-    let mut rows = Vec::new();
-    let mut data_rows = 0usize;
-    for row in range.rows() {
-        if rows.is_empty() {
+        let mut rows = Vec::new();
+        let mut data_rows = 0usize;
+        for row in range.rows() {
+            if rows.is_empty() {
+                let mut row_data = Vec::new();
+                for cell in row {
+                    row_data.push(cell_to_string(cell));
+                }
+                rows.push(row_data);
+                continue;
+            }
+            if let Some(cap) = row_cap {
+                if data_rows >= cap {
+                    break;
+                }
+            }
             let mut row_data = Vec::new();
             for cell in row {
                 row_data.push(cell_to_string(cell));
             }
             rows.push(row_data);
-            continue;
+            data_rows += 1;
         }
-        if let Some(cap) = row_cap {
-            if data_rows >= cap {
-                break;
-            }
-        }
-        let mut row_data = Vec::new();
-        for cell in row {
-            row_data.push(cell_to_string(cell));
-        }
-        rows.push(row_data);
-        data_rows += 1;
+
+        sheets_out.push(serde_json::json!({
+            "sheet_name": sheet_name,
+            "rows": rows,
+            "truncated": row_cap.is_some_and(|cap| data_rows >= cap),
+        }));
     }
 
+    if sheets_out.is_empty() {
+        return Err("No readable sheets found in workbook".to_string());
+    }
+
+    let first = &sheets_out[0];
     Ok(serde_json::json!({
-        "sheet_name": sheet_name,
-        "rows": rows,
-        "truncated": row_cap.is_some_and(|cap| data_rows >= cap),
+        "sheet_name": first.get("sheet_name").cloned().unwrap_or(serde_json::Value::String("Sheet1".into())),
+        "rows": first.get("rows").cloned().unwrap_or(serde_json::Value::Array(vec![])),
+        "truncated": first.get("truncated").cloned().unwrap_or(serde_json::Value::Bool(false)),
+        "sheets": sheets_out,
     }))
 }
 

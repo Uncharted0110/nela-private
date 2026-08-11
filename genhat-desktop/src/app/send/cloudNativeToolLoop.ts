@@ -32,6 +32,7 @@ import {
   embedPoolChartsInHtml,
   type ChartPoolEntry,
 } from "../artifactChartPool";
+import { normalizeSpreadsheetPlan } from "../spreadsheetPlan";
 
 const MAX_TOOL_ROUNDS = MAX_WEB_SEARCH_TOOL_ROUNDS;
 const MAX_CHART_PREP_ROUNDS = 6;
@@ -345,7 +346,16 @@ async function executeToolCall(
 
   if (name === "generate_spreadsheet") {
     try {
-      const artifact = await Api.generateSpreadsheet(args);
+      const artifact = await Api.generateSpreadsheet(
+        normalizeSpreadsheetPlan(args as Record<string, unknown>, {
+          prompt: String(
+            (args as { title?: string; output_name?: string }).title ||
+              (args as { output_name?: string }).output_name ||
+              "spreadsheet"
+          ),
+          hasSourceData: false,
+        })
+      );
       opts.onArtifact?.(artifact);
       return {
         content: JSON.stringify({

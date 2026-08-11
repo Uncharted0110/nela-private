@@ -6,7 +6,7 @@ import {
   extractSpreadsheetPlanFallback,
   parseJsonCandidates,
 } from "./artifactPlanJson";
-import type { SpreadsheetOp, SpreadsheetPlan } from "../types";
+import type { SpreadsheetOp, SpreadsheetPlan, SpreadsheetSheet } from "../types";
 
 export interface SpreadsheetDataContext {
   headers?: string[];
@@ -93,10 +93,13 @@ export function extractSpreadsheetRowCount(text: string): {
 export const SPREADSHEET_SCHEMA_STATIC = `You are a professional assistant that generates precise structural JSON plans for creating Excel spreadsheets.
 You must return ONLY a JSON object conforming to the schema contract. Do NOT include markdown formatting, code fences (e.g. \`\`\`json), or thinking/explanations.
 
-Schema Contract:
+Preferred multi-sheet contract (USE THIS whenever the topic has distinct tables):
+{"sheets":[{"name":"ShortTab","headers":["col1","col2"],"rows":[["v1","v2"],...]},{"name":"AnotherTab","headers":[...],"rows":[...]}],"output_name":"optional_filename_without_extension"}
+
+Legacy single-sheet contract (only when one table is enough):
 {"ops": [{"op": "SUM_COLUMN" | "AVERAGE_BY_GROUP" | "PIVOT" | "SORT_DESC" | "SORT_ASC" | "FILTER_ROWS" | "COUNT_BY_GROUP" | "ADD_COLUMN" | "RENAME_SHEET" | "WRITE_DATA" | "ADD_CHART", ...}], "output_name": "optional_filename_without_extension"}
 
-Allowed Operations:
+Allowed Operations (inside a sheet's "ops", or top-level "ops" for single-sheet):
 - SUM_COLUMN: { "col": "col_name", "label": "optional_label" } — adds a total row for a numeric column
 - AVERAGE_BY_GROUP: { "value_col": "col_name", "group_col": "col_name" }
 - PIVOT: { "row_col": "col_name", "col_col": "col_name", "value_col": "col_name" }
@@ -112,7 +115,8 @@ Allowed Operations:
 
 Output rules:
 - Include "output_name" (no extension) describing the spreadsheet topic.
-- Include RENAME_SHEET with a SHORT tab name (31 characters max — e.g. "Top Movies", not the full request).
+- Prefer MULTIPLE sheets whenever the request covers distinct categories (e.g. Itinerary + Budget + Packing; Overview + Details; Sales + Inventory). Never cram unrelated tables into one sheet.
+- Each sheet "name" must be a SHORT tab label (≤31 chars).
 - For dashboards, analysis, or "chart/visualize" requests: include at least one ADD_CHART after the data is present.
 - For document/form extraction, prefer columns like "Field" and "Value", or logical domain columns.
 - When web search excerpts are provided, treat them as the only source of truth — never fabricate data not in those excerpts.
@@ -126,19 +130,27 @@ export type SpreadsheetSystemParts = {
 export type CloudSpreadsheetMode = "csv" | "json" | "local";
 
 /** Cloud Smart/Deep: stream CSV inside a nela-artifact tag (no JSON ops plan). */
-export const SPREADSHEET_CLOUD_CSV_STATIC = `You generate spreadsheet data as CSV wrapped in a NELA artifact tag.
+export const SPREADSHEET_CLOUD_CSV_STATIC = `You generate spreadsheet data as CSV wrapped in NELA artifact tags — one tag per Excel worksheet.
 
 OUTPUT FORMAT (mandatory):
-1. BEFORE the tag: 2–4 sentences explaining the sheet (plain text ONLY — never write the words "nela-artifact" outside the real tag).
-2. Then EXACTLY this opening tag (angle brackets required):
+1. BEFORE any tag: 2–4 sentences explaining the workbook (plain text ONLY — never write the words "nela-artifact" outside the real tags).
+2. Emit ONE OR MORE sheets. Each sheet is its own artifact tag:
    <nela-artifact type="text/csv" title="Short Sheet Title">
-3. Emit CSV only: first line = header row, following lines = data rows.
-4. Close with </nela-artifact>.
-5. AFTER the tag: 2–4 sentences summarizing columns, row coverage, and caveats.
+   CSV header row
+   CSV data rows…
+   </nela-artifact>
+3. Use a DIFFERENT short title (≤31 chars) for each sheet — these become Excel tab names.
+4. AFTER the last tag: 2–4 sentences summarizing sheets, columns, row coverage, and caveats.
+
+MULTI-SHEET RULES (critical):
+- When the topic has distinct tables, emit MULTIPLE <nela-artifact type="text/csv"> blocks (one per sheet).
+  Examples: trip plan → Itinerary, Transport, Budget, Packing; business → Overview, Revenue, Costs; research → Summary, Sources.
+- Do NOT dump unrelated columns into a single mega-sheet when separate sheets would be clearer.
+- A simple single-table request may use exactly one artifact tag.
 
 NEVER write fake tags like **nela-artifact type="text/csv"** or nela-artifact without < >.
 
-CSV RULES:
+CSV RULES (per sheet):
 - Use a real header row with clear column names.
 - Include enough realistic data rows to fulfill the request (prefer ≥8 when listing items).
 - Escape fields that contain commas by wrapping in double quotes.
@@ -146,7 +158,7 @@ CSV RULES:
 - Do NOT use markdown fences.
 - When web excerpts are provided, treat them as source of truth — do not invent numbers not present.
 - Stay on the USER'S TOPIC.
-- TRAVEL / TRIP / LOGISTICS sheets (only when the user asked for a spreadsheet): prioritize in-country movement. Prefer columns like:
+- TRAVEL / TRIP / LOGISTICS workbooks: prefer separate sheets such as Itinerary, Transport, Budget (and Packing when useful). Prefer columns like:
   Day, From, To, Mode (rental car / train / bus / taxi / walk), Operator or company, Duration, Distance, Est. cost, Booking notes, Source URL.
   Compare rental car vs trains/buses when relevant. Flights only as bookend rows unless the user asks for them.
 - LINKS: Put every source URL in its own column named "Source URL" (or "Link") as a bare https://… URL with no surrounding text.
@@ -312,6 +324,82 @@ export function normalizeSpreadsheetPlan(
   plan: Record<string, unknown>,
   options: { prompt: string; hasSourceData: boolean; expectedRowCount?: number | null }
 ): SpreadsheetPlan {
+  const output_name =
+    typeof plan.output_name === "string" && plan.output_name.trim()
+      ? plan.output_name.trim()
+      : typeof plan.title === "string" && plan.title.trim()
+        ? plan.title.trim()
+        : slugifySpreadsheetName(options.prompt);
+
+  // Preferred path: explicit sheets[] (cloud tool / multi-CSV / JSON multi-sheet).
+  const rawSheets = Array.isArray(plan.sheets) ? plan.sheets : [];
+  if (rawSheets.length > 0) {
+    const sheets: SpreadsheetSheet[] = [];
+    for (let i = 0; i < rawSheets.length; i++) {
+      const item = rawSheets[i];
+      if (!item || typeof item !== "object") continue;
+      const raw = item as Record<string, unknown>;
+      const name = sanitizeExcelSheetName(
+        String(raw.name ?? raw.title ?? `Sheet${i + 1}`)
+      );
+      const headers = asStringArray(raw.headers);
+      const rows = asStringMatrix(raw.rows ?? raw.source_rows);
+      let ops: SpreadsheetOp[] = Array.isArray(raw.ops)
+        ? raw.ops
+            .map((op) =>
+              op && typeof op === "object"
+                ? normalizeOp(op as Record<string, unknown>)
+                : null
+            )
+            .filter((op): op is SpreadsheetOp => op !== null)
+        : [];
+
+      if (!options.hasSourceData) {
+        const hasWrite = ops.some((op) => op.op === "WRITE_DATA");
+        if (!hasWrite && headers.length > 0) {
+          const width = headers.length;
+          const cleanRows = rows
+            .map((row) => {
+              const padded = [...row];
+              while (padded.length < width) padded.push("");
+              return padded.slice(0, width);
+            })
+            .filter((row) => row.some((cell) => cell.trim().length > 0));
+          ops = [
+            { op: "WRITE_DATA", headers, rows: cleanRows },
+            ...ops,
+          ];
+        } else {
+          for (const op of ops) {
+            if (op.op !== "WRITE_DATA") continue;
+            const width = op.headers.length;
+            op.rows = op.rows
+              .map((row) => {
+                const padded = [...row];
+                while (padded.length < width) padded.push("");
+                return padded.slice(0, width);
+              })
+              .filter((row) => row.some((cell) => cell.trim().length > 0));
+          }
+        }
+      }
+
+      if (ops.length === 0 && headers.length === 0) continue;
+      const hasWrite = ops.some((op) => op.op === "WRITE_DATA");
+      sheets.push({
+        name,
+        // Prefer WRITE_DATA ops for the table; only pass bare headers/rows when no WRITE_DATA.
+        ...(!hasWrite && headers.length ? { headers } : {}),
+        ...(!hasWrite && rows.length ? { rows } : {}),
+        ops,
+      });
+    }
+
+    if (sheets.length > 0) {
+      return { ops: [], sheets, output_name };
+    }
+  }
+
   const rawOps = Array.isArray(plan.ops) ? plan.ops : [];
   let ops: SpreadsheetOp[] = rawOps
     .map((item) =>
@@ -320,6 +408,15 @@ export function normalizeSpreadsheetPlan(
         : null
     )
     .filter((op): op is SpreadsheetOp => op !== null);
+
+  // Multiple WRITE_DATA ops → split into multiple sheets.
+  const writeCount = ops.filter((op) => op.op === "WRITE_DATA").length;
+  if (writeCount > 1 && !options.hasSourceData) {
+    const sheets = splitOpsIntoSheets(ops);
+    if (sheets.length > 1) {
+      return { ops: [], sheets, output_name };
+    }
+  }
 
   if (options.hasSourceData) {
     ops = ops.filter((op) => op.op !== "WRITE_DATA");
@@ -394,11 +491,6 @@ export function normalizeSpreadsheetPlan(
     }
   }
 
-  const output_name =
-    typeof plan.output_name === "string" && plan.output_name.trim()
-      ? plan.output_name.trim()
-      : slugifySpreadsheetName(options.prompt);
-
   const normalized: SpreadsheetPlan = {
     ops,
     output_name,
@@ -410,6 +502,51 @@ export function normalizeSpreadsheetPlan(
   }
 
   return normalized;
+}
+
+/** Split a flat ops list with multiple WRITE_DATA into workbook sheets. */
+function splitOpsIntoSheets(ops: SpreadsheetOp[]): SpreadsheetSheet[] {
+  const sheets: SpreadsheetSheet[] = [];
+  let pendingName = "";
+  let currentOps: SpreadsheetOp[] = [];
+  let currentName = "Sheet1";
+
+  const flush = () => {
+    if (!currentOps.length) return;
+    const write = currentOps.find((o) => o.op === "WRITE_DATA") as
+      | Extract<SpreadsheetOp, { op: "WRITE_DATA" }>
+      | undefined;
+    sheets.push({
+      name: sanitizeExcelSheetName(currentName || `Sheet${sheets.length + 1}`),
+      ...(write
+        ? { headers: write.headers, rows: write.rows }
+        : {}),
+      ops: currentOps.filter((o) => o.op !== "RENAME_SHEET"),
+    });
+    currentOps = [];
+    currentName = `Sheet${sheets.length + 1}`;
+  };
+
+  for (const op of ops) {
+    if (op.op === "RENAME_SHEET") {
+      if (currentOps.length === 0) {
+        currentName = op.name;
+      } else {
+        pendingName = op.name;
+      }
+      continue;
+    }
+    if (op.op === "WRITE_DATA" && currentOps.some((o) => o.op === "WRITE_DATA")) {
+      flush();
+      if (pendingName) {
+        currentName = pendingName;
+        pendingName = "";
+      }
+    }
+    currentOps.push(op);
+  }
+  flush();
+  return sheets;
 }
 
 /** Estimate plan token budget from expected WRITE_DATA size. */

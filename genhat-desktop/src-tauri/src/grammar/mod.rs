@@ -27,12 +27,12 @@ pub use gbnf::{
 pub use repair::{repair_json_keys, RepairError};
 pub use schema::{
     HtmlPlan, HtmlSection, HtmlSectionItem, HtmlSectionKind, PresentationPlan, PresentationSlide,
-    SchemaManifest, SlideLayout, SpreadsheetOp, SpreadsheetPlan,
+    SchemaManifest, SlideLayout, SpreadsheetOp, SpreadsheetPlan, SpreadsheetSheet,
 };
 
 /// Valid top-level keys for a `SpreadsheetPlan` payload.
 pub const SPREADSHEET_PLAN_KEYS: &[&str] =
-    &["ops", "source_rows", "headers", "output_name"];
+    &["ops", "sheets", "source_rows", "headers", "output_name", "title"];
 
 /// Valid top-level keys for a `PresentationPlan` payload.
 pub const PRESENTATION_PLAN_KEYS: &[&str] = &["slides", "theme", "output_name"];

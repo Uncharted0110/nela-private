@@ -109,15 +109,34 @@ export const MCP_SPREADSHEET_TOOL: CloudToolDefinition = {
   function: {
     name: "generate_spreadsheet",
     description:
-      "Create an Excel spreadsheet (.xlsx) on the user's device from a structured plan. Prefer this when the user asks for a spreadsheet, workbook, or tables to edit in Excel.",
+      "Create an Excel spreadsheet (.xlsx) on the user's device. Prefer multiple sheets when the topic has distinct tables (e.g. Itinerary + Budget). Pass sheets[{name, headers, rows}].",
     parameters: {
       type: "object",
       properties: {
-        title: { type: "string" },
+        title: { type: "string", description: "Workbook title / output filename stem" },
+        output_name: { type: "string" },
         sheets: {
           type: "array",
-          description: "Sheet definitions with headers and rows",
-          items: { type: "object" },
+          description:
+            "One or more worksheets. Use multiple entries for distinct tables — never cram unrelated data into one sheet.",
+          items: {
+            type: "object",
+            properties: {
+              name: {
+                type: "string",
+                description: "Excel tab name (≤31 characters)",
+              },
+              headers: {
+                type: "array",
+                items: { type: "string" },
+              },
+              rows: {
+                type: "array",
+                items: { type: "array", items: { type: "string" } },
+              },
+            },
+            required: ["name", "headers", "rows"],
+          },
         },
       },
       required: ["sheets"],

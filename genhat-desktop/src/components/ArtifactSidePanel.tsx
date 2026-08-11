@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { X, FileCode, Table2, Presentation, Code2, Eye, Pencil } from "lucide-react";
 import { prepareArtifactHtmlPreview } from "../app/artifactHtmlPreview";
 import { parseCSV } from "../app/send/csvParse";
-import { sanitizeCsvArtifactBody } from "../app/sanitizeCsvArtifact";
+import { extractCsvSheetArtifacts, sanitizeCsvArtifactBody } from "../app/sanitizeCsvArtifact";
+import { sanitizeExcelSheetName } from "../app/spreadsheetPlan";
 import { Api } from "../api";
 import ExcelSheetGrid from "./ExcelSheetGrid";
 import ArtifactPreviewEditChat, {
@@ -131,6 +132,9 @@ export default function ArtifactSidePanel({
   const [hydratedHtml, setHydratedHtml] = useState("");
   const [xlsxRows, setXlsxRows] = useState<string[][] | null>(null);
   const [xlsxSheetName, setXlsxSheetName] = useState("Sheet1");
+  const [xlsxSheets, setXlsxSheets] = useState<
+    Array<{ name: string; rows: string[][] }> | null
+  >(null);
   const [xlsxLoading, setXlsxLoading] = useState(false);
   const [panelWidth, setPanelWidth] = useState(loadPanelWidth);
   const [resizing, setResizing] = useState(false);
@@ -213,6 +217,7 @@ export default function ArtifactSidePanel({
       setHtmlView("code");
       setSheetView("sheet");
       setXlsxRows(null);
+      setXlsxSheets(null);
       setHydratedHtml("");
       setDisplayHtml("");
       paintedOnce.current = false;
@@ -222,6 +227,7 @@ export default function ArtifactSidePanel({
       setHydratedHtml("");
       setDisplayHtml("");
       setXlsxRows(null);
+      setXlsxSheets(null);
       paintedOnce.current = false;
       if (!prevSaved.current) {
         setHtmlView("preview");
@@ -264,6 +270,7 @@ export default function ArtifactSidePanel({
     }
     if (!/\.xlsx?$/i.test(savedPath)) {
       setXlsxRows(null);
+      setXlsxSheets(null);
       return;
     }
     let cancelled = false;
@@ -273,10 +280,18 @@ export default function ArtifactSidePanel({
         if (cancelled) return;
         setXlsxRows(data.rows ?? []);
         setXlsxSheetName(data.sheet_name || title || "Sheet1");
+        const multi = (data.sheets ?? []).map((s) => ({
+          name: s.sheet_name || "Sheet1",
+          rows: s.rows ?? [],
+        }));
+        setXlsxSheets(multi.length > 0 ? multi : null);
       })
       .catch((err) => {
         console.warn("Failed to parse spreadsheet for panel:", err);
-        if (!cancelled) setXlsxRows(null);
+        if (!cancelled) {
+          setXlsxRows(null);
+          setXlsxSheets(null);
+        }
       })
       .finally(() => {
         if (!cancelled) setXlsxLoading(false);
@@ -338,11 +353,32 @@ export default function ArtifactSidePanel({
     return [headers, ...rows];
   }, [csv]);
 
+  const streamingCsvSheets = useMemo(() => {
+    const arts = extractCsvSheetArtifacts(csv || "");
+    if (arts.length <= 1) return null;
+    return arts
+      .map((a, i) => {
+        const { headers, rows } = parseCSV(a.csv);
+        if (!headers.length) return null;
+        return {
+          name: sanitizeExcelSheetName(a.title || `Sheet${i + 1}`),
+          rows: [headers, ...rows] as string[][],
+        };
+      })
+      .filter((s): s is { name: string; rows: string[][] } => s !== null);
+  }, [csv]);
+
   const sheetRows = xlsxRows && xlsxRows.length > 0 ? xlsxRows : csvGridRows;
   const sheetName =
     xlsxRows && xlsxRows.length > 0
       ? xlsxSheetName
-      : (title?.trim() || "Sheet1").slice(0, 31);
+      : streamingCsvSheets?.[0]?.name || title || "Sheet1";
+  const workbookSheets =
+    xlsxSheets && xlsxSheets.length > 0
+      ? xlsxSheets
+      : streamingCsvSheets && streamingCsvSheets.length > 0
+        ? streamingCsvSheets
+        : undefined;
 
   if (!active) return null;
 
@@ -577,6 +613,7 @@ export default function ArtifactSidePanel({
               <ExcelSheetGrid
                 rows={sheetRows}
                 sheetName={sheetName}
+                sheets={workbookSheets}
                 streaming={streaming && !savedPath}
               />
             )
