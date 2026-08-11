@@ -15,6 +15,7 @@ import type { PipelineStageKind } from "./ProgressSlate";
 import { scrubChatArtifactProtocol } from "../app/streamArtifactParser";
 import { useChatModeStore } from "../stores/chatModeStore";
 import { useSessionStore } from "../stores/sessionStore";
+import ReasoningDisclosure from "./ReasoningDisclosure";
 
 function looksLikeArtifactDump(text: string): boolean {
   const scrubbed = scrubChatArtifactProtocol(text).trim();
@@ -90,31 +91,6 @@ const CopyMsgButton: React.FC<{ text: string; label?: string }> = ({
         </svg>
       )}
     </button>
-  );
-};
-
-/** Collapsible thinking/reasoning box for assistant messages */
-const ThinkingBox: React.FC<{ thinking: string }> = ({ thinking }) => {
-  const [isExpanded, setIsExpanded] = useState(false);
-  
-  if (!thinking) return null;
-
-  return (
-    <div className="mb-3">
-      <button
-        className="flex items-center gap-2 text-xs text-txt-muted hover:text-txt transition-colors cursor-pointer w-full"
-        onClick={() => setIsExpanded(!isExpanded)}
-      >
-        <span className="opacity-50">{isExpanded ? "▼" : "▶"}</span>
-        <span className="font-medium">Thinking</span>
-        <span className="text-[0.65rem] opacity-40">({thinking.length} chars)</span>
-      </button>
-      {isExpanded && (
-        <div className="mt-2 p-3 rounded-lg bg-black/20 border border-white/5 text-xs text-txt-muted leading-relaxed opacity-70 max-h-60 overflow-y-auto">
-          <pre className="whitespace-pre-wrap font-mono">{thinking}</pre>
-        </div>
-      )}
-    </div>
   );
 };
 
@@ -327,7 +303,9 @@ function ChatMessageItemInner({
                     />
                     <div className="flex-1 min-w-0">
                       <div className="text-[0.9rem] leading-relaxed text-txt glass rounded-2xl rounded-tl-sm py-3 px-4">
-                        {advanced && msg.thinking && <ThinkingBox thinking={msg.thinking} />}
+                        {msg.thinking?.trim() ? (
+                          <ReasoningDisclosure thinking={msg.thinking} />
+                        ) : null}
                         {msg.webSearchResult && msg.webSearchResult.results.length > 0 ? (
                           <WebSearchDisclosure result={msg.webSearchResult} />
                         ) : null}

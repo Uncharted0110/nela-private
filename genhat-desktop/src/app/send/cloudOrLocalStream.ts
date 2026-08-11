@@ -180,7 +180,8 @@ function runLocalStream(args: StreamArgs): void {
     undefined,
     args.modelId,
     args.signal,
-    args.disableThinking,
+    // Local llama never streams reasoning into the chat UI.
+    true,
     args.generationOptions
   );
 }
@@ -251,6 +252,7 @@ async function runCloudStream(args: StreamArgs): Promise<void> {
     tools: args.tools,
     tool_choice: args.tool_choice,
     response_format: args.response_format,
+    includeReasoning: args.disableThinking !== true,
     client: {
       platform: "desktop",
       sessionId: stickySessionId,
@@ -300,13 +302,14 @@ async function runCloudStream(args: StreamArgs): Promise<void> {
     void (async () => {
       const unlisten = await listen<{
         chunk: string;
+        thinking?: string;
         done: boolean;
         error?: string;
         tool_calls?: CloudToolCall[];
         model?: string;
       }>("cloud-chat-stream", (event) => {
         if (settled) return;
-        const { chunk, done, error, tool_calls, model } = event.payload;
+        const { chunk, thinking, done, error, tool_calls, model } = event.payload;
         if (error) {
           finish(() => {
             unlisten();
@@ -316,6 +319,10 @@ async function runCloudStream(args: StreamArgs): Promise<void> {
             resolve();
           });
           return;
+        }
+        if (thinking) {
+          armIdle();
+          args.onThinking(thinking);
         }
         if (chunk) {
           armIdle();

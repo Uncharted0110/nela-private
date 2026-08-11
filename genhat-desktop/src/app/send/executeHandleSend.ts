@@ -18,6 +18,7 @@ import { handleArtifactEdit } from "./handleArtifactEdit";
 import { friendlyErrorFromUnknown } from "../friendlyError";
 import type { SendHandlerContext } from "./types";
 import { buildSendHandlerContext } from "./buildContext";
+import { useCloudStore } from "../../stores/cloudStore";
 
 /** Prefer store-backed send: call with text only. Optional ctx kept for tests. */
 export async function executeHandleSend(
@@ -191,7 +192,16 @@ export async function executeHandleSend(
       return;
     }
 
-    if (ctx.chatMode === "text" && !effectiveRagEnabled && promptDocumentPaths.length > 0) {
+    // Explicit Cloud mode: never wait on local llama (RAG / direct-docs / compact).
+    // Knowledge-base grounding still happens via the cloud tool loop's file_search.
+    const cloudOnly = useCloudStore.getState().preferredMode === "cloud";
+
+    if (
+      !cloudOnly &&
+      ctx.chatMode === "text" &&
+      !effectiveRagEnabled &&
+      promptDocumentPaths.length > 0
+    ) {
       try {
         await handleSendDirectDocs(promptText, ctx, ctrl, promptDocumentPaths);
         return;
@@ -201,7 +211,12 @@ export async function executeHandleSend(
       }
     }
 
-    if (ctx.chatMode === "text" && effectiveRagEnabled && ctx.ragDocs.length > 0) {
+    if (
+      !cloudOnly &&
+      ctx.chatMode === "text" &&
+      effectiveRagEnabled &&
+      ctx.ragDocs.length > 0
+    ) {
       try {
         await handleSendRag(promptText, ctx, ctrl);
         return;

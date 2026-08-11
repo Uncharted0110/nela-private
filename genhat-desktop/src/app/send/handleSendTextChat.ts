@@ -84,21 +84,30 @@ export async function handleSendTextChat(
   ];
 
   const generationOptions = ctx.getChatGenerationOptions(ctx.selectedModel);
+  // Cloud turns must not wait on local llama (compaction summarize / warm-up).
+  // Local GGUF ctx_size often defaults to 4k and falsely trips auto-compact.
+  const cloudOnly = preferredMode === "cloud";
+  const contextWindowTokens = cloudOnly
+    ? Math.max(128_000, ctx.getContextWindowTokens(ctx.selectedModel) || 0)
+    : ctx.getContextWindowTokens(ctx.selectedModel);
 
   try {
     const compaction = await Api.compactChatContext({
       messages: apiMessages,
-      contextWindowTokens: ctx.getContextWindowTokens(ctx.selectedModel),
+      contextWindowTokens,
       reservedOutputTokens: resolveReservedOutputTokens(generationOptions.maxTokens),
       thresholdPercent: CONTEXT_COMPACTION_THRESHOLD,
-      allowAutoCompaction: true,
+      // Analysis / usage only in Cloud — never spin a local summarize model.
+      allowAutoCompaction: !cloudOnly,
       forceCompaction: false,
       preserveRecentMessages: CONTEXT_COMPACTION_KEEP_RECENT,
-      modelOverride: ctx.selectedModel || null,
+      modelOverride: cloudOnly ? null : ctx.selectedModel || null,
     });
 
     ctx.setContextUsageForSession(sid, compaction.usage);
-    apiMessages = compaction.messages;
+    if (!cloudOnly) {
+      apiMessages = compaction.messages;
+    }
 
     // Do NOT rewrite session.messages from compaction.keptIndices here.
     // Those indices refer to `apiMessages` (NELA system prompt + optional ambient
