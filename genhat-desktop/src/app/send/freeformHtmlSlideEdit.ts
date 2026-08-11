@@ -475,6 +475,105 @@ export function getFreeformSlideBlock(html: string, index: number): string {
   return html.slice(starts[at], findMatchingElementEnd(html, starts[at]));
 }
 
+/**
+ * Replace the first <img> on a freeform slide with a new data URI / URL.
+ * Uses quote-aware attribute rewriting so multi-megabyte data: URIs do not
+ * break a second replace. Optional `libId` stamps data-nela-lib-id.
+ */
+export function replaceImageOnFreeformSlide(
+  html: string,
+  index: number,
+  imageSrc: string,
+  sourceUrl?: string | null,
+  libId?: number | null
+): string {
+  const starts = findSlideStarts(html);
+  if (starts.length < 1) {
+    throw new Error("No slides found in HTML deck");
+  }
+  const at = Math.max(0, Math.min(index, starts.length - 1));
+  const blockStart = starts[at];
+  const blockEnd = findMatchingElementEnd(html, blockStart);
+
+  const imgStart = indexOfImgInRange(html, blockStart, blockEnd);
+  if (imgStart < 0) {
+    throw new Error(`Slide ${at + 1} has no image to replace`);
+  }
+  const imgEnd = findQuotedTagEnd(html, imgStart);
+  if (imgEnd < 0) {
+    throw new Error(`Could not update image src on slide ${at + 1}`);
+  }
+
+  let tag = html.slice(imgStart, imgEnd);
+  tag = setImgAttr(tag, "src", imageSrc);
+  if (sourceUrl?.trim()) {
+    tag = setImgAttr(tag, "data-nela-img-src", sourceUrl.trim());
+  }
+  if (libId != null && Number.isFinite(libId) && libId >= 0) {
+    tag = setImgAttr(tag, "data-nela-lib-id", String(Math.floor(libId)));
+  }
+
+  return html.slice(0, imgStart) + tag + html.slice(imgEnd);
+}
+
+/** Find `<img` within [from, to) without slurping attribute values. */
+function indexOfImgInRange(html: string, from: number, to: number): number {
+  const re = /<img\b/gi;
+  re.lastIndex = from;
+  const m = re.exec(html);
+  if (!m || m.index >= to) return -1;
+  return m.index;
+}
+
+/** End offset after `>` closing a tag, respecting quoted attribute values. */
+function findQuotedTagEnd(html: string, tagStart: number): number {
+  let i = tagStart;
+  let quote: string | null = null;
+  while (i < html.length) {
+    const c = html[i]!;
+    if (quote) {
+      if (c === quote) quote = null;
+    } else if (c === '"' || c === "'") {
+      quote = c;
+    } else if (c === ">") {
+      return i + 1;
+    }
+    i += 1;
+  }
+  return -1;
+}
+
+function setImgAttr(tag: string, name: string, value: string): string {
+  const safe = value
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;");
+  const re = new RegExp(
+    `\\b${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*=\\s*(["'])`,
+    "i"
+  );
+  const m = re.exec(tag);
+  if (!m || m.index == null) {
+    if (/\s*\/>\s*$/.test(tag)) {
+      return tag.replace(/\s*\/>\s*$/, ` ${name}="${safe}" />`);
+    }
+    if (/>\s*$/.test(tag)) {
+      return tag.replace(/>\s*$/, ` ${name}="${safe}">`);
+    }
+    return `${tag} ${name}="${safe}"`;
+  }
+  const quote = m[1]!;
+  const valueStart = m.index + m[0].length;
+  let valueEnd = valueStart;
+  while (valueEnd < tag.length && tag[valueEnd] !== quote) valueEnd += 1;
+  if (valueEnd >= tag.length) return tag;
+  return (
+    tag.slice(0, m.index) +
+    `${name}=${quote}${safe}${quote}` +
+    tag.slice(valueEnd + 1)
+  );
+}
+
 /** Expand / rewrite body copy on an existing slide (keeps title + image). */
 export function expandSlideInFreeformHtml(
   html: string,

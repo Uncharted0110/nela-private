@@ -50,9 +50,13 @@ pub fn insert_slides_to_deck(
         .map_err(|e| format!("Failed to read presentation: {e}"))?;
 
     let mut plan = parse_presentation_html(&html)?;
+    let style = extract_style_overrides(&html);
+    let mut slide_overrides = extract_slide_overrides(&html);
+    let image_library = extract_image_library_blocks(&html);
     let insert_at = insert_at.min(plan.slides.len());
     for (offset, slide) in new_slides.into_iter().enumerate() {
         plan.slides.insert(insert_at + offset, slide);
+        shift_overrides_on_insert(&mut slide_overrides, insert_at + offset);
     }
     plan.output_name = Some(
         output_name
@@ -60,7 +64,11 @@ pub fn insert_slides_to_deck(
             .unwrap_or_else(|| edited_output_name(source_path)),
     );
 
-    write_presentation_plan(plan)
+    let out = write_presentation_plan(plan)?;
+    inject_style_overrides(&out, &style)?;
+    inject_slide_overrides(&out, &slide_overrides)?;
+    inject_image_library_blocks(&out, &image_library)?;
+    Ok(out)
 }
 
 /// Append slides at the end of a deck (convenience wrapper).
@@ -84,6 +92,9 @@ pub fn rewrite_deck_from_plan(
     let html = std::fs::read_to_string(source_path)
         .map_err(|e| format!("Failed to read presentation: {e}"))?;
     let existing = parse_presentation_html(&html)?;
+    // Slide indexes change wholesale on a rewrite — keep global style + image library.
+    let style = extract_style_overrides(&html);
+    let image_library = extract_image_library_blocks(&html);
 
     if plan.theme.is_none() {
         plan.theme = existing.theme;
@@ -97,7 +108,10 @@ pub fn rewrite_deck_from_plan(
             .unwrap_or_else(|| edited_output_name(source_path)),
     );
 
-    write_presentation_plan(plan)
+    let out = write_presentation_plan(plan)?;
+    inject_style_overrides(&out, &style)?;
+    inject_image_library_blocks(&out, &image_library)?;
+    Ok(out)
 }
 
 // ── Surgical ops ─────────────────────────────────────────────────────────────
@@ -119,6 +133,8 @@ pub enum PresentationEditOp {
         accent: Option<String>,
         #[serde(default)]
         background: Option<String>,
+        #[serde(default)]
+        text: Option<String>,
     },
     InsertSlide {
         #[serde(default)]
@@ -162,7 +178,22 @@ struct StyleOverrides {
     font_body: Option<String>,
     accent: Option<String>,
     background: Option<String>,
+    text: Option<String>,
 }
+
+/// Per-slide style overrides (background / text color) stamped by the desktop
+/// edit executor as `<style id="nela-slide-overrides" data-nela-overrides="…">`.
+/// Keys are 0-based slide indexes; they are remapped when ops insert, remove,
+/// or move slides so the overrides stay on the right slides after re-render.
+#[derive(Debug, Clone, Default, serde::Serialize, Deserialize)]
+struct SlideOverrideRule {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    background: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    text: Option<String>,
+}
+
+type SlideOverrides = std::collections::BTreeMap<usize, SlideOverrideRule>;
 
 /// Load a presentation plan from a NELA HTML deck or a native PPTX.
 pub fn load_presentation_plan(source_path: &str) -> Result<PresentationPlan, String> {
@@ -193,15 +224,19 @@ pub fn apply_ops_to_deck(
 
     let mut plan = load_presentation_plan(source_path)?;
     let mut style = StyleOverrides::default();
+    let mut slide_overrides = SlideOverrides::new();
+    let mut image_library = ImageLibraryBlocks::default();
 
-    // Carry forward style overrides already embedded in a NELA HTML deck.
+    // Carry forward style overrides + image library already embedded in a NELA HTML deck.
     if let Ok(html) = std::fs::read_to_string(source_path) {
         if is_nela_presentation_html(&html) {
             style = extract_style_overrides(&html);
+            slide_overrides = extract_slide_overrides(&html);
+            image_library = extract_image_library_blocks(&html);
         }
     }
 
-    apply_ops_to_plan(&mut plan, &mut style, ops)?;
+    apply_ops_to_plan(&mut plan, &mut style, &mut slide_overrides, ops)?;
 
     plan.output_name = Some(
         output_name
@@ -211,12 +246,43 @@ pub fn apply_ops_to_deck(
 
     let out = write_presentation_plan(plan)?;
     inject_style_overrides(&out, &style)?;
+    inject_slide_overrides(&out, &slide_overrides)?;
+    inject_image_library_blocks(&out, &image_library)?;
     Ok(out)
+}
+
+// ── Per-slide override remapping ─────────────────────────────────────────────
+
+fn shift_overrides_on_insert(overrides: &mut SlideOverrides, insert_at: usize) {
+    let shifted: SlideOverrides = overrides
+        .iter()
+        .map(|(&k, v)| (if k >= insert_at { k + 1 } else { k }, v.clone()))
+        .collect();
+    *overrides = shifted;
+}
+
+fn shift_overrides_on_remove(overrides: &mut SlideOverrides, removed_at: usize) {
+    let shifted: SlideOverrides = overrides
+        .iter()
+        .filter(|(&k, _)| k != removed_at)
+        .map(|(&k, v)| (if k > removed_at { k - 1 } else { k }, v.clone()))
+        .collect();
+    *overrides = shifted;
+}
+
+fn shift_overrides_on_move(overrides: &mut SlideOverrides, from: usize, to: usize) {
+    let moved = overrides.remove(&from);
+    shift_overrides_on_remove(overrides, from);
+    shift_overrides_on_insert(overrides, to);
+    if let Some(rule) = moved {
+        overrides.insert(to, rule);
+    }
 }
 
 fn apply_ops_to_plan(
     plan: &mut PresentationPlan,
     style: &mut StyleOverrides,
+    slide_overrides: &mut SlideOverrides,
     ops: Vec<PresentationEditOp>,
 ) -> Result<(), String> {
     for op in ops {
@@ -235,12 +301,19 @@ fn apply_ops_to_plan(
                     style.font_body = Some(sanitize_font_name(&b));
                 }
             }
-            PresentationEditOp::SetColors { accent, background } => {
+            PresentationEditOp::SetColors {
+                accent,
+                background,
+                text,
+            } => {
                 if let Some(a) = accent.filter(|s| !s.trim().is_empty()) {
                     style.accent = Some(normalize_color(&a));
                 }
                 if let Some(b) = background.filter(|s| !s.trim().is_empty()) {
                     style.background = Some(normalize_color(&b));
+                }
+                if let Some(t) = text.filter(|s| !s.trim().is_empty()) {
+                    style.text = Some(normalize_color(&t));
                 }
             }
             PresentationEditOp::InsertSlide {
@@ -264,7 +337,9 @@ fn apply_ops_to_plan(
                     left_title: None,
                     right_title: None,
                 };
-                plan.slides.insert(insert_at.min(plan.slides.len()), slide);
+                let at_idx = insert_at.min(plan.slides.len());
+                plan.slides.insert(at_idx, slide);
+                shift_overrides_on_insert(slide_overrides, at_idx);
             }
             PresentationEditOp::PatchSlide {
                 index,
@@ -301,11 +376,13 @@ fn apply_ops_to_plan(
                     let slide = plan.slides.remove(from_idx);
                     let insert_at = to_idx.min(plan.slides.len());
                     plan.slides.insert(insert_at, slide);
+                    shift_overrides_on_move(slide_overrides, from_idx, insert_at);
                 }
             }
             PresentationEditOp::RemoveSlide { index, one_based } => {
                 let idx = resolve_slide_index(plan.slides.len(), index, one_based.unwrap_or(false))?;
                 plan.slides.remove(idx);
+                shift_overrides_on_remove(slide_overrides, idx);
                 if plan.slides.is_empty() {
                     return Err("Cannot remove the last remaining slide".to_string());
                 }
@@ -439,8 +516,194 @@ fn extract_style_overrides(html: &str) -> StyleOverrides {
         if let Some(v) = css_var_value(block, "--bg") {
             style.background = Some(v);
         }
+        if let Some(v) = css_var_value(block, "--text") {
+            style.text = Some(v);
+        }
     }
     style
+}
+
+fn unescape_html_attr(value: &str) -> String {
+    value
+        .replace("&quot;", "\"")
+        .replace("&lt;", "<")
+        .replace("&amp;", "&")
+}
+
+fn escape_html_attr(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('"', "&quot;")
+        .replace('<', "&lt;")
+}
+
+/// Read per-slide overrides stamped by the desktop edit executor.
+fn extract_slide_overrides(html: &str) -> SlideOverrides {
+    let mut out = SlideOverrides::new();
+    let Some(tag_start) = html.find("id=\"nela-slide-overrides\"") else {
+        return out;
+    };
+    let rest = &html[tag_start..];
+    let Some(attr_start) = rest.find("data-nela-overrides=\"") else {
+        return out;
+    };
+    let json_start = attr_start + "data-nela-overrides=\"".len();
+    let Some(json_end) = rest[json_start..].find('"') else {
+        return out;
+    };
+    let raw = unescape_html_attr(&rest[json_start..json_start + json_end]);
+    if let Ok(parsed) =
+        serde_json::from_str::<std::collections::BTreeMap<String, SlideOverrideRule>>(&raw)
+    {
+        for (key, rule) in parsed {
+            if let Ok(idx) = key.trim().parse::<usize>() {
+                out.insert(idx, rule);
+            }
+        }
+    }
+    out
+}
+
+/// Opaque HTML fragments for the desktop image library (`#nela-image-library`
+/// aside plus companion style/script). Carried across Rust re-renders so
+/// theme/layout ops do not wipe searched images.
+#[derive(Debug, Clone, Default)]
+struct ImageLibraryBlocks {
+    aside: Option<String>,
+    style: Option<String>,
+    script: Option<String>,
+}
+
+impl ImageLibraryBlocks {
+    fn is_empty(&self) -> bool {
+        self.aside.is_none() && self.style.is_none() && self.script.is_none()
+    }
+}
+
+fn extract_element_by_id(html: &str, id: &str, close_tag: &str) -> Option<String> {
+    let marker = format!("id=\"{id}\"");
+    let id_idx = html.find(&marker)?;
+    let start = html[..id_idx].rfind('<')?;
+    let end_rel = html[id_idx..].find(close_tag)?;
+    let end = id_idx + end_rel + close_tag.len();
+    Some(html[start..end].to_string())
+}
+
+fn extract_image_library_blocks(html: &str) -> ImageLibraryBlocks {
+    ImageLibraryBlocks {
+        aside: extract_element_by_id(html, "nela-image-library", "</aside>"),
+        style: extract_element_by_id(html, "nela-image-library-style", "</style>"),
+        script: extract_element_by_id(html, "nela-image-library-script", "</script>"),
+    }
+}
+
+fn strip_element_by_id(html: &mut String, id: &str, close_tag: &str) {
+    let marker = format!("id=\"{id}\"");
+    if let Some(id_idx) = html.find(&marker) {
+        if let Some(start) = html[..id_idx].rfind('<') {
+            if let Some(end_rel) = html[id_idx..].find(close_tag) {
+                let end = id_idx + end_rel + close_tag.len();
+                html.replace_range(start..end, "");
+            }
+        }
+    }
+}
+
+fn inject_image_library_blocks(path: &Path, blocks: &ImageLibraryBlocks) -> Result<(), String> {
+    if blocks.is_empty() {
+        return Ok(());
+    }
+
+    let mut html =
+        std::fs::read_to_string(path).map_err(|e| format!("Failed to read written deck: {e}"))?;
+
+    // Drop any previous library fragments from a fresh render (usually none).
+    strip_element_by_id(&mut html, "nela-image-library", "</aside>");
+    strip_element_by_id(&mut html, "nela-image-library-style", "</style>");
+    strip_element_by_id(&mut html, "nela-image-library-script", "</script>");
+
+    if let Some(style) = &blocks.style {
+        if let Some(idx) = html.rfind("</head>") {
+            html.insert_str(idx, &format!("{style}\n"));
+        } else {
+            html.push_str(style);
+        }
+    }
+
+    let mut body_chunk = String::new();
+    if let Some(aside) = &blocks.aside {
+        body_chunk.push_str(aside);
+        body_chunk.push('\n');
+    }
+    if let Some(script) = &blocks.script {
+        body_chunk.push_str(script);
+        body_chunk.push('\n');
+    }
+    if !body_chunk.is_empty() {
+        if let Some(idx) = html.rfind("</body>") {
+            html.insert_str(idx, &body_chunk);
+        } else {
+            html.push_str(&body_chunk);
+        }
+    }
+
+    std::fs::write(path, html).map_err(|e| format!("Failed to write image library: {e}"))?;
+    Ok(())
+}
+
+/// Re-stamp per-slide overrides on a freshly rendered deck (same format the
+/// desktop executor writes, so later edits keep merging into one block).
+fn inject_slide_overrides(path: &Path, overrides: &SlideOverrides) -> Result<(), String> {
+    if overrides.is_empty() {
+        return Ok(());
+    }
+
+    let mut html =
+        std::fs::read_to_string(path).map_err(|e| format!("Failed to read written deck: {e}"))?;
+
+    // Drop any previous block.
+    if let Some(start) = html.find("<style id=\"nela-slide-overrides\"") {
+        if let Some(rel_end) = html[start..].find("</style>") {
+            let end = start + rel_end + "</style>".len();
+            html.replace_range(start..end, "");
+        }
+    }
+
+    let mut css = String::new();
+    for (&idx, rule) in overrides {
+        let sel = format!(".slide-stage > .slide:nth-child({})", idx + 1);
+        if let Some(bg) = &rule.background {
+            css.push_str(&format!(
+                "{sel} {{ background: {bg} !important; background-image: none !important; }}\n\
+                 {sel}::before, {sel}::after {{ background: none !important; }}\n"
+            ));
+        }
+        if let Some(text) = &rule.text {
+            css.push_str(&format!(
+                "{sel}, {sel} :is(h1,h2,h3,h4,h5,p,li,span,strong,em,blockquote,div) \
+                 {{ color: {text} !important; -webkit-text-fill-color: {text} !important; }}\n"
+            ));
+        }
+    }
+
+    let keyed: std::collections::BTreeMap<String, &SlideOverrideRule> = overrides
+        .iter()
+        .map(|(&k, v)| (k.to_string(), v))
+        .collect();
+    let json = serde_json::to_string(&keyed).unwrap_or_else(|_| "{}".to_string());
+    let block = format!(
+        "<style id=\"nela-slide-overrides\" data-nela-overrides=\"{}\">\n{css}</style>\n",
+        escape_html_attr(&json)
+    );
+
+    if let Some(idx) = html.rfind("</head>") {
+        html.insert_str(idx, &block);
+    } else {
+        html.push_str(&block);
+    }
+
+    std::fs::write(path, html).map_err(|e| format!("Failed to write slide overrides: {e}"))?;
+    Ok(())
 }
 
 fn css_var_value(block: &str, name: &str) -> Option<String> {
@@ -461,6 +724,7 @@ fn inject_style_overrides(path: &Path, style: &StyleOverrides) -> Result<(), Str
         && style.font_body.is_none()
         && style.accent.is_none()
         && style.background.is_none()
+        && style.text.is_none()
     {
         return Ok(());
     }
@@ -491,6 +755,15 @@ fn inject_style_overrides(path: &Path, style: &StyleOverrides) -> Result<(), Str
     if let Some(bg) = &style.background {
         rules.push_str(&format!("  --bg: {bg};\n"));
         rules.push_str(&format!("  --surface: {bg};\n"));
+    }
+    if let Some(text) = &style.text {
+        rules.push_str(&format!("  --text: {text};\n"));
+        rules.push_str(&format!(
+            "  --text-muted: color-mix(in srgb, {text} 72%, transparent);\n"
+        ));
+        rules.push_str(&format!(
+            "  --text-secondary: color-mix(in srgb, {text} 84%, transparent);\n"
+        ));
     }
     rules.push_str("}\n");
 
@@ -633,4 +906,79 @@ fn nat_ord(a: &str, b: &str) -> std::cmp::Ordering {
             .unwrap_or(0)
     };
     num(a).cmp(&num(b)).then_with(|| a.cmp(b))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rule(bg: &str) -> SlideOverrideRule {
+        SlideOverrideRule {
+            background: Some(bg.to_string()),
+            text: None,
+        }
+    }
+
+    #[test]
+    fn extracts_slide_overrides_from_desktop_block() {
+        let html = r#"<html><head><style id="nela-slide-overrides" data-nela-overrides="{&quot;2&quot;:{&quot;background&quot;:&quot;#dc2626&quot;,&quot;text&quot;:&quot;#f8fafc&quot;}}">
+.slide-stage > .slide:nth-child(3) { background: #dc2626 !important; }
+</style></head><body></body></html>"#;
+        let overrides = extract_slide_overrides(html);
+        assert_eq!(overrides.len(), 1);
+        let rule = overrides.get(&2).expect("index 2 present");
+        assert_eq!(rule.background.as_deref(), Some("#dc2626"));
+        assert_eq!(rule.text.as_deref(), Some("#f8fafc"));
+    }
+
+    #[test]
+    fn remaps_overrides_on_insert_remove_move() {
+        let mut overrides = SlideOverrides::new();
+        overrides.insert(1, rule("#111111"));
+        overrides.insert(4, rule("#444444"));
+
+        // Insert a slide at index 2 → 1 stays, 4 becomes 5.
+        shift_overrides_on_insert(&mut overrides, 2);
+        assert!(overrides.contains_key(&1));
+        assert!(overrides.contains_key(&5));
+
+        // Remove slide 0 → 1 becomes 0, 5 becomes 4.
+        shift_overrides_on_remove(&mut overrides, 0);
+        assert!(overrides.contains_key(&0));
+        assert!(overrides.contains_key(&4));
+
+        // Remove the overridden slide 0 → its override is dropped.
+        shift_overrides_on_remove(&mut overrides, 0);
+        assert_eq!(overrides.len(), 1);
+        assert!(overrides.contains_key(&3));
+
+        // Move slide 3 to position 0 → override follows the slide.
+        shift_overrides_on_move(&mut overrides, 3, 0);
+        assert_eq!(overrides.len(), 1);
+        assert_eq!(overrides.get(&0).unwrap().background.as_deref(), Some("#444444"));
+    }
+
+    #[test]
+    fn slide_override_json_round_trips_html_escaping() {
+        let raw = r##"{"0":{"text":"#ffff00"}}"##;
+        let escaped = escape_html_attr(raw);
+        assert!(!escaped.contains('"'));
+        assert_eq!(unescape_html_attr(&escaped), raw);
+    }
+
+    #[test]
+    fn extracts_image_library_blocks() {
+        let html = r#"<html><head><style id="nela-image-library-style">.nela-image-library{}</style></head>
+<body>
+<aside id="nela-image-library" class="nela-image-library"><div class="nela-image-library-rail">
+<button type="button" data-nela-lib-id="0" title="t"><img src="data:image/png;base64,aaa" alt="t"></button>
+</div></aside>
+<script id="nela-image-library-script">(function(){})();</script>
+</body></html>"#;
+        let blocks = extract_image_library_blocks(html);
+        assert!(blocks.aside.as_ref().unwrap().contains("nela-image-library"));
+        assert!(blocks.aside.as_ref().unwrap().contains("data:image/png;base64,aaa"));
+        assert!(blocks.style.as_ref().unwrap().contains("nela-image-library-style"));
+        assert!(blocks.script.as_ref().unwrap().contains("nela-image-library-script"));
+    }
 }

@@ -235,8 +235,8 @@ export default function AppMainContentArea({
               !activeSession.artifactPath
             }
             onClose={closeArtifactPanel}
-            onPreviewEdit={(text, path, onStatus) =>
-              handlePreviewArtifactEdit(text, path, onStatus)
+            onPreviewEdit={(text, path, onStatus, editContext) =>
+              handlePreviewArtifactEdit(text, path, onStatus, editContext)
             }
           />
         </div>

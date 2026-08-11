@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { X, FileCode, Table2, Presentation, Code2, Eye, Pencil } from "lucide-react";
+import { X, FileCode, Table2, Presentation, Code2, Eye, Pencil, SendHorizontal } from "lucide-react";
 import { prepareArtifactHtmlPreview } from "../app/artifactHtmlPreview";
 import { parseCSV } from "../app/send/csvParse";
 import { sanitizeCsvArtifactBody } from "../app/sanitizeCsvArtifact";
 import { Api } from "../api";
 import ExcelSheetGrid from "./ExcelSheetGrid";
-import ArtifactPreviewEditChat, {
-  type PreviewEditMessage,
-} from "./ArtifactPreviewEditChat";
+import type { PreviewEditMessage } from "./ArtifactPreviewEditChat";
+import ArtifactPreviewEditBar from "./ArtifactPreviewEditBar";
+import ArtifactPreviewEditLog from "./ArtifactPreviewEditLog";
+import ArtifactImagePicker from "./ArtifactImagePicker";
+import { cancelImagePicker } from "../stores/imagePickerStore";
 
 const PANEL_WIDTH_KEY = "nela.artifactPanelWidthPx";
 const PANEL_MIN_WIDTH = 320;
@@ -42,7 +44,8 @@ export interface ArtifactSidePanelProps {
   onPreviewEdit?: (
     text: string,
     artifactPath: string,
-    onStatus: (message: string, kind: "progress" | "done" | "error") => void
+    onStatus: (message: string, kind: "progress" | "done" | "error") => void,
+    editContext?: { activeSlideIndex?: number }
   ) => void | Promise<void>;
 }
 
@@ -136,7 +139,11 @@ export default function ArtifactSidePanel({
   const [resizing, setResizing] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [editBusy, setEditBusy] = useState(false);
+  const [editDraft, setEditDraft] = useState("");
   const [editMessages, setEditMessages] = useState<PreviewEditMessage[]>([]);
+  // 0-based index of the slide currently shown inside the deck iframe
+  // (reported by the deck's nav script via postMessage). Null for non-deck HTML.
+  const [activeSlideIndex, setActiveSlideIndex] = useState<number | null>(null);
   const panelRef = useRef<HTMLElement>(null);
   const dragRef = useRef<{ startX: number; startWidth: number } | null>(null);
   const throttleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -216,13 +223,17 @@ export default function ArtifactSidePanel({
       setHydratedHtml("");
       setDisplayHtml("");
       paintedOnce.current = false;
+      setEditDraft("");
+      cancelImagePicker();
     }
     if (savedPath && savedPath !== prevSaved.current) {
       // Switching between artifacts — drop prior body so we reload from disk.
       setHydratedHtml("");
       setDisplayHtml("");
       setXlsxRows(null);
+      setActiveSlideIndex(null);
       paintedOnce.current = false;
+      cancelImagePicker();
       if (!prevSaved.current) {
         setHtmlView("preview");
         setSheetView("sheet");
@@ -234,6 +245,12 @@ export default function ArtifactSidePanel({
     }
     prevSaved.current = savedPath;
   }, [savedPath, editOpen]);
+
+  // Never leave a picker await hanging if the panel unmounts or closes.
+  useEffect(() => {
+    if (!active) cancelImagePicker();
+  }, [active]);
+  useEffect(() => () => cancelImagePicker(), []);
 
   // Load HTML from durable disk path when session was restored without the body.
   useEffect(() => {
@@ -331,6 +348,98 @@ export default function ArtifactSidePanel({
     };
   }, []);
 
+  // Track which slide is visible inside the deck iframe ("this slide" edits),
+  // and apply in-canvas image-library clicks onto that slide.
+  useEffect(() => {
+    const pushLibMsg = (
+      content: string,
+      kind: PreviewEditMessage["kind"]
+    ) => {
+      editMsgId.current += 1;
+      setEditMessages((prev) => [
+        ...prev,
+        {
+          id: `pe-${editMsgId.current}`,
+          role: "assistant" as const,
+          content,
+          kind,
+        },
+      ]);
+    };
+
+    const onMessage = (e: MessageEvent) => {
+      const data = e.data as {
+        type?: string;
+        index?: number;
+        libId?: number;
+        slideIndex?: number;
+      } | null;
+      if (!data || typeof data.type !== "string") return;
+
+      if (
+        data.type === "nela-active-slide" &&
+        typeof data.index === "number" &&
+        Number.isFinite(data.index) &&
+        data.index >= 0
+      ) {
+        setActiveSlideIndex(Math.floor(data.index));
+        return;
+      }
+
+      if (data.type === "nela-apply-library-image") {
+        if (editBusy || !savedPath) return;
+        const libId = data.libId;
+        const slideIndex =
+          typeof data.slideIndex === "number" && data.slideIndex >= 0
+            ? Math.floor(data.slideIndex)
+            : activeSlideIndex ?? 0;
+        if (typeof libId !== "number" || !Number.isFinite(libId) || libId < 0) {
+          return;
+        }
+        void (async () => {
+          setEditBusy(true);
+          pushLibMsg(
+            `Applying saved image to slide ${slideIndex + 1}…`,
+            "progress"
+          );
+          try {
+            const { buildSendHandlerContext } = await import(
+              "../app/send/buildContext"
+            );
+            const { applyDeckLibraryImageChoice } = await import(
+              "../app/send/applyDeckLibraryImage"
+            );
+            const { useSessionStore } = await import("../stores/sessionStore");
+            const sid = useSessionStore.getState().activeSessionId;
+            if (!sid) throw new Error("No active session");
+            const ctx = buildSendHandlerContext();
+            const result = await applyDeckLibraryImageChoice({
+              artifactPath: savedPath,
+              sid,
+              ctx,
+              libId: Math.floor(libId),
+              slideIndex,
+            });
+            const filename = result.path.split(/[/\\]/).pop();
+            pushLibMsg(
+              `Applied library image to slide ${slideIndex + 1} → ${filename}`,
+              "done"
+            );
+          } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            pushLibMsg(message || "Couldn't apply that image.", "error");
+          } finally {
+            setEditBusy(false);
+            if (type === "text/html") setHtmlView("preview");
+          }
+        })();
+      }
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [editBusy, savedPath, activeSlideIndex, type]);
+
+
   const csvGridRows = useMemo(() => {
     const cleaned = sanitizeCsvArtifactBody(csv || "");
     const { headers, rows } = parseCSV(cleaned);
@@ -397,7 +506,15 @@ export default function ArtifactSidePanel({
       }
     };
     try {
-      await onPreviewEdit(text, savedPath, onStatus);
+      await onPreviewEdit(
+        text,
+        savedPath,
+        onStatus,
+        activeSlideIndex != null ? { activeSlideIndex } : undefined
+      );
+      if (!lastAssistantId) {
+        onStatus("Edit applied.", "done");
+      }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       onStatus(message || "Edit failed.", "error");
@@ -405,6 +522,12 @@ export default function ArtifactSidePanel({
       setEditBusy(false);
       if (type === "text/html") setHtmlView("preview");
     }
+  };
+
+  const submitEditDraft = async (text: string) => {
+    if (!savedPath || !onPreviewEdit) return;
+    if (!text.trim()) return;
+    await handlePreviewSend(text);
   };
 
   return (
@@ -539,21 +662,7 @@ export default function ArtifactSidePanel({
             </button>
           </div>
         )}
-        {canEdit ? (
-          <button
-            type="button"
-            className={`px-2 py-1 rounded-lg text-[0.68rem] flex items-center gap-1 shrink-0 border ${
-              editOpen
-                ? "border-neon/40 bg-neon/10 text-neon"
-                : "border-glass-border text-txt-muted hover:text-txt hover:bg-void-600"
-            }`}
-            onClick={() => setEditOpen((v) => !v)}
-            title="Edit this artifact in the preview"
-          >
-            <Pencil size={12} />
-            Edit
-          </button>
-        ) : null}
+        {/* NOTE: Edit control moved onto the preview canvas (top-right). */}
         <button
           type="button"
           className="p-1.5 rounded-lg text-txt-muted hover:text-txt hover:bg-void-600"
@@ -583,25 +692,105 @@ export default function ArtifactSidePanel({
           ) : effectiveHtmlView === "code" ? (
             <HtmlSourceStream html={effectiveHtml} follow={streaming && !savedPath} />
           ) : displayHtml ? (
-            <iframe
-              title={title || "Artifact preview"}
-              className="w-full h-full border-0 bg-white"
-              sandbox="allow-scripts allow-same-origin"
-              srcDoc={displayHtml}
-            />
+            <div className="relative w-full h-full">
+              {/* No allow-same-origin: scripts+same-origin lets srcdoc escape
+                  its sandbox. Active-slide tracking uses postMessage('*'),
+                  which works from an opaque origin. */}
+              <iframe
+                title={title || "Artifact preview"}
+                className="w-full h-full border-0 bg-white"
+                sandbox="allow-scripts"
+                srcDoc={displayHtml}
+              />
+              {canEdit ? (
+                <button
+                  type="button"
+                  className={`absolute top-3 right-3 z-20 p-3 rounded-full border ${
+                    editOpen
+                      ? "border-neon/80 bg-neon/10 text-neon"
+                      : "border-neon/60 text-neon hover:bg-neon/15"
+                  }`}
+                  onClick={() => {
+                    if (editBusy) return;
+
+                    if (!editOpen) {
+                      setEditDraft("");
+                      setEditOpen(true);
+                      return;
+                    }
+
+                    // Open: icon = X when empty, Send when typed.
+                    const trimmed = editDraft.trim();
+                    if (!trimmed) {
+                      setEditDraft("");
+                      setEditOpen(false);
+                      return;
+                    }
+
+                    void (async () => {
+                      const t = trimmed;
+                      await submitEditDraft(t);
+                      setEditDraft("");
+                      setEditOpen(false);
+                    })();
+                  }}
+                  title="Edit this artifact in the preview"
+                  aria-label="Edit this artifact"
+                >
+                  <Pencil
+                    size={20}
+                    className={!editOpen ? "block" : "hidden"}
+                  />
+                  <X
+                    size={20}
+                    className={editOpen && !editDraft.trim() ? "block" : "hidden"}
+                  />
+                  <SendHorizontal
+                    size={20}
+                    className={editOpen && editDraft.trim() ? "block" : "hidden"}
+                  />
+                </button>
+              ) : null}
+
+              {canEdit ? (
+                <div className="absolute top-3 left-0 right-0 z-10 flex justify-center pl-12 pr-16">
+                  <div className="w-full max-w-[720px]">
+                    <ArtifactPreviewEditBar
+                      open={editOpen}
+                      busy={editBusy}
+                      draft={editDraft}
+                      onDraftChange={(v) => setEditDraft(v)}
+                      onSubmit={(t) =>
+                        void (async () => {
+                          await submitEditDraft(t);
+                          setEditDraft("");
+                          setEditOpen(false);
+                        })()
+                      }
+                    />
+                  </div>
+                </div>
+              ) : null}
+
+              {canEdit && (editMessages.length > 0 || editBusy) ? (
+                <div className="absolute bottom-3 left-3 right-16 z-20 max-w-[420px] flex flex-col gap-2">
+                  <ArtifactImagePicker />
+                  <ArtifactPreviewEditLog
+                    messages={editMessages}
+                    busy={editBusy}
+                    onClear={() => setEditMessages([])}
+                  />
+                </div>
+              ) : (
+                <div className="absolute bottom-3 left-3 right-16 z-20 max-w-[420px]">
+                  <ArtifactImagePicker />
+                </div>
+              )}
+            </div>
           ) : (
             <div className="p-4 text-sm text-txt-muted">Waiting for HTML…</div>
           )}
         </div>
-        {canEdit ? (
-          <ArtifactPreviewEditChat
-            open={editOpen}
-            busy={editBusy}
-            messages={editMessages}
-            onClose={() => setEditOpen(false)}
-            onSend={(t) => void handlePreviewSend(t)}
-          />
-        ) : null}
       </div>
     </aside>
   );

@@ -193,6 +193,10 @@ export function isNelaPresentationDeckHtml(content: string): boolean {
 const ADD_SLIDE_REQUEST =
   /\b(add|insert|append)\b[\s\S]{0,80}\b(slide|slides)\b|\b(at the (end|last|start|beginning|first)|to the (end|last|start|beginning|first)|starting\s+slide|opening\s+slide)\b[\s\S]{0,40}\b(slide|slides)?\b/i;
 
+/** "add a pic/image/photo …" — image op, not a new slide. */
+const ADD_IMAGE_NOUN =
+  /\b(add|put|include)\s+(a\s+|an\s+|the\s+)?(images?|photos?|pictures?|pics?|imgs?|photographs?)\b/i;
+
 const REMOVE_SLIDE_REQUEST =
   /\b(remove|delete)\b[\s\S]{0,100}\bslides?\b|\bslides?\b[\s\S]{0,40}\b(remove|delete)\b/i;
 
@@ -207,6 +211,8 @@ export function isPresentationSlideAddRequest(prompt: string): boolean {
   if (COMPLEX_DECK_REWRITE.test(prompt)) return false;
   if (MOVE_SLIDE_REQUEST.test(prompt)) return false;
   if (REMOVE_SLIDE_REQUEST.test(prompt)) return false;
+  // "add a pic to slide 1" must not create a new slide.
+  if (ADD_IMAGE_NOUN.test(prompt)) return false;
   return ADD_SLIDE_REQUEST.test(prompt);
 }
 
@@ -226,7 +232,21 @@ export function isPresentationSlideMoveRequest(prompt: string): boolean {
 }
 
 const EXPAND_SLIDE_REQUEST =
-  /\b(increase|expand|enrich|lengthen|grow|fatten|extend)\b[\s\S]{0,50}\b(content|body|text|copy|bullets?|details?)\b|\b(more|extra|additional)\s+(content|detail|text|bullets?|copy)\b|\b(add|put)\s+more\s+(content|detail|text|bullets?|copy)\b/i;
+  /\b(increase|expand|enrich|lengthen|grow|fatten|extend)\b[\s\S]{0,50}\b(contents?|body|texts?|copy|bullets?|details?)\b|\b(more|extra|additional)\s+(contents?|details?|texts?|bullets?|copy)\b|\b(add|put)\s+more\s+(contents?|details?|texts?|bullets?|copy)\b/i;
+
+const IMAGE_NOUN = "images?|photos?|pictures?|pics?|imgs?|photographs?";
+
+const IMAGE_SLIDE_REQUEST = new RegExp(
+  [
+    // change/replace the image|pic|…
+    `\\b(change|replace|swap|update|refresh|new)\\b[\\s\\S]{0,50}\\b(${IMAGE_NOUN})\\b`,
+    // image|pic … change/replace
+    `\\b(${IMAGE_NOUN})\\b[\\s\\S]{0,50}\\b(change|replace|swap|update|refresh)\\b`,
+    // add/put a pic|image of X (on an existing slide)
+    `\\b(add|put|include)\\s+(a\\s+|an\\s+|the\\s+)?(${IMAGE_NOUN})\\b`,
+  ].join("|"),
+  "i"
+);
 
 /** User wants richer copy on an existing slide (deterministic web enrich). */
 export function isPresentationSlideExpandRequest(prompt: string): boolean {
@@ -234,6 +254,7 @@ export function isPresentationSlideExpandRequest(prompt: string): boolean {
   if (isPresentationSlideAddRequest(prompt)) return false;
   if (isPresentationSlideRemoveRequest(prompt)) return false;
   if (isPresentationSlideMoveRequest(prompt)) return false;
+  if (isPresentationSlideImageChangeRequest(prompt)) return false;
   const trimmed = prompt.trim();
   if (!EXPAND_SLIDE_REQUEST.test(trimmed)) return false;
   // Prefer an explicit slide target (number / last / titled).
@@ -241,6 +262,64 @@ export function isPresentationSlideExpandRequest(prompt: string): boolean {
     /\bslides?\b/i.test(trimmed) ||
     /\b(last|final|this|current)\b/i.test(trimmed)
   );
+}
+
+/** User wants to change/replace the image on a slide (deterministic web fetch). */
+export function isPresentationSlideImageChangeRequest(prompt: string): boolean {
+  if (COMPLEX_DECK_REWRITE.test(prompt)) return false;
+  if (isPresentationSlideRemoveRequest(prompt)) return false;
+  if (isPresentationSlideMoveRequest(prompt)) return false;
+  // Prefer image ops over "add slide" when the noun is an image/pic.
+  if (isPresentationSlideAddRequest(prompt) && !ADD_IMAGE_NOUN.test(prompt)) {
+    return false;
+  }
+  const trimmed = prompt.trim();
+  if (!IMAGE_SLIDE_REQUEST.test(trimmed)) return false;
+  return (
+    /\bslides?\b/i.test(trimmed) ||
+    /\b(last|final|this|current|first)\b/i.test(trimmed) ||
+    EDIT_FILE_HINT.test(trimmed)
+  );
+}
+
+/**
+ * Optional topic after "to …" / "with …" / "of …" for image replacement.
+ * e.g. "change the image on slide 1 to Park Güell" → "Park Güell"
+ * e.g. "add a pic of Messi" → "Messi"
+ */
+export function parseSlideImageChangeTopic(prompt: string): string | null {
+  const cleanTopic = (raw: string): string | null => {
+    const topic = raw
+      .replace(/\s+(?:on|in|to|for)\s+slides?\s+\d+\b.*$/i, "")
+      .replace(/\b(please|thanks|thank you)\b/gi, "")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (topic.length < 2) return null;
+    if (
+      /^(slide|image|photo|picture|pic|img|it|this|that)\b/i.test(topic)
+    ) {
+      return null;
+    }
+    return topic;
+  };
+
+  const ofMatch = prompt.match(
+    /\b(?:images?|photos?|pictures?|pics?|imgs?)\s+of\s+["']?([^"'.\n]{2,80})/i
+  );
+  if (ofMatch?.[1]) {
+    const topic = cleanTopic(ofMatch[1]);
+    if (topic) return topic;
+  }
+
+  const withoutSlideTail = prompt
+    .replace(/\s+(?:on|in|to|for)\s+slides?\s+\d+\s*$/i, "")
+    .replace(/\s+slides?\s+\d+\s*$/i, "")
+    .trim();
+  const m = withoutSlideTail.match(
+    /\b(?:to|with|of|showing|about|for)\s+["']?([^"'.\n]{2,80})["']?\s*$/i
+  );
+  if (!m?.[1]) return null;
+  return cleanTopic(m[1]);
 }
 
 /**
@@ -427,6 +506,7 @@ export function isPresentationThemeStyleRequest(prompt: string): boolean {
   if (isPresentationSlideRemoveRequest(prompt)) return false;
   if (isPresentationSlideMoveRequest(prompt)) return false;
   if (isPresentationSlideExpandRequest(prompt)) return false;
+  if (isPresentationSlideImageChangeRequest(prompt)) return false;
   const trimmed = prompt.trim();
   // STYLE_ARTIFACT_EDIT already includes make/switch/use/apply/set — those are
   // not in EDIT_VERBS (to avoid treating "make a new deck" as an edit verb alone).

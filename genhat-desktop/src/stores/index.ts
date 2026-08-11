@@ -15,6 +15,12 @@ export {
 export { useUIStore, modalResolve, setModalResolve } from "./uiStore";
 export { useAuthStore } from "./authStore";
 export { useCloudStore } from "./cloudStore";
+export {
+  useImagePickerStore,
+  openImagePicker,
+  resolveImagePicker,
+  cancelImagePicker,
+} from "./imagePickerStore";
 export { 
   useDownloadStore, 
   startupCancelRequested, 

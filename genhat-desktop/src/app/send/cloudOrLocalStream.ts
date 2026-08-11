@@ -48,6 +48,12 @@ type StreamArgs = {
   response_format?: { type: "json_object" | "text" };
   /** When true, cloud failures surface via onError instead of local fallback. */
   disableLocalFallback?: boolean;
+  /**
+   * Route to the local model regardless of cloud preference. For background
+   * utility calls (e.g. slide copy synthesis) where callers manage their own
+   * cloud-first retry and a local answer beats failing.
+   */
+  forceLocal?: boolean;
   generationOptions?: {
     maxTokens?: number;
     temperature?: number;
@@ -422,7 +428,7 @@ export function streamChatByMode(args: StreamArgs): void {
       : undefined,
   };
 
-  if (preferredMode === "local" || fileBlocksCloud) {
+  if (args.forceLocal || preferredMode === "local" || fileBlocksCloud) {
     runLocalStream(localArgs);
     return;
   }

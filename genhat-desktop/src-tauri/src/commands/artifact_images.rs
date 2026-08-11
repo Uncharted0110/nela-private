@@ -96,13 +96,31 @@ pub async fn download_image_data_uri(url: String) -> Result<String, String> {
         return Err(format!("Image download HTTP {}", resp.status()));
     }
 
+    let content_type = resp
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if content_type.contains("svg") || content_type.contains("text/html") {
+        return Err(format!("Unsupported image content-type: {content_type}"));
+    }
+
     let bytes = resp
         .bytes()
         .await
         .map_err(|e| format!("Failed to read image body: {e}"))?;
 
+    if bytes.len() < 256 {
+        return Err("Downloaded image too small to be a slide photo".into());
+    }
     if bytes.len() > 4 * 1024 * 1024 {
         return Err("Downloaded image too large (>4MB)".into());
+    }
+    // SVG payloads sometimes arrive without a content-type or extension.
+    let head = String::from_utf8_lossy(&bytes[..bytes.len().min(256)]).to_ascii_lowercase();
+    if head.contains("<svg") || head.trim_start().starts_with("<?xml") && head.contains("svg") {
+        return Err("SVG images are not supported for slides".into());
     }
 
     let mime = mime_from_bytes(&bytes, url);

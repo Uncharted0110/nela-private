@@ -494,9 +494,19 @@ fn apply_patch(original: &str, patch: &str) -> Result<String, String> {
 
             let old_range = parts[1].strip_prefix('-').unwrap_or(parts[1]);
             let old_parts: Vec<&str> = old_range.split(',').collect();
-            let old_start = old_parts[0].parse::<usize>().map_err(|e| e.to_string())?;
+            let old_start = old_parts[0].parse::<usize>().map_err(|_| {
+                format!(
+                    "Invalid patch hunk header (could not parse line number in `{line}`). \
+                     Rephrase the edit, or use a slide-specific command like “change the image on slide 1”."
+                )
+            })?;
             let old_len = if old_parts.len() > 1 {
-                old_parts[1].parse::<usize>().map_err(|e| e.to_string())?
+                old_parts[1].parse::<usize>().map_err(|_| {
+                    format!(
+                        "Invalid patch hunk header (could not parse range in `{line}`). \
+                         Rephrase the edit, or use a slide-specific command."
+                    )
+                })?
             } else {
                 1
             };
