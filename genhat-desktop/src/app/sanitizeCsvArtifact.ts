@@ -16,8 +16,10 @@ export function extractCsvSheetArtifacts(raw: string): CsvSheetArtifact[] {
 
   const re = /<nela-artifact\b([^>]*)>([\s\S]*?)<\/nela-artifact\s*>/gi;
   const sheets: CsvSheetArtifact[] = [];
+  let firstTagIndex = -1;
   let match: RegExpExecArray | null;
   while ((match = re.exec(s)) !== null) {
+    if (firstTagIndex < 0) firstTagIndex = match.index;
     const attrs = match[1] || "";
     const typeMatch = attrs.match(/\btype\s*=\s*["']([^"']+)["']/i);
     const mime = (typeMatch?.[1] || "text/csv").toLowerCase();
@@ -30,7 +32,20 @@ export function extractCsvSheetArtifacts(raw: string): CsvSheetArtifact[] {
     sheets.push({ title, csv });
   }
 
-  if (sheets.length > 0) return sheets;
+  if (sheets.length > 0) {
+    // Streamed body often has sheet 1 untagged, then tagged sheet 2+.
+    if (firstTagIndex > 0) {
+      const prefix = sanitizeCsvInner(s.slice(0, firstTagIndex));
+      if (prefix && looksLikeCsvTable(prefix)) {
+        sheets.unshift({ title: "Sheet1", csv: prefix });
+      }
+    }
+    return uniquifySheetTitles(sheets);
+  }
+
+  // No tags: try markdown/section-separated tables (common model failure mode).
+  const sectioned = splitCsvBySections(s);
+  if (sectioned.length > 1) return uniquifySheetTitles(sectioned);
 
   const fallback = sanitizeCsvInner(s);
   if (!fallback) return [];
@@ -91,6 +106,84 @@ function sanitizeCsvInner(raw: string): string {
 
   while (kept.length && !kept[kept.length - 1]!.trim()) kept.pop();
   return kept.join("\n").trim();
+}
+
+/**
+ * Split a single CSV-ish blob into sheets using markdown headings or
+ * blank-line-separated tables with different header rows.
+ */
+function splitCsvBySections(raw: string): CsvSheetArtifact[] {
+  const cleaned = raw
+    .replace(/<nela-artifact\b[^>]*>/gi, "\n")
+    .replace(/<\/nela-artifact\s*>/gi, "\n")
+    .replace(/^```(?:csv|CSV)?\s*/i, "")
+    .replace(/\s*```$/i, "")
+    .trim();
+  if (!cleaned) return [];
+
+  const headingSplit = cleaned.split(/(?=^#{1,3}\s+\S+)/m);
+  if (headingSplit.length > 1) {
+    const out: CsvSheetArtifact[] = [];
+    for (const part of headingSplit) {
+      const lines = part.split(/\r?\n/);
+      const heading = lines[0]?.match(/^#{1,3}\s+(.+)$/)?.[1]?.trim();
+      const body = sanitizeCsvInner(
+        heading ? lines.slice(1).join("\n") : part
+      );
+      if (!body || !looksLikeCsvTable(body)) continue;
+      out.push({
+        title: (heading || `Sheet${out.length + 1}`).slice(0, 31),
+        csv: body,
+      });
+    }
+    if (out.length > 1) return out;
+  }
+
+  // Blank-line separated blocks that each look like their own CSV table.
+  const blocks = cleaned.split(/\n\s*\n+/);
+  if (blocks.length > 1) {
+    const out: CsvSheetArtifact[] = [];
+    let prevHeader = "";
+    for (const block of blocks) {
+      const body = sanitizeCsvInner(block);
+      if (!body || !looksLikeCsvTable(body)) continue;
+      const header = body.split(/\r?\n/).find((l) => l.trim())?.trim() || "";
+      // New sheet when header row changes (distinct tables).
+      if (out.length === 0 || (header && header !== prevHeader)) {
+        out.push({ title: `Sheet${out.length + 1}`, csv: body });
+        prevHeader = header;
+      } else {
+        // Same header continuation — append rows to last sheet.
+        const last = out[out.length - 1]!;
+        const rows = body.split(/\r?\n/).slice(1).join("\n");
+        if (rows.trim()) last.csv = `${last.csv}\n${rows}`;
+      }
+    }
+    if (out.length > 1) return out;
+  }
+
+  return [];
+}
+
+function looksLikeCsvTable(csv: string): boolean {
+  const lines = csv.split(/\r?\n/).filter((l) => l.trim());
+  if (lines.length < 2) return false;
+  return countCsvColumns(lines[0]!) >= 2;
+}
+
+function uniquifySheetTitles(sheets: CsvSheetArtifact[]): CsvSheetArtifact[] {
+  const seen = new Map<string, number>();
+  return sheets.map((sheet, idx) => {
+    let base = (sheet.title || `Sheet${idx + 1}`).trim().slice(0, 31) || `Sheet${idx + 1}`;
+    const key = base.toLowerCase();
+    const n = (seen.get(key) || 0) + 1;
+    seen.set(key, n);
+    if (n > 1) {
+      const suffix = ` (${n})`;
+      base = (base.slice(0, Math.max(1, 31 - suffix.length)) + suffix).slice(0, 31);
+    }
+    return { ...sheet, title: base };
+  });
 }
 
 function countCsvColumns(line: string): number {

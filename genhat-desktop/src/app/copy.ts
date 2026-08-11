@@ -148,6 +148,7 @@ export const COPY = {
   errorFileLoad:
     "We couldn't open that file. Check the path and try again.",
   retry: "Try again",
+  retryPrompt: "Retry this prompt",
 
   // Slash commands
   slashCommandsHint: "Type / for commands (ppt, excel, html, web, rag, files)",

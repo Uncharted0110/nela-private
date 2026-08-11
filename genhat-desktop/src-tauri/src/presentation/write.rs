@@ -1091,6 +1091,13 @@ pub fn write_presentation_plan(plan: PresentationPlan) -> Result<PathBuf, String
         const counterEl = document.getElementById('counter');
         const progressEl = document.getElementById('progress');
 
+        // Let the host preview panel know which slide is active ("this slide" edits).
+        function reportActiveSlide() {{
+            try {{
+                window.parent.postMessage({{ type: 'nela-active-slide', index: currentSlide, total: totalSlides }}, '*');
+            }} catch (e) {{ /* not embedded */ }}
+        }}
+
         function showSlide(idx) {{
             if (idx < 0 || idx >= totalSlides) return;
             slides[currentSlide].classList.remove('active');
@@ -1099,6 +1106,7 @@ pub fn write_presentation_plan(plan: PresentationPlan) -> Result<PathBuf, String
 
             counterEl.innerText = `${{currentSlide + 1}} / ${{totalSlides}}`;
             progressEl.style.width = `${{((currentSlide + 1) / totalSlides) * 100}}%`;
+            reportActiveSlide();
         }}
 
         function nextSlide() {{

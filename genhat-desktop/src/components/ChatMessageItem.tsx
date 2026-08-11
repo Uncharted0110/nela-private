@@ -1,4 +1,5 @@
 import React, { useState, useEffect, memo } from "react";
+import { RotateCcw } from "lucide-react";
 import MarkdownRenderer from "./MarkdownRenderer";
 import AudioPlayer from "./AudioPlayer";
 import SpeakButton from "./SpeakButton";
@@ -93,6 +94,23 @@ const CopyMsgButton: React.FC<{ text: string; label?: string }> = ({
     </button>
   );
 };
+
+/** Re-run the prior user prompt that produced this assistant response. */
+const RetryMsgButton: React.FC<{
+  disabled?: boolean;
+  onRetry: () => void;
+}> = ({ disabled, onRetry }) => (
+  <button
+    type="button"
+    className="p-1.5 glass border border-glass-border text-txt-muted cursor-pointer rounded-lg transition-colors duration-150 hover:text-neon hover:border-glass-border disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-txt-muted"
+    onClick={onRetry}
+    disabled={disabled}
+    title={COPY.retryPrompt}
+    aria-label={COPY.retryPrompt}
+  >
+    <RotateCcw size={13} strokeWidth={2.25} />
+  </button>
+);
 
 /** Inline gallery for extracted images/tables attached to an assistant message. */
 const MediaGallery: React.FC<{ assets: MediaAsset[] }> = ({ assets }) => {
@@ -216,7 +234,11 @@ export interface ChatMessageItemProps {
   sessionStreamingArtifactType?: "text/html" | "text/csv";
   hasLiveStreamBody: boolean;
   retryText: string | null;
+  /** True while any generation is in flight (disables retry). */
+  isLoading?: boolean;
   onSend: (text: string) => void;
+  /** Replace this assistant reply by re-running its prior user prompt. */
+  onRetry?: (assistantMsgIndex: number) => void;
   saveAudioToSidebar?: (msgIdx: number) => void;
   onOpenPreview: (src: string, title: string) => void;
 }
@@ -236,11 +258,18 @@ function ChatMessageItemInner({
   sessionStreamingArtifactType,
   hasLiveStreamBody,
   retryText,
+  isLoading = false,
   onSend,
+  onRetry,
   saveAudioToSidebar,
   onOpenPreview,
 }: ChatMessageItemProps) {
   const updateSession = useSessionStore((s) => s.updateSession);
+  const canRetry = Boolean(retryText?.trim()) && !isLoading && Boolean(onRetry);
+  const runRetry = () => {
+    if (!canRetry || !onRetry) return;
+    onRetry(idx);
+  };
 
   return (
               <div className={`${isNew ? "animate-msg-fade" : ""} group/msg flex gap-3 mb-6 max-w-3xl mx-auto ${msg.role === "user" ? "justify-end" : ""}`}>
@@ -381,9 +410,8 @@ function ChatMessageItemInner({
                                       <button
                                         type="button"
                                         className="mt-2 block text-[0.78rem] text-neon hover:text-neon-hover underline-offset-2 hover:underline"
-                                        onClick={() => {
-                                          if (retryText) onSend(retryText);
-                                        }}
+                                        onClick={runRetry}
+                                        disabled={!canRetry}
                                       >
                                         {COPY.retry}
                                       </button>
@@ -466,9 +494,8 @@ function ChatMessageItemInner({
                                   <button
                                     type="button"
                                     className="mt-2 text-[0.78rem] text-neon hover:text-neon-hover underline-offset-2 hover:underline"
-                                    onClick={() => {
-                                      if (retryText) onSend(retryText);
-                                    }}
+                                    onClick={runRetry}
+                                    disabled={!canRetry}
                                   >
                                     {COPY.retry}
                                   </button>
@@ -482,6 +509,12 @@ function ChatMessageItemInner({
                         )}
                         <div className="flex items-center gap-1 mt-2 pt-1.5 min-h-[1.5rem]">
                           <CopyMsgButton text={msg.content} label="Copy response" />
+                          {retryText?.trim() && onRetry ? (
+                            <RetryMsgButton
+                              disabled={!canRetry}
+                              onRetry={runRetry}
+                            />
+                          ) : null}
                           {/* Read response aloud button */}
                           <SpeakButton text={msg.content} compact />
                         {advanced && msg.generateTime !== undefined && (
@@ -537,7 +570,9 @@ function propsAreEqual(prev: ChatMessageItemProps, next: ChatMessageItemProps): 
     prev.sessionStreamingArtifactType === next.sessionStreamingArtifactType &&
     prev.hasLiveStreamBody === next.hasLiveStreamBody &&
     prev.retryText === next.retryText &&
+    prev.isLoading === next.isLoading &&
     prev.onSend === next.onSend &&
+    prev.onRetry === next.onRetry &&
     prev.saveAudioToSidebar === next.saveAudioToSidebar &&
     prev.onOpenPreview === next.onOpenPreview
   );

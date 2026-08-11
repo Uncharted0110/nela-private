@@ -83,16 +83,6 @@ function toCloudMessages(messages: ChatContextMessage[]): CloudChatMessage[] {
   }));
 }
 
-function lastUserQuery(messages: CloudChatMessage[]): string {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const m = messages[i];
-    if (m?.role === "user" && typeof m.content === "string" && m.content.trim()) {
-      return m.content.trim().slice(0, 200);
-    }
-  }
-  return "";
-}
-
 function streamCloudRound(
   messages: CloudChatMessage[],
   tools: CloudToolDefinition[],
@@ -577,8 +567,9 @@ export async function runCloudNativeToolLoop(
     }
     if (hasFileSearch) {
       parts.push(
-        "You have a search_knowledge_base tool for the user's local indexed document graph (hybrid BM25 + vector embeddings). " +
-          "Call it for their files/notes/PDFs/slides. Prefer higher top_k (25–40) so graph retrieval can surface related chunks; use 10–15 only for pinpoint lookups. " +
+        "You have a search_knowledge_base tool for the user's local indexed document graph. " +
+          "Call it ONLY when the user clearly needs their own files/notes/PDFs/slides — never for general web topics (travel, news, public facts). " +
+          "Prefer higher top_k (25–40) so graph retrieval can surface related chunks; use 10–15 only for pinpoint lookups. " +
           "Cite local sources with inline [n] markers only (no raw file paths or Sources list)."
       );
     }
@@ -610,15 +601,8 @@ export async function runCloudNativeToolLoop(
 
   try {
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-      // Never force web_search — only run when the model calls it.
-      // File-only turns may gently prefer search_knowledge_base on round 0.
-      const toolChoice =
-        round === 0 && hasFileSearch && !hasWebSearch
-          ? ({
-              type: "function" as const,
-              function: { name: "search_knowledge_base" },
-            })
-          : ("auto" as const);
+      // Never force tools — only run when the model emits tool_calls.
+      const toolChoice = "auto" as const;
 
       // Don't stream intermediate tool-decision tokens to the chat bubble.
       const decision = await streamCloudRound(
@@ -640,41 +624,9 @@ export async function runCloudNativeToolLoop(
       lastContent = decision.content;
       if (decision.model?.trim()) lastModel = decision.model.trim();
 
-      let toolCalls = decision.tool_calls ?? [];
+      const toolCalls = decision.tool_calls ?? [];
 
-      // Host-side guarantee for file-only turns: if the model skipped tools on
-      // round 0, inject search_knowledge_base. Never auto-force web_search.
-      if (
-        round === 0 &&
-        toolCalls.length === 0 &&
-        hasFileSearch &&
-        !hasWebSearch
-      ) {
-        const rawQ = lastUserQuery(messages);
-        if (rawQ) {
-          toolCalls = [
-            {
-              id: `forced_search_knowledge_base_${Date.now()}`,
-              type: "function",
-              function: {
-                name: "search_knowledge_base",
-                arguments: JSON.stringify({ query: rawQ.slice(0, 200), top_k: 25 }),
-              },
-            },
-          ];
-        } else if (decision.content.trim()) {
-          opts.onChunk(decision.content);
-          return {
-            content: decision.content,
-            thinking,
-            webSearchResult,
-            artifacts,
-            model: lastModel,
-          };
-        } else {
-          break;
-        }
-      } else if (!toolCalls.length) {
+      if (!toolCalls.length) {
         if (decision.content.trim()) {
           opts.onChunk(decision.content);
         }
@@ -724,7 +676,7 @@ export async function runCloudNativeToolLoop(
         }
         if (hasFileSearch) {
           nextHintParts.push(
-            "If you need more local-file context, call search_knowledge_base with a refined query (prefer higher top_k)."
+            "Only if you still need local-file context the user asked about, call search_knowledge_base with a refined query."
           );
         }
         nextHintParts.push(
@@ -809,7 +761,7 @@ export async function runCloudArtifactWebResearch(opts: {
           : "artifact";
 
   const localHint = fileSearchEnabled
-    ? " Also call search_knowledge_base with SHORT keyword queries when the request may be answered from the user's indexed local files (notes, PDFs, slides). "
+    ? " You may optionally call search_knowledge_base with SHORT keyword queries if (and only if) the request clearly needs the user's indexed local files. Do not search local files for general travel / web topics. "
     : " ";
 
   const researchOpts: CloudNativeToolLoopOptions = {
@@ -852,9 +804,12 @@ export async function runCloudArtifactWebResearch(opts: {
     mcpEnabled: false,
   });
   let messages = toCloudMessages(researchOpts.messages);
-  const mustCallHint = fileSearchEnabled
-    ? "You MUST call web_search or search_knowledge_base at least once with a concise keyword query before finishing. Prefer search_knowledge_base when the topic likely lives in the user's local files."
-    : "You MUST call the web_search tool at least once with a concise keyword query and depth (snippet|full|standard|deep) before finishing.";
+  const mustCallHint =
+    "Call the web_search tool with concise keyword queries and depth (snippet|full|standard|deep) when you need live web facts. " +
+    (fileSearchEnabled
+      ? "Call search_knowledge_base only when the user clearly needs their local indexed files — never for general travel/web research. "
+      : "") +
+    "Do not invent tool results.";
   messages = [
     messages[0]!,
     {
@@ -897,13 +852,8 @@ export async function runCloudArtifactWebResearch(opts: {
           disableThinking: true,
           disableLocalFallback: true,
           tools,
-          // Force a tool call on the first round so the OR model picks the query.
-          tool_choice:
-            round === 0
-              ? fileSearchEnabled
-                ? "required"
-                : { type: "function", function: { name: "web_search" } }
-              : "auto",
+          // Auto only — never force web_search or search_knowledge_base.
+          tool_choice: "auto",
           generationOptions: researchOpts.generationOptions,
           onChunk: (chunk) => {
             content += chunk;
@@ -953,7 +903,7 @@ export async function runCloudArtifactWebResearch(opts: {
       if (webSearchResult && round + 1 < MAX_TOOL_ROUNDS) {
         const remaining = MAX_TOOL_ROUNDS - (round + 1);
         const localRoundHint = fileSearchEnabled
-          ? " You may also call search_knowledge_base for local-file facets."
+          ? " Call search_knowledge_base only if a local-file facet is clearly needed."
           : "";
         messages = [
           ...messages,

@@ -36,7 +36,7 @@ Optional after web_search: {"tool":"web_extract","urls":["https://..."],"query":
 Cite web results with inline [n] markers only (no raw URLs).`;
 
 export const FILE_SEARCH_TOOL_SYSTEM = `You have a search_knowledge_base tool for the user's local indexed document graph (hybrid BM25 + dense vector embeddings + structural expansion).
-Call it for their files, resumes, notes, PDFs, slides, or on-device documents.
+Call it ONLY when the user clearly needs their own files, resumes, notes, PDFs, or slides — never for general web/travel topics.
 Reply with ONLY this JSON (no markdown):
 {"tool":"search_knowledge_base","query":"keyphrase","top_k":25}
 Prefer higher top_k (25–40) so graph/vector retrieval can surface related chunks; use 10–15 only for pinpoint lookups (max 50).
@@ -347,16 +347,7 @@ export async function runWebSearchToolLoop(
         call = null;
       }
 
-      // Never auto-force web_search. File-only turns may inject KB search once.
-      if (!call && round === 0 && fileSearchEnabled && !webEnabled) {
-        const lastUser = [...opts.messages]
-          .reverse()
-          .find((m) => m.role === "user" && m.content.trim());
-        const rawQ = (lastUser?.content ?? "").trim().slice(0, 200);
-        if (rawQ) {
-          call = { tool: "search_knowledge_base", query: rawQ, topK: 25 };
-        }
-      }
+      // Never inject tools the model did not request (including file search).
 
       if (!call) {
         if (decision.content.trim()) {

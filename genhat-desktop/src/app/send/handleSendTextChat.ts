@@ -136,6 +136,8 @@ export async function handleSendTextChat(
 
   const streamParser = autoArtifacts ? new StreamArtifactParser() : null;
   let streamedArtifactBody = "";
+  /** Full model text — needed so multi-sheet CSV tags survive save. */
+  let rawModelOutput = "";
   let streamedArtifactType: "text/html" | "text/csv" = "text/html";
   let streamedArtifactTitle = "";
   let chatProse = "";
@@ -214,7 +216,7 @@ export async function handleSendTextChat(
     let artifactStage: string | null = null;
     const body =
       streamedArtifactType === "text/csv"
-        ? sanitizeCsvArtifactBody(streamedArtifactBody.trim())
+        ? rawModelOutput.trim() || streamedArtifactBody.trim()
         : streamedArtifactBody.trim();
     const asPresentation =
       /slide|deck|presentation/i.test(streamedArtifactTitle) ||
@@ -372,6 +374,7 @@ export async function handleSendTextChat(
       textFirstTokenTimeMs = Date.now();
     }
     if (streamParser) {
+      rawModelOutput += chunk;
       applyAutoArtifactEmit(streamParser.push(chunk));
     } else {
       fullResponse += chunk;

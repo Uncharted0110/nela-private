@@ -144,7 +144,8 @@ OUTPUT FORMAT (mandatory):
 
 MULTI-SHEET RULES (critical):
 - When the topic has distinct tables, emit MULTIPLE <nela-artifact type="text/csv"> blocks (one per sheet).
-  Examples: trip plan → Itinerary, Transport, Budget, Packing; business → Overview, Revenue, Costs; research → Summary, Sources.
+  Examples: trip plan → Overview, Itinerary, Transport, Hotels, Activities, Budget; business → Overview, Revenue, Costs; research → Summary, Sources.
+- Name every sheet in your intro (“six tabs: …”), then emit that many tagged blocks — never describe multiple sheets and only output one.
 - Do NOT dump unrelated columns into a single mega-sheet when separate sheets would be clearer.
 - A simple single-table request may use exactly one artifact tag.
 

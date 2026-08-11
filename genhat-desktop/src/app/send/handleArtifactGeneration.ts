@@ -243,8 +243,10 @@ export async function handleArtifactGeneration(
         : next;
     };
 
-    // Doc Graph search: explicit ambient file intent, or file-indexer toggle for topic grounding.
-    if (!attachedFile && (wantsAmbientFileSearch || fileSearchEnabled)) {
+    // Doc Graph search only for explicit ambient file intent (/files, "find my resume", path).
+    // Do NOT run just because the "Search my files" toggle is on — that only exposes the
+    // search_knowledge_base tool for the model to call when it chooses.
+    if (!attachedFile && wantsAmbientFileSearch) {
       updateArtifactMsg("SearchingDisk");
       const searchQuery =
         extractAmbientSearchQuery(text).trim() ||
@@ -865,7 +867,7 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
             (rowPlan.explicit && rowPlan.count
               ? ` Include EXACTLY ${rowPlan.count} data rows on the primary sheet.`
               : "") +
-            ` When the topic has distinct tables, emit MULTIPLE <nela-artifact type="text/csv" title="ShortTabName">...</nela-artifact> blocks (one Excel sheet each). Use short titles (≤31 chars) for tab names. A single simple table may use one artifact.`
+            ` When the topic has distinct tables (e.g. trip Overview + Itinerary + Transport + Hotels + Activities + Budget), emit MULTIPLE <nela-artifact type="text/csv" title="ShortTabName">...</nela-artifact> blocks — one Excel sheet each. If your intro lists N sheets, emit exactly N tagged blocks. Use short titles (≤31 chars). A single simple table may use one artifact.`
           : `Generate a plan for the user request: "${text}".${rowCountSuffix}`;
     const spreadsheetContext =
       schemaId === "html_synthesis" && spreadsheetData
@@ -1110,6 +1112,8 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
 
     const streamParser = cloudAnyFreeform ? new StreamArtifactParser() : null;
     let streamedArtifactBody = "";
+    /** Full model text for CSV multi-sheet extraction (parser may only preview sheet 1). */
+    let rawModelOutput = "";
     let streamedArtifactType: "text/html" | "text/csv" =
       cloudSpreadsheetFreeform ? "text/csv" : "text/html";
     let streamedArtifactTitle = "";
@@ -1228,6 +1232,7 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
       },
       onChunk: (chunk) => {
         if (streamParser) {
+          rawModelOutput += chunk;
           applyStreamEmit(streamParser.push(chunk));
         } else {
           planJson += chunk;
@@ -1250,11 +1255,13 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
             if (cloudAnyFreeform && streamParser) {
               applyStreamEmit(streamParser.finalize());
               artifactUiFlusher.flushNow();
+              // CSV: pass the full raw stream so every <nela-artifact type="text/csv">
+              // becomes a worksheet. Never pre-sanitize to the first sheet only.
               const body =
                 streamedArtifactType === "text/csv"
-                  ? sanitizeCsvArtifactBody(
-                      streamedArtifactBody.trim() || planJson.trim()
-                    )
+                  ? rawModelOutput.trim() ||
+                    streamedArtifactBody.trim() ||
+                    planJson.trim()
                   : streamedArtifactBody.trim() || planJson.trim();
               const parserIntro = stripPartialArtifactTags(
                 streamParser.chatBeforeArtifact || ""

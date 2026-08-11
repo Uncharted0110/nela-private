@@ -29,11 +29,15 @@ Formats when (and only when) an artifact is warranted — angle brackets are MAN
   <nela-artifact type="text/html" title="Short Title">
   <!DOCTYPE html>...complete document...
   </nela-artifact>
-- Spreadsheet / table workbook:
-  <nela-artifact type="text/csv" title="Short Title">
+- Spreadsheet / table workbook (one tag per Excel sheet when there are distinct tables):
+  <nela-artifact type="text/csv" title="Overview">
   header1,header2
   row1col1,row1col2
   </nela-artifact>
+  <nela-artifact type="text/csv" title="Itinerary">
+  ...
+  </nela-artifact>
+  If you promise multiple sheets in prose, you MUST emit that many tagged blocks.
 
 When you DO emit an artifact, chat copy is mandatory (Claude-style):
 1. BEFORE the opening tag: 2–4 sentences explaining what you are creating and the approach.

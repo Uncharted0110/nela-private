@@ -27,6 +27,7 @@ import {
 import {
   handleCancel,
   handleSend,
+  handleRetryPrompt,
   handleModeSwitch,
   getPlaceholder,
 } from "../app/sessionSendActions";
@@ -261,6 +262,7 @@ export default function AppMainContent({ networkActive: networkActiveProp }: App
         activeSession={activeSession}
         activeWorkspace={activeWorkspace}
         onSend={(text) => void handleSend(text)}
+        onRetry={(idx) => void handleRetryPrompt(idx)}
         onCancel={handleCancel}
         placeholder={getPlaceholder()}
         ragIngesting={ragIngesting}

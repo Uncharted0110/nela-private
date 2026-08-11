@@ -23,7 +23,8 @@ import { useCloudStore } from "../../stores/cloudStore";
 /** Prefer store-backed send: call with text only. Optional ctx kept for tests. */
 export async function executeHandleSend(
   text: string,
-  ctx: SendHandlerContext = buildSendHandlerContext()
+  ctx: SendHandlerContext = buildSendHandlerContext(),
+  options?: { reuseExistingUserMessage?: boolean }
 ): Promise<void> {
   const sid = ctx.activeSessionId;
   const session = ctx.sessions.find((s) => s.id === sid);
@@ -35,30 +36,49 @@ export async function executeHandleSend(
   const effectiveRagEnabled = ctx.ragEnabled || slash.rag;
   const slashFileSearch = slash.files;
 
-  const currentVisionImagePath = ctx.chatMode === "vision" ? ctx.imagePath : null;
+  const reuseUser = Boolean(options?.reuseExistingUserMessage);
+  const lastMsg = session.messages[session.messages.length - 1];
+  const reusedUserMsg =
+    reuseUser && lastMsg?.role === "user" ? lastMsg : null;
+
+  const currentVisionImagePath = reusedUserMsg?.visionImage?.path
+    ? reusedUserMsg.visionImage.path
+    : ctx.chatMode === "vision"
+      ? ctx.imagePath
+      : null;
   const ragDocPaths = ctx.ragDocs.map((doc) => doc.file_path).filter((path) => !!path);
+  const reusedDocPaths =
+    reusedUserMsg?.directDocuments?.map((d) => d.path).filter(Boolean) ?? [];
   const promptDocumentPaths =
-    ctx.chatMode === "text" && !effectiveRagEnabled
-      ? (ctx.directDocumentPaths.length > 0 ? ctx.directDocumentPaths : ragDocPaths)
-      : ctx.directDocumentPaths;
+    reusedDocPaths.length > 0
+      ? reusedDocPaths
+      : ctx.chatMode === "text" && !effectiveRagEnabled
+        ? (ctx.directDocumentPaths.length > 0 ? ctx.directDocumentPaths : ragDocPaths)
+        : ctx.directDocumentPaths;
 
   const visionAttachment =
     ctx.chatMode === "vision" && currentVisionImagePath
       ? {
           path: currentVisionImagePath,
-          name: currentVisionImagePath.split(/[/\\]/).pop() ?? "image",
+          name:
+            reusedUserMsg?.visionImage?.name ??
+            currentVisionImagePath.split(/[/\\]/).pop() ?? "image",
         }
-      : undefined;
+      : reusedUserMsg?.visionImage
+        ? reusedUserMsg.visionImage
+        : undefined;
 
   const directDocAttachments: DirectDocumentAttachment[] | undefined =
-    ctx.chatMode === "text" && ctx.directDocumentPaths.length > 0
-      ? ctx.directDocumentPaths.map((path) => ({
-          path,
-          name: path.split(/[/\\]/).pop() ?? "document",
-        }))
-      : undefined;
+    reusedUserMsg?.directDocuments && reusedUserMsg.directDocuments.length > 0
+      ? reusedUserMsg.directDocuments
+      : ctx.chatMode === "text" && ctx.directDocumentPaths.length > 0
+        ? ctx.directDocumentPaths.map((path) => ({
+            path,
+            name: path.split(/[/\\]/).pop() ?? "document",
+          }))
+        : undefined;
 
-  const newMsg: ChatMessage = {
+  const newMsg: ChatMessage = reusedUserMsg ?? {
     id: crypto.randomUUID(),
     role: "user",
     content: promptText,
@@ -69,27 +89,48 @@ export async function executeHandleSend(
   };
 
   const isFirstMessage = session.messages.length === 0;
-  const titlePatch = isFirstMessage ? { title: deriveTitleFromMessage(promptText) } : {};
+  const titlePatch =
+    isFirstMessage && !reuseUser
+      ? { title: deriveTitleFromMessage(promptText) }
+      : {};
 
-  ctx.updateSession(sid, (prev) => ({
-    messages: [...prev.messages, newMsg],
-    loading: true,
-    streamingContent: "",
-    audioOutputs: prev.audioOutputs ?? [],
-    cancelled: false,
-    artifactStreamActive: false,
-    artifactPanelOpen: false,
-    streamingArtifactHtml: undefined,
-    streamingArtifactCsv: undefined,
-    streamingArtifactType: undefined,
-    streamingArtifactTitle: undefined,
-    ...titlePatch,
-  }));
+  if (reusedUserMsg) {
+    ctx.updateSession(sid, (prev) => ({
+      loading: true,
+      streamingContent: "",
+      audioOutputs: prev.audioOutputs ?? [],
+      cancelled: false,
+      artifactStreamActive: false,
+      artifactPanelOpen: false,
+      artifactPath: undefined,
+      artifactStage: undefined,
+      streamingArtifactHtml: undefined,
+      streamingArtifactCsv: undefined,
+      streamingArtifactType: undefined,
+      streamingArtifactTitle: undefined,
+    }));
+  } else {
+    ctx.updateSession(sid, (prev) => ({
+      messages: [...prev.messages, newMsg],
+      loading: true,
+      streamingContent: "",
+      audioOutputs: prev.audioOutputs ?? [],
+      cancelled: false,
+      artifactStreamActive: false,
+      artifactPanelOpen: false,
+      streamingArtifactHtml: undefined,
+      streamingArtifactCsv: undefined,
+      streamingArtifactType: undefined,
+      streamingArtifactTitle: undefined,
+      ...titlePatch,
+    }));
+  }
 
-  if (ctx.chatMode === "vision" && currentVisionImagePath) {
+  if (!reusedUserMsg && ctx.chatMode === "vision" && currentVisionImagePath) {
     ctx.clearImage();
   }
   if (
+    !reusedUserMsg &&
     ctx.chatMode === "text" &&
     ctx.directDocumentPaths.length > 0 &&
     directDocAttachments &&

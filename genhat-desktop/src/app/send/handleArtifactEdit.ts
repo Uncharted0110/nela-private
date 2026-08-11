@@ -5,10 +5,6 @@ import {
   artifactKindFromPath,
   findSessionArtifactPath,
   isEditableArtifactPath,
-  isPresentationSlideAddRequest,
-  isPresentationSlideExpandRequest,
-  isPresentationSlideMoveRequest,
-  isPresentationSlideRemoveRequest,
   type ArtifactEditKind,
 } from "../artifactEdit";
 import { extractAmbientSearchQuery } from "../ambientSearch";
@@ -19,6 +15,8 @@ export type ArtifactEditOptions = {
   /** Edit from the preview panel — keep panel open; report status via onStatus. */
   previewMode?: boolean;
   onStatus?: (message: string, kind: "progress" | "done" | "error") => void;
+  /** 0-based slide currently visible in the preview iframe ("this slide"). */
+  activeSlideIndex?: number;
 };
 
 export async function handleArtifactEdit(
@@ -162,40 +160,24 @@ export async function handleArtifactEdit(
     }
 
     if (effectiveEditKind === "presentation_deck") {
-      // Slide add/remove/move + theme are deterministic — never wait on a local/cloud model.
-      const { runDeterministicSlideRemove } = await import("./runDeterministicSlideRemove");
-      if (await runDeterministicSlideRemove(text, artifactPath, sid, ctx, updateEditMsg)) {
-        return;
-      }
-      const { runDeterministicSlideAdd } = await import("./runDeterministicSlideAdd");
-      if (await runDeterministicSlideAdd(text, artifactPath, sid, ctx, updateEditMsg)) {
-        return;
-      }
-      const { runDeterministicSlideMove } = await import("./runDeterministicSlideMove");
-      if (await runDeterministicSlideMove(text, artifactPath, sid, ctx, updateEditMsg)) {
-        return;
-      }
-      const { runDeterministicSlideExpand } = await import("./runDeterministicSlideExpand");
-      if (await runDeterministicSlideExpand(text, artifactPath, sid, ctx, updateEditMsg)) {
-        return;
-      }
-      const { runDeterministicThemeEdit } = await import("./runDeterministicThemeEdit");
-      if (await runDeterministicThemeEdit(text, artifactPath, sid, ctx, updateEditMsg)) {
-        return;
-      }
-
-      const { runPptxArtifactOps } = await import("./runPptxArtifactOps");
-      const surgical = await runPptxArtifactOps(
+      // Hybrid pipeline: deterministic command parse (0 LLM calls), else one
+      // planner call — structural runners are reused inside the executor.
+      const { runPresentationEditPipeline } = await import(
+        "./runPresentationEditPipeline"
+      );
+      const handled = await runPresentationEditPipeline(
         text,
         artifactPath,
         sid,
         ctx,
         ctrl,
         generationOptions,
-        updateEditMsg
+        updateEditMsg,
+        { activeSlideIndex: options?.activeSlideIndex }
       );
-      if (surgical) return;
+      if (handled) return;
 
+      // Last resort: full deck replan.
       const { runPresentationDeckEdit } = await import("./runPresentationDeckEdit");
       await runPresentationDeckEdit(
         text,
@@ -210,37 +192,24 @@ export async function handleArtifactEdit(
     }
 
     if (effectiveEditKind === "html") {
-      // Freeform HTML slide decks — add/remove/move/theme without LLM.
-      if (
-        isPresentationSlideAddRequest(text) ||
-        isPresentationSlideRemoveRequest(text) ||
-        isPresentationSlideMoveRequest(text) ||
-        isPresentationSlideExpandRequest(text)
-      ) {
-        const { runDeterministicSlideRemove } = await import("./runDeterministicSlideRemove");
-        if (await runDeterministicSlideRemove(text, artifactPath, sid, ctx, updateEditMsg)) {
-          return;
-        }
-        const { runDeterministicSlideAdd } = await import("./runDeterministicSlideAdd");
-        if (await runDeterministicSlideAdd(text, artifactPath, sid, ctx, updateEditMsg)) {
-          return;
-        }
-        const { runDeterministicSlideMove } = await import("./runDeterministicSlideMove");
-        if (await runDeterministicSlideMove(text, artifactPath, sid, ctx, updateEditMsg)) {
-          return;
-        }
-        const { runDeterministicSlideExpand } = await import("./runDeterministicSlideExpand");
-        if (await runDeterministicSlideExpand(text, artifactPath, sid, ctx, updateEditMsg)) {
-          return;
-        }
-        ctx.updateSession(sid, { loading: false });
-        updateEditMsg(
-          "Error",
-          null,
-          "Couldn't find slide markers in this HTML page, so I can't edit slides. " +
-            "Open the presentation preview, then try again."
+      // Freeform HTML slide decks route through the same hybrid pipeline.
+      // On non-deck HTML the pipeline bails without any LLM call and the
+      // request falls through to theme edit / diff patch below.
+      {
+        const { runPresentationEditPipeline } = await import(
+          "./runPresentationEditPipeline"
         );
-        return;
+        const handled = await runPresentationEditPipeline(
+          text,
+          artifactPath,
+          sid,
+          ctx,
+          ctrl,
+          generationOptions,
+          updateEditMsg,
+          { activeSlideIndex: options?.activeSlideIndex }
+        );
+        if (handled) return;
       }
       const { runDeterministicThemeEdit } = await import("./runDeterministicThemeEdit");
       if (await runDeterministicThemeEdit(text, artifactPath, sid, ctx, updateEditMsg)) {
@@ -273,40 +242,22 @@ export async function handleArtifactEdit(
       return;
     }
 
-    // Native PPTX / PPT — deterministic slide/theme ops first, then surgical ops, then full regen.
+    // Native PPTX / PPT — same hybrid pipeline, then full regen fallback.
     {
-      const { runDeterministicSlideRemove } = await import("./runDeterministicSlideRemove");
-      if (await runDeterministicSlideRemove(text, artifactPath, sid, ctx, updateEditMsg)) {
-        return;
-      }
-      const { runDeterministicSlideAdd } = await import("./runDeterministicSlideAdd");
-      if (await runDeterministicSlideAdd(text, artifactPath, sid, ctx, updateEditMsg)) {
-        return;
-      }
-      const { runDeterministicSlideMove } = await import("./runDeterministicSlideMove");
-      if (await runDeterministicSlideMove(text, artifactPath, sid, ctx, updateEditMsg)) {
-        return;
-      }
-      const { runDeterministicSlideExpand } = await import("./runDeterministicSlideExpand");
-      if (await runDeterministicSlideExpand(text, artifactPath, sid, ctx, updateEditMsg)) {
-        return;
-      }
-      const { runDeterministicThemeEdit } = await import("./runDeterministicThemeEdit");
-      if (await runDeterministicThemeEdit(text, artifactPath, sid, ctx, updateEditMsg)) {
-        return;
-      }
-
-      const { runPptxArtifactOps } = await import("./runPptxArtifactOps");
-      const surgical = await runPptxArtifactOps(
+      const { runPresentationEditPipeline } = await import(
+        "./runPresentationEditPipeline"
+      );
+      const handled = await runPresentationEditPipeline(
         text,
         artifactPath,
         sid,
         ctx,
         ctrl,
         generationOptions,
-        updateEditMsg
+        updateEditMsg,
+        { activeSlideIndex: options?.activeSlideIndex }
       );
-      if (surgical) return;
+      if (handled) return;
     }
 
     const { runPresentationArtifactEdit } = await import("./runPresentationArtifactEdit");
@@ -322,6 +273,13 @@ export async function handleArtifactEdit(
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("Artifact edit failed:", err);
-    updateEditMsg("Error", null, friendlyErrorFromUnknown(message));
+    const busy = /\bbusy\b|overloaded|rate limit|\b429\b|\b503\b/i.test(message);
+    updateEditMsg(
+      "Error",
+      null,
+      busy
+        ? "NELA Cloud is busy right now. Wait a moment and try again — or switch to Auto/Local mode."
+        : friendlyErrorFromUnknown(message)
+    );
   }
 }

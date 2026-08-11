@@ -53,6 +53,7 @@ interface ChatWindowProps {
   streamingContent: string;
   isLoading: boolean;
   onSend: (text: string) => void;
+  onRetry?: (assistantMsgIndex: number) => void;
   onCancel?: () => void;
   cancelled?: boolean;
   audioSrc?: string;
@@ -103,6 +104,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
   streamingContent,
   isLoading,
   onSend,
+  onRetry,
   onCancel,
   cancelled = false,
   placeholder = COPY.slashCommandsHint,
@@ -825,7 +827,9 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
                 )
               }
               retryText={retryText}
+              isLoading={isLoading}
               onSend={onSend}
+              onRetry={onRetry}
               saveAudioToSidebar={saveAudioToSidebar}
               onOpenPreview={onOpenPreview}
             />

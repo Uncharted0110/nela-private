@@ -202,6 +202,13 @@ export class StreamArtifactParser {
   private fallbackArmed = false;
   /** Prose already returned via chatDelta (avoid double-emitting on fallback). */
   private chatReturnedLen = 0;
+  /**
+   * After the first CSV sheet closes, keep scanning for more
+   * <nela-artifact type="text/csv"> blocks (multi-sheet workbooks).
+   */
+  private awaitingMoreCsv = false;
+  /** True while a reconstructed (2nd+) CSV sheet tag is still open. */
+  private openCsvSheetTagged = false;
 
   get isActive(): boolean {
     return this.inArtifact || this.fallbackMode !== null;
@@ -250,6 +257,18 @@ export class StreamArtifactParser {
       };
     }
 
+    // Between CSV sheets: absorb the next tagged sheet(s) into the artifact body
+    // instead of dumping them into chat follow-up.
+    if (!this.inArtifact && this.awaitingMoreCsv) {
+      const more = this.consumePendingCsvSheets();
+      return {
+        chatDelta: more.chatDelta,
+        artifactDelta: more.artifactDelta,
+        meta: this.meta ?? undefined,
+        closed: more.closed,
+      };
+    }
+
     if (!this.inArtifact) {
       const openMatch = OPEN_RE.exec(this.buffer);
       if (openMatch && openMatch.index !== undefined) {
@@ -261,10 +280,17 @@ export class StreamArtifactParser {
         const chatDelta = before;
         this.chatReturnedLen += chatDelta.length;
 
+        let wrapPrefix = "";
+        if (this.meta.type === "text/csv") {
+          const safeTitle = this.meta.title.replace(/"/g, "");
+          this.openCsvSheetTagged = true;
+          wrapPrefix = `<nela-artifact type="text/csv" title="${safeTitle}">\n`;
+        }
+
         const after = this.consumeArtifactBody();
         return {
-          chatDelta,
-          artifactDelta: after.artifactDelta,
+          chatDelta: chatDelta + (after.chatDelta || ""),
+          artifactDelta: wrapPrefix + after.artifactDelta,
           meta: this.meta,
           closed: after.closed,
         };
@@ -300,6 +326,24 @@ export class StreamArtifactParser {
       this.buffer = "";
       this.chatAfterClose += chatDelta;
       return { chatDelta, artifactDelta: "", closed: true };
+    }
+
+    if (!this.inArtifact && this.awaitingMoreCsv) {
+      const more = this.consumePendingCsvSheets();
+      // Anything still buffered is follow-up prose.
+      if (this.buffer) {
+        more.chatDelta += this.buffer;
+        this.chatAfterClose += this.buffer;
+        this.buffer = "";
+      }
+      this.awaitingMoreCsv = false;
+      this.closed = true;
+      return {
+        chatDelta: more.chatDelta,
+        artifactDelta: more.artifactDelta,
+        meta: this.meta ?? undefined,
+        closed: true,
+      };
     }
 
     if (!this.inArtifact && !this.fallbackMode) {
@@ -375,14 +419,32 @@ export class StreamArtifactParser {
     if (closeMatch && closeMatch.index !== undefined) {
       let artifactDelta = this.buffer.slice(0, closeMatch.index);
       this.buffer = this.buffer.slice(closeMatch.index + closeMatch[0].length);
-      this.closed = true;
       this.inArtifact = false;
-      const trailing = this.buffer;
-      this.buffer = "";
-      this.chatAfterClose += trailing;
       artifactDelta = artifactDelta
         .replace(/<nela-artifact\b[^>]*>/gi, "")
         .replace(/<\/nela-artifact\s*>/gi, "");
+
+      // Multi-sheet CSV: keep scanning for more tagged sheets; do not treat the
+      // first </nela-artifact> as end-of-workbook.
+      if (this.meta?.type === "text/csv") {
+        if (this.openCsvSheetTagged) {
+          artifactDelta += "\n</nela-artifact>";
+          this.openCsvSheetTagged = false;
+        }
+        this.awaitingMoreCsv = true;
+        const more = this.consumePendingCsvSheets();
+        return {
+          chatDelta: more.chatDelta,
+          artifactDelta: artifactDelta + more.artifactDelta,
+          meta: this.meta ?? undefined,
+          closed: more.closed,
+        };
+      }
+
+      this.closed = true;
+      const trailing = this.buffer;
+      this.buffer = "";
+      this.chatAfterClose += trailing;
       return {
         chatDelta: trailing,
         artifactDelta,
@@ -403,6 +465,83 @@ export class StreamArtifactParser {
       artifactDelta,
       meta: this.meta ?? undefined,
     };
+  }
+
+  /**
+   * After a CSV sheet closes, pull any further CSV <nela-artifact> blocks into
+   * the artifact stream (with tags preserved so extractCsvSheetArtifacts works).
+   */
+  private consumePendingCsvSheets(): {
+    chatDelta: string;
+    artifactDelta: string;
+    closed: boolean;
+  } {
+    let chatDelta = "";
+    let artifactDelta = "";
+
+    while (true) {
+      if (!this.buffer) {
+        return { chatDelta, artifactDelta, closed: false };
+      }
+
+      const openMatch = OPEN_RE.exec(this.buffer);
+      if (!openMatch || openMatch.index === undefined) {
+        const hold = holdbackLength(this.buffer);
+        if (hold > 0) {
+          return { chatDelta, artifactDelta, closed: false };
+        }
+        // Keep buffering — the model may still emit another CSV sheet.
+        // Remaining prose is flushed on finalize().
+        return { chatDelta, artifactDelta, closed: false };
+      }
+
+      const before = this.buffer.slice(0, openMatch.index);
+      if (before.trim()) {
+        chatDelta += before;
+        this.chatAfterClose += before;
+      }
+
+      const nextMeta = parseAttrs(openMatch[1] ?? "");
+      this.buffer = this.buffer.slice(openMatch.index + openMatch[0].length);
+
+      if (nextMeta.type !== "text/csv") {
+        // Different mime after a CSV workbook — rest belongs in chat.
+        const rest = openMatch[0] + this.buffer;
+        chatDelta += rest;
+        this.chatAfterClose += rest;
+        this.buffer = "";
+        this.awaitingMoreCsv = false;
+        this.closed = true;
+        return { chatDelta, artifactDelta, closed: true };
+      }
+
+      this.meta = nextMeta;
+      this.inArtifact = true;
+      const safeTitle = nextMeta.title.replace(/"/g, "");
+      this.openCsvSheetTagged = true;
+      artifactDelta += `\n\n<nela-artifact type="text/csv" title="${safeTitle}">\n`;
+
+      const closeMatch = CLOSE_RE.exec(this.buffer);
+      if (!closeMatch || closeMatch.index === undefined) {
+        const hold = Math.min(this.buffer.length, CLOSE_HOLD);
+        const safeLen = this.buffer.length - hold;
+        if (safeLen > 0) {
+          artifactDelta += this.buffer.slice(0, safeLen);
+          this.buffer = this.buffer.slice(safeLen);
+        }
+        return { chatDelta, artifactDelta, closed: false };
+      }
+
+      let body = this.buffer.slice(0, closeMatch.index);
+      this.buffer = this.buffer.slice(closeMatch.index + closeMatch[0].length);
+      this.inArtifact = false;
+      this.openCsvSheetTagged = false;
+      body = body
+        .replace(/<nela-artifact\b[^>]*>/gi, "")
+        .replace(/<\/nela-artifact\s*>/gi, "");
+      artifactDelta += `${body}\n</nela-artifact>`;
+      // Loop for more complete sheets already buffered.
+    }
   }
 
   private tryArmFallback(force: boolean): StreamArtifactEmit | null {

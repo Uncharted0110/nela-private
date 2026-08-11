@@ -34,6 +34,7 @@ interface AppMainContentAreaProps {
   activeSession: ChatSession | null;
   activeWorkspace: { id: string } | null;
   onSend: (text: string) => void;
+  onRetry?: (assistantMsgIndex: number) => void;
   onCancel: () => void;
   placeholder: string;
   ragIngesting: boolean;
@@ -93,6 +94,7 @@ export default function AppMainContentArea({
   activeSession,
   activeWorkspace,
   onSend,
+  onRetry,
   onCancel,
   placeholder,
   ragIngesting,
@@ -173,6 +175,7 @@ export default function AppMainContentArea({
             streamingContent={activeSession.streamingContent}
             isLoading={activeSession.loading}
             onSend={onSend}
+            onRetry={onRetry}
             onCancel={onCancel}
             cancelled={activeSession.cancelled}
             audioSrc={activeSession.audioOutput}
@@ -235,8 +238,8 @@ export default function AppMainContentArea({
               !activeSession.artifactPath
             }
             onClose={closeArtifactPanel}
-            onPreviewEdit={(text, path, onStatus) =>
-              handlePreviewArtifactEdit(text, path, onStatus)
+            onPreviewEdit={(text, path, onStatus, editContext) =>
+              handlePreviewArtifactEdit(text, path, onStatus, editContext)
             }
           />
         </div>

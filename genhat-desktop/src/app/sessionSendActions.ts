@@ -33,6 +33,10 @@ export function handleCancel(): void {
 
   abortControllers.get(sid)?.abort();
   abortControllers.delete(sid);
+  // Unblock any await openImagePicker() so the edit pipeline can finish.
+  void import("../stores/imagePickerStore").then(({ cancelImagePicker }) =>
+    cancelImagePicker()
+  );
   visionUnlisten?.();
   setVisionUnlisten(null);
   sessionStore.updateSession(sid, (prev) => ({
@@ -58,13 +62,71 @@ export async function handleSend(text: string): Promise<void> {
 }
 
 /**
+ * Retry the prompt that produced the assistant message at `assistantMsgIndex`.
+ * Removes that response (and anything after it), keeps the original user
+ * bubble, and re-runs generation as a fresh send of that prompt.
+ */
+export async function handleRetryPrompt(assistantMsgIndex: number): Promise<void> {
+  const sessionStore = useSessionStore.getState();
+  const sid = sessionStore.activeSessionId;
+  if (!sid) return;
+
+  const session = sessionStore.sessions.find((s) => s.id === sid);
+  if (!session || session.loading) return;
+  if (assistantMsgIndex < 0 || assistantMsgIndex >= session.messages.length) return;
+
+  const target = session.messages[assistantMsgIndex];
+  if (!target || target.role !== "assistant") return;
+
+  let userIdx = -1;
+  for (let i = assistantMsgIndex - 1; i >= 0; i--) {
+    const prior = session.messages[i];
+    if (prior?.role === "user" && prior.content.trim()) {
+      userIdx = i;
+      break;
+    }
+  }
+  if (userIdx < 0) return;
+
+  const retryText = session.messages[userIdx]!.content;
+
+  // Stop any in-flight generation tied to this session.
+  abortControllers.get(sid)?.abort();
+  abortControllers.delete(sid);
+  visionUnlisten?.();
+  setVisionUnlisten(null);
+
+  // Drop the assistant reply and everything after it; keep the user prompt.
+  const truncated = session.messages.slice(0, assistantMsgIndex);
+  sessionStore.updateSession(sid, {
+    messages: truncated,
+    loading: false,
+    streamingContent: "",
+    cancelled: false,
+    artifactStreamActive: false,
+    artifactPanelOpen: false,
+    artifactPath: undefined,
+    artifactStage: undefined,
+    streamingArtifactHtml: undefined,
+    streamingArtifactCsv: undefined,
+    streamingArtifactType: undefined,
+    streamingArtifactTitle: undefined,
+  });
+
+  await executeHandleSend(retryText, undefined, {
+    reuseExistingUserMessage: true,
+  });
+}
+
+/**
  * Edit the open artifact from the preview panel chat.
  * Does not close the panel or route through main chat intent resolution.
  */
 export async function handlePreviewArtifactEdit(
   text: string,
   artifactPath: string,
-  onStatus?: (message: string, kind: "progress" | "done" | "error") => void
+  onStatus?: (message: string, kind: "progress" | "done" | "error") => void,
+  editContext?: { activeSlideIndex?: number }
 ): Promise<void> {
   const trimmed = text.trim();
   if (!trimmed || !artifactPath) return;
@@ -74,7 +136,17 @@ export async function handlePreviewArtifactEdit(
   if (!sid) return;
 
   const session = sessionStore.sessions.find((s) => s.id === sid);
-  if (!session || session.loading) return;
+  if (!session) {
+    onStatus?.("No active chat session. Open a chat, then try again.", "error");
+    return;
+  }
+  if (session.loading) {
+    onStatus?.(
+      "Another request is still running. Wait for it to finish, then try again.",
+      "error"
+    );
+    return;
+  }
 
   const { buildSendHandlerContext } = await import("./send/buildContext");
   const { handleArtifactEdit } = await import("./send/handleArtifactEdit");
@@ -86,7 +158,11 @@ export async function handlePreviewArtifactEdit(
     await handleArtifactEdit(trimmed, artifactPath, sid, ctx, ctrl, {
       previewMode: true,
       onStatus,
+      activeSlideIndex: editContext?.activeSlideIndex,
     });
+  } catch (err: unknown) {
+    const { friendlyErrorFromUnknown } = await import("./friendlyError");
+    onStatus?.(friendlyErrorFromUnknown(err), "error");
   } finally {
     abortControllers.delete(sid);
   }
