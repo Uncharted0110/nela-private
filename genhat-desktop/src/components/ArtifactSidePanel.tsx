@@ -1,5 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { X, FileCode, Table2, Presentation, Code2, Eye, Pencil, SendHorizontal } from "lucide-react";
+import {
+  X,
+  FileCode,
+  Table2,
+  Presentation,
+  Code2,
+  Eye,
+  Pencil,
+  SendHorizontal,
+  Maximize2,
+  Minimize2,
+} from "lucide-react";
 import { prepareArtifactHtmlPreview } from "../app/artifactHtmlPreview";
 import { parseCSV } from "../app/send/csvParse";
 import { sanitizeCsvArtifactBody } from "../app/sanitizeCsvArtifact";
@@ -144,7 +155,9 @@ export default function ArtifactSidePanel({
   // 0-based index of the slide currently shown inside the deck iframe
   // (reported by the deck's nav script via postMessage). Null for non-deck HTML.
   const [activeSlideIndex, setActiveSlideIndex] = useState<number | null>(null);
+  const [previewFullscreen, setPreviewFullscreen] = useState(false);
   const panelRef = useRef<HTMLElement>(null);
+  const previewCanvasRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ startX: number; startWidth: number } | null>(null);
   const throttleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latestHtml = useRef(html ?? "");
@@ -346,6 +359,29 @@ export default function ArtifactSidePanel({
         throttleRef.current = null;
       }
     };
+  }, []);
+
+  useEffect(() => {
+    const onFsChange = () => {
+      const el = previewCanvasRef.current;
+      setPreviewFullscreen(Boolean(el && document.fullscreenElement === el));
+    };
+    document.addEventListener("fullscreenchange", onFsChange);
+    return () => document.removeEventListener("fullscreenchange", onFsChange);
+  }, []);
+
+  const togglePreviewFullscreen = useCallback(async () => {
+    const el = previewCanvasRef.current;
+    if (!el) return;
+    try {
+      if (document.fullscreenElement === el) {
+        await document.exitFullscreen();
+      } else {
+        await el.requestFullscreen();
+      }
+    } catch (err) {
+      console.warn("Preview fullscreen failed:", err);
+    }
   }, []);
 
   // Track which slide is visible inside the deck iframe ("this slide" edits),
@@ -692,7 +728,10 @@ export default function ArtifactSidePanel({
           ) : effectiveHtmlView === "code" ? (
             <HtmlSourceStream html={effectiveHtml} follow={streaming && !savedPath} />
           ) : displayHtml ? (
-            <div className="relative w-full h-full">
+            <div
+              ref={previewCanvasRef}
+              className="relative w-full h-full bg-void-900"
+            >
               {/* No allow-same-origin: scripts+same-origin lets srcdoc escape
                   its sandbox. Active-slide tracking uses postMessage('*'),
                   which works from an opaque origin. */}
@@ -702,6 +741,31 @@ export default function ArtifactSidePanel({
                 sandbox="allow-scripts"
                 srcDoc={displayHtml}
               />
+              <button
+                type="button"
+                className={`absolute top-3 left-3 z-20 p-3 rounded-full border ${
+                  previewFullscreen
+                    ? "border-neon/80 bg-neon/10 text-neon"
+                    : "border-neon/60 text-neon hover:bg-neon/15"
+                }`}
+                onClick={() => void togglePreviewFullscreen()}
+                title={
+                  previewFullscreen
+                    ? "Exit full screen"
+                    : "Full screen preview"
+                }
+                aria-label={
+                  previewFullscreen
+                    ? "Exit full screen"
+                    : "Full screen preview"
+                }
+              >
+                {previewFullscreen ? (
+                  <Minimize2 size={20} />
+                ) : (
+                  <Maximize2 size={20} />
+                )}
+              </button>
               {canEdit ? (
                 <button
                   type="button"
@@ -753,7 +817,7 @@ export default function ArtifactSidePanel({
               ) : null}
 
               {canEdit ? (
-                <div className="absolute top-3 left-0 right-0 z-10 flex justify-center pl-12 pr-16">
+                <div className="absolute top-3 left-0 right-0 z-10 flex justify-center pl-16 pr-16">
                   <div className="w-full max-w-[720px]">
                     <ArtifactPreviewEditBar
                       open={editOpen}
