@@ -81,9 +81,15 @@ export async function applyDeckLibraryImageChoice(args: {
   ctx: SendHandlerContext;
   libId: number;
   slideIndex: number;
+  imageIndex?: number;
 }): Promise<{ path: string; html: string }> {
   const html = await Api.readFileText(args.artifactPath);
-  const next = applyLibraryImageToSlide(html, args.slideIndex, args.libId);
+  const next = applyLibraryImageToSlide(
+    html,
+    args.slideIndex,
+    args.libId,
+    args.imageIndex ?? 0
+  );
   const path = await writeDeckHtmlCopy({
     artifactPath: args.artifactPath,
     html: next,

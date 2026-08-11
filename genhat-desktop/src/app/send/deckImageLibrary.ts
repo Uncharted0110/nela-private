@@ -164,13 +164,14 @@ export function setAttrValue(tag: string, name: string, value: string): string {
 
 function libraryStyleBlock(): string {
   return `<style id="${STYLE_ID}">
-.nela-image-library{position:fixed;left:10px;top:50%;transform:translateY(-50%);z-index:40;width:72px;max-height:70vh;display:flex;flex-direction:column;gap:6px;padding:8px 6px;border-radius:12px;background:rgba(8,12,20,.82);backdrop-filter:blur(8px);box-shadow:0 8px 28px rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.12);color:#f8fafc;font:600 10px/1.2 system-ui,sans-serif}
+.nela-image-library{position:fixed;left:10px;top:50%;transform:translateY(-50%);z-index:40;width:72px;max-height:70vh;display:none!important;flex-direction:column;gap:6px;padding:8px 6px;border-radius:12px;background:rgba(8,12,20,.82);backdrop-filter:blur(8px);box-shadow:0 8px 28px rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.12);color:#f8fafc;font:600 10px/1.2 system-ui,sans-serif}
+.nela-image-library.nela-lib-open{display:flex!important}
 .nela-image-library-title{text-align:center;opacity:.8;letter-spacing:.04em;text-transform:uppercase;font-size:9px}
 .nela-image-library-rail{overflow-y:auto;display:flex;flex-direction:column;gap:6px;padding-right:2px}
 .nela-image-library-rail button{appearance:none;border:1px solid rgba(255,255,255,.18);background:#111827;border-radius:8px;padding:0;cursor:pointer;overflow:hidden;width:56px;height:42px;flex:0 0 auto}
 .nela-image-library-rail button:hover,.nela-image-library-rail button:focus{border-color:#38bdf8;outline:none}
 .nela-image-library-rail img{width:100%;height:100%;object-fit:cover;display:block}
-@media (max-width:720px){.nela-image-library{left:50%;top:auto;bottom:64px;transform:translateX(-50%);width:auto;max-width:92vw;max-height:64px;flex-direction:row;align-items:center}.nela-image-library-title{display:none}.nela-image-library-rail{flex-direction:row;overflow-x:auto;overflow-y:hidden;max-width:92vw}}
+@media (max-width:720px){.nela-image-library.nela-lib-open{left:50%;top:auto;bottom:64px;transform:translateX(-50%);width:auto;max-width:92vw;max-height:64px;flex-direction:row;align-items:center}.nela-image-library-title{display:none}.nela-image-library-rail{flex-direction:row;overflow-x:auto;overflow-y:hidden;max-width:92vw}}
 </style>`;
 }
 
@@ -198,8 +199,19 @@ function libraryScriptBlock(): string {
     ev.stopPropagation();
     var id = parseInt(btn.getAttribute("data-nela-lib-id") || "", 10);
     if (!isFinite(id)) return;
+    var imageIndex = 0;
     try {
-      parent.postMessage({ type: "nela-apply-library-image", libId: id, slideIndex: activeSlideIndex() }, "*");
+      if (typeof window.__nelaSelectedImageIndex === "number" && window.__nelaSelectedImageIndex >= 0) {
+        imageIndex = window.__nelaSelectedImageIndex;
+      }
+    } catch (e) {}
+    try {
+      parent.postMessage({
+        type: "nela-apply-library-image",
+        libId: id,
+        slideIndex: activeSlideIndex(),
+        imageIndex: imageIndex
+      }, "*");
     } catch (e) {}
   }, true);
 })();
@@ -338,12 +350,14 @@ export function getLibraryEntry(
 }
 
 /**
- * Point a slide's first content image at a library entry (sets lib id + src).
+ * Point a slide's content image at a library entry (sets lib id + src).
+ * `imageIndex` selects which <img> on the slide (default 0 = first).
  */
 export function applyLibraryImageToSlide(
   html: string,
   slideIndex: number,
-  libId: number
+  libId: number,
+  imageIndex = 0
 ): string {
   const entry = getLibraryEntry(html, libId);
   if (!entry) {
@@ -359,7 +373,8 @@ export function applyLibraryImageToSlide(
     idx,
     entry.dataUri,
     entry.sourceUrl,
-    libId
+    libId,
+    imageIndex
   );
 }
 
