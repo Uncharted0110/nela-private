@@ -8,5 +8,7 @@ pub mod txt;
 pub mod xlsx;
 
 pub use registry::ParserRegistry;
-pub use traits::{DocumentParser, ParsedContainer, ParsedContentBlock, ParsedDocument};
+pub use traits::{
+    DocumentParser, ExtractionStats, ParsedContainer, ParsedContentBlock, ParsedDocument,
+};
 pub use pdf::parse_pass2_fallback;

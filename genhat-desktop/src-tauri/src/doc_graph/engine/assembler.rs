@@ -155,6 +155,28 @@ fn merge_into_units(kb: &KnowledgeBase, expansions: &[ExpandedSource]) -> Vec<As
                     }
                 }
 
+                // Include container-boundary peek blocks from hit windows
+                // (first block of the next page/section) that fall outside
+                // this container's ordered range.
+                let mut seen_extra = HashSet::new();
+                for hit in hits {
+                    for &bi in &hit.window_block_indices {
+                        if index_of.contains_key(&bi) {
+                            continue;
+                        }
+                        if !seen_extra.insert(bi) {
+                            continue;
+                        }
+                        let n = NodeIndex::new(bi as usize);
+                        if let NodeType::ContentBlock { content, .. } = &kb.graph[n] {
+                            let t = content.trim();
+                            if !t.is_empty() {
+                                blocks.push(t.to_string());
+                            }
+                        }
+                    }
+                }
+
                 let mut related = Vec::new();
                 let mut seen_rel = HashSet::new();
                 for hit in hits {

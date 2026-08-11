@@ -323,7 +323,8 @@ impl DocGraphEngine {
                 break;
             }
 
-            let results: Vec<(PathBuf, Result<usize, String>)> = pool.install(|| {
+            let results: Vec<(PathBuf, Result<(usize, Option<FileFingerprint>), String>)> =
+                pool.install(|| {
                 use rayon::prelude::*;
                 batch
                     .par_iter()
@@ -351,6 +352,11 @@ impl DocGraphEngine {
                                 {
                                     return (path, Err(e.to_string()));
                                 }
+                                let fp = FileFingerprint::from_path_with_extraction(
+                                    &path,
+                                    &doc.extraction,
+                                )
+                                .or_else(|| FileFingerprint::from_path(&path));
                                 // Short write lock for structural graph update.
                                 {
                                     let mut kb = self.kb.write();
@@ -362,7 +368,7 @@ impl DocGraphEngine {
                                         return (path, Err(e.to_string()));
                                     }
                                 }
-                                (path, Ok(n))
+                                (path, Ok((n, fp)))
                             }
                             Err((path, e)) => (path, Err(e.to_string())),
                         }
@@ -371,13 +377,13 @@ impl DocGraphEngine {
             });
 
             let mut batch_ok = 0usize;
-            let mut recovered_paths: Vec<PathBuf> = Vec::new();
+            let mut recovered: Vec<(PathBuf, Option<FileFingerprint>)> = Vec::new();
             for (path, result) in results {
                 self.bg_remaining.fetch_sub(1, Ordering::SeqCst);
                 match result {
-                    Ok(_) => {
+                    Ok((_n, fp)) => {
                         batch_ok += 1;
-                        recovered_paths.push(path);
+                        recovered.push((path, fp));
                         self.bg_completed.fetch_add(1, Ordering::SeqCst);
                     }
                     Err(e) => {
@@ -397,8 +403,8 @@ impl DocGraphEngine {
                 }
                 // Record fingerprints so the next restart won't re-queue them.
                 if let Ok(mut manifest) = IndexManifest::load(&self.data_dir) {
-                    for path in &recovered_paths {
-                        if let Some(fp) = FileFingerprint::from_path(path) {
+                    for (path, fp) in &recovered {
+                        if let Some(fp) = fp.clone().or_else(|| FileFingerprint::from_path(path)) {
                             manifest.upsert(path, fp);
                         }
                     }

@@ -31,6 +31,7 @@ impl DocumentParser for TxtParser {
             return Ok(ParsedDocument {
                 title,
                 containers: Vec::new(),
+                ..Default::default()
             });
         }
 
@@ -67,6 +68,6 @@ impl DocumentParser for TxtParser {
             });
         }
 
-        Ok(ParsedDocument { title, containers })
+        Ok(ParsedDocument { title, containers, ..Default::default() })
     }
 }
