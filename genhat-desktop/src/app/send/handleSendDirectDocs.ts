@@ -1,7 +1,7 @@
 import { Api } from "../../api";
 import type { ChatMessage } from "../../types";
 import { friendlyError } from "../friendlyError";
-import { createStreamChunkFlusher } from "../streamUiBatch";
+import { createStreamChunkFlusher, createLatestValueFlusher } from "../streamUiBatch";
 import {
   CONTEXT_COMPACTION_KEEP_RECENT,
   CONTEXT_COMPACTION_THRESHOLD,
@@ -92,6 +92,9 @@ export async function handleSendDirectDocs(
         streamingContent: prev.streamingContent + batched,
       }));
     });
+    const thinkingFlusher = createLatestValueFlusher((value: string) => {
+      ctx.setStreamingThinking(value);
+    });
 
     await Api.streamChat(
       directMessages,
@@ -104,10 +107,11 @@ export async function handleSendDirectDocs(
       },
       (thinkingChunk) => {
         fullThinking += thinkingChunk;
-        ctx.setStreamingThinking(fullThinking);
+        thinkingFlusher.push(fullThinking);
       },
       () => {
         chunkFlusher.flushNow();
+        thinkingFlusher.flushNow();
         if (ctx.generalIntervalRef.current) clearInterval(ctx.generalIntervalRef.current);
         const totalTime = Math.floor((Date.now() - directStartTime) / 100) / 10;
         const timeToFirstToken =
@@ -125,6 +129,7 @@ export async function handleSendDirectDocs(
             messages: [
               ...prev.messages,
               {
+                id: crypto.randomUUID(),
                 role: "assistant" as const,
                 content: fullAnswer,
                 thinking: fullThinking || undefined,
@@ -142,11 +147,13 @@ export async function handleSendDirectDocs(
       },
       (err) => {
         chunkFlusher.flushNow();
+        thinkingFlusher.flushNow();
         console.error("Direct-document stream error:", err);
         ctx.updateSession(sid, (prev) => ({
           messages: [
             ...prev.messages,
             {
+              id: crypto.randomUUID(),
               role: "assistant" as const,
               content: friendlyError(String(err)),
             },

@@ -1,4 +1,43 @@
-import type { ChatMessage, ChatSession } from "../types";
+import type { ChatMessage, ChatSession, WebSearchResult } from "../types";
+
+/** Cap persisted thinking blobs so history reloads stay usable without filling quota. */
+const THINKING_PERSIST_MAX_CHARS = 2000;
+
+function isDataUrl(value: string | undefined | null): boolean {
+  return typeof value === "string" && value.startsWith("data:");
+}
+
+function webSearchResultForPersistence(
+  result: WebSearchResult | undefined
+): WebSearchResult | undefined {
+  if (!result) return undefined;
+  return {
+    query: result.query,
+    queries: result.queries,
+    results: result.results,
+    // Drop huge model-context blobs; UI only needs hits for disclosure.
+    formatted_context: "",
+    images: result.images,
+  };
+}
+
+function messageForPersistence(m: ChatMessage): ChatMessage {
+  const thinking =
+    typeof m.thinking === "string" && m.thinking
+      ? m.thinking.length > THINKING_PERSIST_MAX_CHARS
+        ? m.thinking.slice(-THINKING_PERSIST_MAX_CHARS)
+        : m.thinking
+      : undefined;
+
+  return {
+    ...m,
+    thinking,
+    audioUrl: isDataUrl(m.audioUrl) ? undefined : m.audioUrl,
+    webSearchResult: webSearchResultForPersistence(m.webSearchResult),
+    streamingArtifactHtml: undefined,
+    streamingArtifactCsv: undefined,
+  };
+}
 
 /** Create a fresh, empty ChatSession with a unique ID. */
 export function createEmptySession(): ChatSession {
@@ -40,6 +79,7 @@ function normalizeMessage(raw: ChatMessage): ChatMessage {
 
   return {
     ...raw,
+    id: typeof raw.id === "string" && raw.id ? raw.id : crypto.randomUUID(),
     content: typeof raw.content === "string" ? raw.content : "",
     artifactPath,
     artifactStage,
@@ -145,17 +185,32 @@ export function normalizeSession(raw: Partial<ChatSession>): ChatSession {
 
 /** Strip large transient bodies before writing workspace state. */
 export function sessionForPersistence(session: ChatSession): ChatSession {
+  const audioOutputs = (session.audioOutputs ?? []).filter((url) => !isDataUrl(url));
   return {
     ...session,
     streamingContent: "",
     loading: false,
     cancelled: false,
+    audioOutputs,
+    audioOutput: isDataUrl(session.audioOutput) ? undefined : session.audioOutput,
     streamingArtifactHtml: undefined,
     streamingArtifactCsv: undefined,
-    messages: session.messages.map((m) => ({
-      ...m,
-      streamingArtifactHtml: undefined,
-      streamingArtifactCsv: undefined,
-    })),
+    messages: session.messages.map(messageForPersistence),
+  };
+}
+
+/** Lightweight stub for non-active chats in the localStorage mirror only. */
+export function sessionStubForLocalMirror(session: ChatSession): ChatSession {
+  return {
+    id: session.id,
+    title: session.title,
+    messages: [],
+    streamingContent: "",
+    loading: false,
+    audioOutputs: [],
+    cancelled: false,
+    ragResult: null,
+    mediaAssets: {},
+    createdAt: session.createdAt,
   };
 }

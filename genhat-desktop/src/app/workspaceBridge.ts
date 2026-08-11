@@ -23,7 +23,12 @@ import {
   type WorkspaceMutationContext,
 } from "./workspaceActions";
 import type { SetStateAction } from "react";
-import { sessionForPersistence } from "./sessionUtils";
+import {
+  sessionForPersistence,
+  sessionStubForLocalMirror,
+  normalizeSession,
+} from "./sessionUtils";
+import { Api } from "../api";
 
 function resolveSetStateAction<T>(prevValue: T, action: SetStateAction<T>): T {
   return typeof action === "function"
@@ -197,4 +202,65 @@ export function buildWorkspaceFrontendState(safeActive: string): string {
     selectedTtsEngine: modelStore.selectedTtsEngine,
     selectedVisionModel: modelStore.selectedVisionModel,
   });
+}
+
+/**
+ * Compact localStorage mirror: full payload for the active chat only;
+ * other chats are title stubs. Backend state remains the source of truth.
+ */
+export function buildLocalSessionMirrorState(safeActive: string): string {
+  const sessionStore = useSessionStore.getState();
+  const chatModeStore = useChatModeStore.getState();
+  const modelStore = useModelStore.getState();
+
+  return JSON.stringify({
+    sessions: sessionStore.sessions.map((session) =>
+      session.id === safeActive
+        ? sessionForPersistence(session)
+        : sessionStubForLocalMirror(session)
+    ),
+    activeSessionId: safeActive,
+    openSessionIds: sessionStore.openSessionIds,
+    mindmapsBySession: chatModeStore.mindmapsBySession,
+    selectedModel: modelStore.selectedModel,
+    selectedTtsEngine: modelStore.selectedTtsEngine,
+    selectedVisionModel: modelStore.selectedVisionModel,
+  });
+}
+
+/** Pull a stubbed chat's messages from backend workspace state when opened. */
+export async function hydrateSessionFromBackend(sessionId: string): Promise<boolean> {
+  const current = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
+  if (!current) return false;
+  // Genuinely empty new chats stay empty; named stubs need hydration.
+  if (current.messages.length > 0) return false;
+  if (current.title === "New Chat") return false;
+
+  try {
+    const raw = await Api.getWorkspaceFrontendState();
+    if (!raw) return false;
+    const parsed = JSON.parse(raw) as { sessions?: Partial<ChatSession>[] };
+    const found = Array.isArray(parsed.sessions)
+      ? parsed.sessions.find((s) => s?.id === sessionId)
+      : undefined;
+    if (!found) return false;
+
+    const normalized = normalizeSession(found);
+    if (normalized.messages.length === 0) return false;
+
+    useSessionStore.getState().updateSession(sessionId, () => ({
+      messages: normalized.messages,
+      mediaAssets: normalized.mediaAssets,
+      ragResult: normalized.ragResult,
+      audioOutputs: normalized.audioOutputs,
+      artifactPath: normalized.artifactPath,
+      artifactStage: normalized.artifactStage,
+      streamingArtifactType: normalized.streamingArtifactType,
+      streamingArtifactTitle: normalized.streamingArtifactTitle,
+    }));
+    return true;
+  } catch (err) {
+    console.warn("Failed to hydrate session from backend:", err);
+    return false;
+  }
 }

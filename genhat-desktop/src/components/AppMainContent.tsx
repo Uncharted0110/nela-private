@@ -40,6 +40,7 @@ import { useUIStore } from "../stores/uiStore";
 import { useDownloadStore } from "../stores/downloadStore";
 import { useCloudStore } from "../stores/cloudStore";
 import { useDocGraphStore } from "../stores/docGraphStore";
+import { useShallow } from "zustand/react/shallow";
 import ChatTabBar from "./ChatTabBar";
 import AppMainTopBar from "./AppMainTopBar";
 import AppMainModeControls from "./AppMainModeControls";
@@ -56,9 +57,19 @@ export default function AppMainContent({ networkActive: networkActiveProp }: App
   const { advanced } = useAdvancedMode();
 
   // ── Store subscriptions ───────────────────────────────────────────────────
-  const sessions = useSessionStore(s => s.sessions);
-  const openSessionIds = useSessionStore(s => s.openSessionIds);
   const activeSessionId = useSessionStore(s => s.activeSessionId);
+  const activeSession = useSessionStore(
+    (s) => s.sessions.find((session) => session.id === s.activeSessionId) ?? null
+  );
+  // useShallow required: map/filter always returns a new array; without it
+  // useSyncExternalStore sees a changed snapshot every read → white-screen loop.
+  const openViewerSessions = useSessionStore(
+    useShallow((s) =>
+      s.openSessionIds
+        .map((id) => s.sessions.find((session) => session.id === id))
+        .filter((session): session is ChatSession => !!session)
+    )
+  );
   const streamingThinking = useSessionStore(s => s.streamingThinking);
   const updateSession = useSessionStore(s => s.updateSession);
   const addNewSession = useSessionStore(s => s.addNewSession);
@@ -91,7 +102,6 @@ export default function AppMainContent({ networkActive: networkActiveProp }: App
   const activeMindmapOverlay = useChatModeStore(s => s.activeMindmapOverlay);
   const setActiveMindmapOverlay = useChatModeStore(s => s.setActiveMindmapOverlay);
   const clearImage = useChatModeStore(s => s.clearImage);
-  const generalElapsedTime = useChatModeStore(s => s.generalElapsedTime);
   const generalGenerationTime = useChatModeStore(s => s.generalGenerationTime);
   const generalGenerating = useChatModeStore(s => s.generalGenerating);
 
@@ -128,13 +138,8 @@ export default function AppMainContent({ networkActive: networkActiveProp }: App
   const downloads = useDownloadStore(s => s.downloads);
 
   // ── Derived state ─────────────────────────────────────────────────────────
-  const activeSession = sessions.find((s) => s.id === activeSessionId) ?? null;
   const effectiveRagEnabled = advanced ? ragEnabled : true;
   const effectiveThinkingEnabled = advanced ? thinkingEnabled : false;
-
-  const openViewerSessions = openSessionIds
-    .map((id) => sessions.find((s) => s.id === id))
-    .filter((s): s is ChatSession => !!s);
 
   const activeMindmapGraph = activeMindmapOverlay
     ? (mindmapsBySession[activeMindmapOverlay.sessionId] ?? []).find(
@@ -287,7 +292,6 @@ export default function AppMainContent({ networkActive: networkActiveProp }: App
         onCloseDocViewer={closeDocViewer}
         onExitPlayground={handleExitPlayground}
         generalGenerating={generalGenerating}
-        generalElapsedTime={generalElapsedTime}
         generalGenerationTime={generalGenerationTime}
       />
     </main>

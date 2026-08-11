@@ -58,6 +58,7 @@ export async function executeHandleSend(
       : undefined;
 
   const newMsg: ChatMessage = {
+    id: crypto.randomUUID(),
     role: "user",
     content: promptText,
     ...(visionAttachment ? { visionImage: visionAttachment } : {}),

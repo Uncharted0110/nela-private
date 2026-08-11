@@ -76,7 +76,6 @@ interface AppMainContentAreaProps {
   onCloseDocViewer: () => void;
   onExitPlayground?: () => void;
   generalGenerating?: boolean;
-  generalElapsedTime?: number;
   generalGenerationTime?: number | null;
 }
 
@@ -125,7 +124,6 @@ export default function AppMainContentArea({
   onCloseDocViewer,
   onExitPlayground,
   generalGenerating = false,
-  generalElapsedTime = 0,
   generalGenerationTime = null,
 }: AppMainContentAreaProps) {
   const updateSession = useSessionStore((s) => s.updateSession);
@@ -214,7 +212,6 @@ export default function AppMainContentArea({
             thinkingEnabled={thinkingEnabled}
             onToggleThinking={onToggleThinking}
             generalGenerating={generalGenerating}
-            generalElapsedTime={generalElapsedTime}
             generalGenerationTime={generalGenerationTime}
           />
           </div>

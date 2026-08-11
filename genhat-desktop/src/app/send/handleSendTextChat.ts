@@ -1,7 +1,7 @@
 import { Api } from "../../api";
 import type { ChatMessage, WebSearchResult } from "../../types";
 import { friendlyErrorFromUnknown } from "../friendlyError";
-import { createStreamChunkFlusher } from "../streamUiBatch";
+import { createStreamChunkFlusher, createLatestValueFlusher } from "../streamUiBatch";
 import {
   CONTEXT_COMPACTION_KEEP_RECENT,
   CONTEXT_COMPACTION_THRESHOLD,
@@ -121,6 +121,10 @@ export async function handleSendTextChat(
     }));
   });
 
+  const thinkingFlusher = createLatestValueFlusher((value: string) => {
+    ctx.setStreamingThinking(value);
+  });
+
   const streamParser = autoArtifacts ? new StreamArtifactParser() : null;
   let streamedArtifactBody = "";
   let streamedArtifactType: "text/html" | "text/csv" = "text/html";
@@ -179,6 +183,7 @@ export async function handleSendTextChat(
     generatedByModel?: string | null
   ) => {
     chunkFlusher.flushNow();
+    thinkingFlusher.flushNow();
     if (streamParser) {
       applyAutoArtifactEmit(streamParser.finalize());
       artifactUiFlusher.flushNow();
@@ -283,6 +288,7 @@ export async function handleSendTextChat(
         messages: [
           ...prev.messages,
           {
+            id: crypto.randomUUID(),
             role: "assistant" as const,
             content: intro,
             ...(followup ? { artifactFollowup: followup } : {}),
@@ -331,6 +337,7 @@ export async function handleSendTextChat(
 
   const finishErr = (err: unknown) => {
     chunkFlusher.flushNow();
+    thinkingFlusher.flushNow();
     useChatModeStore.getState().setLiveToolStatus(null);
     if (ctx.generalIntervalRef.current) clearInterval(ctx.generalIntervalRef.current);
     ctx.setGeneralGenerating(false);
@@ -339,7 +346,11 @@ export async function handleSendTextChat(
     ctx.updateSession(sid, (prev) => ({
       messages: [
         ...prev.messages,
-        { role: "assistant" as const, content: friendlyErrorFromUnknown(err) },
+        {
+          id: crypto.randomUUID(),
+          role: "assistant" as const,
+          content: friendlyErrorFromUnknown(err),
+        },
       ],
       streamingContent: "",
       loading: false,
@@ -361,7 +372,7 @@ export async function handleSendTextChat(
 
   const onThinking = (thinkingChunk: string) => {
     fullThinking += thinkingChunk;
-    ctx.setStreamingThinking(fullThinking);
+    thinkingFlusher.push(fullThinking);
   };
 
   // Tool loop when web, knowledge-base, and/or auto-artifact chart prep is needed.

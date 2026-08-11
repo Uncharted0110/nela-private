@@ -1,7 +1,7 @@
 import { Api } from "../../api";
 import type { ChatMessage } from "../../types";
 import { friendlyError } from "../friendlyError";
-import { createStreamChunkFlusher } from "../streamUiBatch";
+import { createStreamChunkFlusher, createLatestValueFlusher } from "../streamUiBatch";
 import {
   CONTEXT_COMPACTION_KEEP_RECENT,
   CONTEXT_COMPACTION_THRESHOLD,
@@ -75,6 +75,9 @@ export async function handleSendRag(
         streamingContent: prev.streamingContent + batched,
       }));
     });
+    const thinkingFlusher = createLatestValueFlusher((value: string) => {
+      ctx.setStreamingThinking(value);
+    });
 
     await Api.streamChat(
       ragMessages,
@@ -87,10 +90,11 @@ export async function handleSendRag(
       },
       (thinkingChunk) => {
         fullThinking += thinkingChunk;
-        ctx.setStreamingThinking(fullThinking);
+        thinkingFlusher.push(fullThinking);
       },
       () => {
         chunkFlusher.flushNow();
+        thinkingFlusher.flushNow();
         if (ctx.generalIntervalRef.current) clearInterval(ctx.generalIntervalRef.current);
           const totalTime = Math.floor((Date.now() - ragStartTime) / 100) / 10;
           const timeToFirstToken =
@@ -107,6 +111,7 @@ export async function handleSendRag(
             const updated: ChatMessage[] = [
               ...prev.messages,
               {
+                id: crypto.randomUUID(),
                 role: "assistant",
                 content: fullAnswer,
                 thinking: fullThinking || undefined,
@@ -143,11 +148,16 @@ export async function handleSendRag(
         },
         (err) => {
           chunkFlusher.flushNow();
+          thinkingFlusher.flushNow();
           console.error("RAG stream error:", err);
           ctx.updateSession(sid, (prev) => ({
             messages: [
               ...prev.messages,
-              { role: "assistant" as const, content: friendlyError(String(err)) },
+              {
+                id: crypto.randomUUID(),
+                role: "assistant" as const,
+                content: friendlyError(String(err)),
+              },
             ],
             streamingContent: "",
             loading: false,

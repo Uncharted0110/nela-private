@@ -35,6 +35,8 @@ export interface WorkspaceOpenResult {
 }
 
 export interface ChatMessage {
+  /** Stable id for list keys / memoization (assigned on create or normalize). */
+  id?: string;
   role: "user" | "assistant" | "system";
   content: string;
   /** Optional image attached to a user message in vision mode. */

@@ -18,7 +18,7 @@ import {
   writeIntelligenceMode,
 } from "../../app/intelligenceModes";
 import { refreshModels, downloadMissingOptionalModels } from "../../app/modelActions";
-import { loadRagDocs, buildWorkspaceFrontendState } from "../../app/workspaceBridge";
+import { loadRagDocs, buildWorkspaceFrontendState, buildLocalSessionMirrorState, hydrateSessionFromBackend } from "../../app/workspaceBridge";
 import { createEmptySession, normalizeSession } from "../../app/sessionUtils";
 import { normalizeMindmapsStore } from "../../app/mindmapUtils";
 import {
@@ -47,6 +47,15 @@ export function useAppLifecycle() {
   const sessions = useSessionStore(s => s.sessions);
   const activeSessionId = useSessionStore(s => s.activeSessionId);
   const openSessionIds = useSessionStore(s => s.openSessionIds);
+  /** Lean fingerprint so streaming token updates do not re-trigger persistence. */
+  const sessionPersistRevision = useSessionStore((s) =>
+    s.sessions
+      .map(
+        (session) =>
+          `${session.id}:${session.messages.length}:${session.title}:${session.loading ? 1 : 0}:${session.cancelled ? 1 : 0}:${session.artifactPath ?? ""}:${session.artifactStage ?? ""}`
+      )
+      .join("|")
+  );
   const mindmapsBySession = useChatModeStore(s => s.mindmapsBySession);
   const activeMindmapOverlay = useChatModeStore(s => s.activeMindmapOverlay);
   const selectedModel = useModelStore(s => s.selectedModel);
@@ -336,12 +345,17 @@ export function useAppLifecycle() {
 
   // Persist sessions whenever they change (debounced; paused while generating).
   useEffect(() => {
-    if (!workspaceScope || !sessionStoreReady || sessions.length === 0) return;
+    if (!workspaceScope || !sessionStoreReady) return;
     if (workspaceScope === "workspace:none") return;
 
-    const anyGenerating = sessions.some((s) => s.loading);
+    const latestSnapshot = useSessionStore.getState();
+    if (latestSnapshot.sessions.length === 0) return;
+
+    const anyGenerating = latestSnapshot.sessions.some((s) => s.loading);
     // Avoid freezing the UI by syncing huge streaming state to disk on every token.
     const delayMs = anyGenerating ? 3000 : 500;
+    /** ~2MB budget for the legacy localStorage mirror (UTF-16 ≈ 2 bytes/char). */
+    const LOCAL_MIRROR_CHAR_BUDGET = 1_000_000;
 
     const timer = window.setTimeout(() => {
       const latest = useSessionStore.getState();
@@ -350,54 +364,55 @@ export function useAppLifecycle() {
         : latest.sessions[0]?.id;
       if (!safeActive) return;
 
+      const stillGenerating = latest.sessions.some((s) => s.loading);
       const storageKey = `${SESSION_STORAGE_PREFIX}${workspaceScope}`;
-      const fullLegacyState = buildWorkspaceFrontendState(safeActive);
+      const backendState = buildWorkspaceFrontendState(safeActive);
+      const localMirror = buildLocalSessionMirrorState(safeActive);
 
-      if (!legacySessionStorageDisabledRef.current) {
-        try {
-          localStorage.setItem(storageKey, fullLegacyState);
-        } catch (err) {
-          const isQuotaError =
-            err instanceof DOMException &&
-            (err.name === "QuotaExceededError" || err.name === "NS_ERROR_DOM_QUOTA_REACHED");
+      // localStorage: active chat only; skip while generating; size-gate / silence quota.
+      if (!legacySessionStorageDisabledRef.current && !stillGenerating) {
+        if (localMirror.length > LOCAL_MIRROR_CHAR_BUDGET) {
+          legacySessionStorageDisabledRef.current = true;
+          console.warn(
+            "Disabling legacy localStorage session mirror: payload exceeds size budget"
+          );
+        } else {
+          try {
+            localStorage.setItem(storageKey, localMirror);
+          } catch (err) {
+            const isQuotaError =
+              err instanceof DOMException &&
+              (err.name === "QuotaExceededError" || err.name === "NS_ERROR_DOM_QUOTA_REACHED");
 
-          if (isQuotaError) {
-            promptClearSessionStorage();
-            try {
-              for (let i = localStorage.length - 1; i >= 0; i -= 1) {
-                const key = localStorage.key(i);
-                if (!key) continue;
-                if (key.startsWith(SESSION_STORAGE_PREFIX) && key !== storageKey) {
-                  localStorage.removeItem(key);
-                }
-              }
-              localStorage.setItem(storageKey, fullLegacyState);
-            } catch {
+            if (isQuotaError) {
+              legacySessionStorageDisabledRef.current = true;
               try {
-                const modelStore = useModelStore.getState();
-                localStorage.setItem(
-                  storageKey,
-                  JSON.stringify({
-                    sessions: [],
-                    activeSessionId: safeActive,
-                    openSessionIds: [safeActive],
-                    selectedModel: modelStore.selectedModel,
-                    selectedTtsEngine: modelStore.selectedTtsEngine,
-                    selectedVisionModel: modelStore.selectedVisionModel,
-                  })
-                );
-              } catch (retryErr) {
-                legacySessionStorageDisabledRef.current = true;
-                console.warn("Disabling legacy localStorage session mirror due to quota:", retryErr);
+                for (let i = localStorage.length - 1; i >= 0; i -= 1) {
+                  const key = localStorage.key(i);
+                  if (!key) continue;
+                  if (key.startsWith(SESSION_STORAGE_PREFIX)) {
+                    localStorage.removeItem(key);
+                  }
+                }
+              } catch {
+                /* ignore */
               }
+              // Prefer silent backend-only fallback; prompt at most once if needed later.
+              void Api.saveWorkspaceFrontendState(backendState)
+                .then(() => {
+                  /* backend has the full state — no popup required */
+                })
+                .catch(() => {
+                  promptClearSessionStorage();
+                });
+            } else {
+              console.warn("Failed to persist legacy localStorage session state:", err);
             }
-          } else {
-            console.warn("Failed to persist legacy localStorage session state:", err);
           }
         }
       }
 
-      void Api.saveWorkspaceFrontendState(fullLegacyState).catch((err) => {
+      void Api.saveWorkspaceFrontendState(backendState).catch((err) => {
         console.warn("Failed to persist workspace frontend state to backend:", err);
       });
     }, delayMs);
@@ -406,7 +421,7 @@ export function useAppLifecycle() {
   }, [
     workspaceScope,
     sessionStoreReady,
-    sessions,
+    sessionPersistRevision,
     activeSessionId,
     openSessionIds,
     mindmapsBySession,
@@ -415,6 +430,12 @@ export function useAppLifecycle() {
     selectedVisionModel,
     promptClearSessionStorage,
   ]);
+
+  // Hydrate stubbed (localStorage-only) chats from backend when selected.
+  useEffect(() => {
+    if (!sessionStoreReady || !activeSessionId) return;
+    void hydrateSessionFromBackend(activeSessionId);
+  }, [sessionStoreReady, activeSessionId]);
 
   // Keep active session aligned with currently open viewer tabs
   useEffect(() => {
