@@ -1122,9 +1122,15 @@ pub fn write_presentation_plan(plan: PresentationPlan) -> Result<PathBuf, String
         }}
 
         document.addEventListener('keydown', (e) => {{
-            if (e.key === 'ArrowRight' || e.key === 'Space' || e.key === 'PageDown') {{
+            const t = e.target;
+            if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/i.test(t.tagName || ""))) {{
+                return;
+            }}
+            if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'Space' || e.key === 'Spacebar' || e.key === 'PageDown') {{
+                e.preventDefault();
                 nextSlide();
             }} else if (e.key === 'ArrowLeft' || e.key === 'PageUp') {{
+                e.preventDefault();
                 prevSlide();
             }}
         }});

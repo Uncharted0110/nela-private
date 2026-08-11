@@ -475,17 +475,35 @@ export function getFreeformSlideBlock(html: string, index: number): string {
   return html.slice(starts[at], findMatchingElementEnd(html, starts[at]));
 }
 
+/** Replace the outer HTML of one slide block. */
+export function replaceFreeformSlideBlock(
+  html: string,
+  index: number,
+  newBlock: string
+): string {
+  const starts = findSlideStarts(html);
+  if (starts.length < 1) {
+    throw new Error("No slides found in HTML deck");
+  }
+  const at = Math.max(0, Math.min(index, starts.length - 1));
+  const blockStart = starts[at];
+  const blockEnd = findMatchingElementEnd(html, blockStart);
+  return html.slice(0, blockStart) + newBlock + html.slice(blockEnd);
+}
+
 /**
- * Replace the first <img> on a freeform slide with a new data URI / URL.
+ * Replace an <img> on a freeform slide with a new data URI / URL.
  * Uses quote-aware attribute rewriting so multi-megabyte data: URIs do not
  * break a second replace. Optional `libId` stamps data-nela-lib-id.
+ * `imageIndex` is 0-based among <img> tags inside the slide (default 0).
  */
 export function replaceImageOnFreeformSlide(
   html: string,
   index: number,
   imageSrc: string,
   sourceUrl?: string | null,
-  libId?: number | null
+  libId?: number | null,
+  imageIndex = 0
 ): string {
   const starts = findSlideStarts(html);
   if (starts.length < 1) {
@@ -495,9 +513,27 @@ export function replaceImageOnFreeformSlide(
   const blockStart = starts[at];
   const blockEnd = findMatchingElementEnd(html, blockStart);
 
-  const imgStart = indexOfImgInRange(html, blockStart, blockEnd);
+  const want = Math.max(0, Math.floor(imageIndex));
+  let imgStart = -1;
+  let found = -1;
+  let searchFrom = blockStart;
+  while (searchFrom < blockEnd) {
+    const next = indexOfImgInRange(html, searchFrom, blockEnd);
+    if (next < 0) break;
+    found += 1;
+    if (found === want) {
+      imgStart = next;
+      break;
+    }
+    const tagEnd = findQuotedTagEnd(html, next);
+    searchFrom = tagEnd > 0 ? tagEnd : next + 4;
+  }
   if (imgStart < 0) {
-    throw new Error(`Slide ${at + 1} has no image to replace`);
+    throw new Error(
+      want === 0
+        ? `Slide ${at + 1} has no image to replace`
+        : `Slide ${at + 1} has no image at index ${want}`
+    );
   }
   const imgEnd = findQuotedTagEnd(html, imgStart);
   if (imgEnd < 0) {

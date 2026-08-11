@@ -12,6 +12,14 @@ import {
   Minimize2,
 } from "lucide-react";
 import { prepareArtifactHtmlPreview } from "../app/artifactHtmlPreview";
+import {
+  injectPresentationLibraryGate,
+  injectPresentationSelectionRuntime,
+  isPresentationPreviewHtml,
+  isSelectComponentMessage,
+  isTextEditCommitMessage,
+  type SelectedComponentPayload,
+} from "../app/presentationPreviewSelect";
 import { parseCSV } from "../app/send/csvParse";
 import { sanitizeCsvArtifactBody } from "../app/sanitizeCsvArtifact";
 import { Api } from "../api";
@@ -155,9 +163,15 @@ export default function ArtifactSidePanel({
   // 0-based index of the slide currently shown inside the deck iframe
   // (reported by the deck's nav script via postMessage). Null for non-deck HTML.
   const [activeSlideIndex, setActiveSlideIndex] = useState<number | null>(null);
+  /** Click-selected component inside the presentation preview (edit mode only). */
+  const [selectedComponent, setSelectedComponent] =
+    useState<SelectedComponentPayload | null>(null);
+  const selectedComponentRef = useRef<SelectedComponentPayload | null>(null);
+  selectedComponentRef.current = selectedComponent;
   const [previewFullscreen, setPreviewFullscreen] = useState(false);
   const panelRef = useRef<HTMLElement>(null);
   const previewCanvasRef = useRef<HTMLDivElement>(null);
+  const previewIframeRef = useRef<HTMLIFrameElement>(null);
   const dragRef = useRef<{ startX: number; startWidth: number } | null>(null);
   const throttleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latestHtml = useRef(html ?? "");
@@ -245,6 +259,7 @@ export default function ArtifactSidePanel({
       setDisplayHtml("");
       setXlsxRows(null);
       setActiveSlideIndex(null);
+      setSelectedComponent(null);
       paintedOnce.current = false;
       cancelImagePicker();
       if (!prevSaved.current) {
@@ -258,6 +273,11 @@ export default function ArtifactSidePanel({
     }
     prevSaved.current = savedPath;
   }, [savedPath, editOpen]);
+
+  // Selection only while Edit is open.
+  useEffect(() => {
+    if (!editOpen) setSelectedComponent(null);
+  }, [editOpen]);
 
   // Never leave a picker await hanging if the panel unmounts or closes.
   useEffect(() => {
@@ -409,6 +429,8 @@ export default function ArtifactSidePanel({
         index?: number;
         libId?: number;
         slideIndex?: number;
+        imageIndex?: number;
+        clear?: boolean;
       } | null;
       if (!data || typeof data.type !== "string") return;
 
@@ -418,7 +440,75 @@ export default function ArtifactSidePanel({
         Number.isFinite(data.index) &&
         data.index >= 0
       ) {
-        setActiveSlideIndex(Math.floor(data.index));
+        const next = Math.floor(data.index);
+        setActiveSlideIndex((prev) => {
+          if (prev !== null && prev !== next) {
+            setSelectedComponent(null);
+            try {
+              previewIframeRef.current?.contentWindow?.postMessage(
+                { type: "nela-clear-selection" },
+                "*"
+              );
+            } catch {
+              /* ignore */
+            }
+          }
+          return next;
+        });
+        return;
+      }
+
+      if (isSelectComponentMessage(data)) {
+        if (!editOpen) return;
+        if ((data as { clear?: boolean }).clear) {
+          setSelectedComponent(null);
+          try {
+            previewIframeRef.current?.contentWindow?.postMessage(
+              { type: "nela-set-library-visible", open: false },
+              "*"
+            );
+          } catch {
+            /* ignore */
+          }
+          return;
+        }
+        setSelectedComponent(data as SelectedComponentPayload);
+        return;
+      }
+
+      if (isTextEditCommitMessage(data)) {
+        if (editBusy || !savedPath || !editOpen) return;
+        void (async () => {
+          setEditBusy(true);
+          pushLibMsg("Saving text edit…", "progress");
+          try {
+            const { buildSendHandlerContext } = await import(
+              "../app/send/buildContext"
+            );
+            const { applySelectedComponentTextEdit } = await import(
+              "../app/send/applySelectedComponentTextEdit"
+            );
+            const { useSessionStore } = await import("../stores/sessionStore");
+            const sid = useSessionStore.getState().activeSessionId;
+            if (!sid) throw new Error("No active session");
+            const ctx = buildSendHandlerContext();
+            const result = await applySelectedComponentTextEdit({
+              artifactPath: savedPath,
+              sid,
+              ctx,
+              edit: data,
+            });
+            const filename = result.path.split(/[/\\]/).pop();
+            pushLibMsg(`Updated text → ${filename}`, "done");
+            setSelectedComponent(null);
+          } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            pushLibMsg(message || "Couldn't save that text edit.", "error");
+          } finally {
+            setEditBusy(false);
+            if (type === "text/html") setHtmlView("preview");
+          }
+        })();
         return;
       }
 
@@ -429,7 +519,18 @@ export default function ArtifactSidePanel({
           typeof data.slideIndex === "number" && data.slideIndex >= 0
             ? Math.floor(data.slideIndex)
             : activeSlideIndex ?? 0;
+        const sel = selectedComponentRef.current;
+        const imageIndex =
+          typeof data.imageIndex === "number" && data.imageIndex >= 0
+            ? Math.floor(data.imageIndex)
+            : typeof sel?.imageIndex === "number" && sel.imageIndex >= 0
+              ? sel.imageIndex
+              : 0;
         if (typeof libId !== "number" || !Number.isFinite(libId) || libId < 0) {
+          return;
+        }
+        // In-deck rail apply only while an image component is selected.
+        if (!sel || sel.role !== "image") {
           return;
         }
         void (async () => {
@@ -455,12 +556,14 @@ export default function ArtifactSidePanel({
               ctx,
               libId: Math.floor(libId),
               slideIndex,
+              imageIndex,
             });
             const filename = result.path.split(/[/\\]/).pop();
             pushLibMsg(
               `Applied library image to slide ${slideIndex + 1} → ${filename}`,
               "done"
             );
+            setSelectedComponent(null);
           } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
             pushLibMsg(message || "Couldn't apply that image.", "error");
@@ -473,8 +576,53 @@ export default function ArtifactSidePanel({
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [editBusy, savedPath, activeSlideIndex, type]);
+  }, [editBusy, savedPath, activeSlideIndex, type, editOpen]);
 
+  /** Preview srcDoc — gate library rail; inject click-to-select while Edit is open. */
+  const iframeSrcDoc = useMemo(() => {
+    if (!displayHtml) return "";
+    if (type !== "text/html" || !isPresentationPreviewHtml(displayHtml)) {
+      return displayHtml;
+    }
+    let html = injectPresentationLibraryGate(displayHtml);
+    if (editOpen) {
+      html = injectPresentationSelectionRuntime(html);
+    }
+    return html;
+  }, [displayHtml, editOpen, type]);
+
+  // Reloading preview HTML drops in-iframe selection outlines.
+  useEffect(() => {
+    setSelectedComponent(null);
+  }, [displayHtml]);
+
+  const clearComponentSelection = useCallback(() => {
+    setSelectedComponent(null);
+    try {
+      const win = previewIframeRef.current?.contentWindow;
+      win?.postMessage({ type: "nela-clear-selection" }, "*");
+      win?.postMessage({ type: "nela-set-library-visible", open: false }, "*");
+    } catch {
+      /* opaque / gone */
+    }
+  }, []);
+
+  // Keep in-deck library rail in sync with host selection (image only).
+  useEffect(() => {
+    const open = Boolean(
+      editOpen &&
+        selectedComponent &&
+        (selectedComponent.role === "image" || selectedComponent.hasImage)
+    );
+    try {
+      previewIframeRef.current?.contentWindow?.postMessage(
+        { type: "nela-set-library-visible", open },
+        "*"
+      );
+    } catch {
+      /* ignore */
+    }
+  }, [editOpen, selectedComponent]);
 
   const csvGridRows = useMemo(() => {
     const cleaned = sanitizeCsvArtifactBody(csv || "");
@@ -736,10 +884,11 @@ export default function ArtifactSidePanel({
                   its sandbox. Active-slide tracking uses postMessage('*'),
                   which works from an opaque origin. */}
               <iframe
+                ref={previewIframeRef}
                 title={title || "Artifact preview"}
                 className="w-full h-full border-0 bg-white"
                 sandbox="allow-scripts"
-                srcDoc={displayHtml}
+                srcDoc={iframeSrcDoc}
               />
               <button
                 type="button"
@@ -818,7 +967,7 @@ export default function ArtifactSidePanel({
 
               {canEdit ? (
                 <div className="absolute top-3 left-0 right-0 z-10 flex justify-center pl-16 pr-16">
-                  <div className="w-full max-w-[720px]">
+                  <div className="w-full max-w-[720px] flex flex-col gap-2">
                     <ArtifactPreviewEditBar
                       open={editOpen}
                       busy={editBusy}
@@ -832,6 +981,40 @@ export default function ArtifactSidePanel({
                         })()
                       }
                     />
+                    {editOpen && selectedComponent ? (
+                      <div className="flex justify-center">
+                        <div
+                          className="inline-flex max-w-full items-center gap-2 rounded-full border border-neon/50 bg-void-800/95 px-3 py-1.5 text-[0.72rem] text-txt shadow-lg backdrop-blur"
+                          title={selectedComponent.selectorHint}
+                        >
+                          <span className="shrink-0 rounded-full bg-neon/15 px-2 py-0.5 font-medium uppercase tracking-wide text-neon">
+                            {selectedComponent.role}
+                          </span>
+                          <span className="min-w-0 truncate text-txt-muted">
+                            {selectedComponent.role === "image" ||
+                            selectedComponent.hasImage
+                              ? "Pick a library image"
+                              : "Edit in preview · Ctrl+Enter to save"}
+                          </span>
+                          <span className="min-w-0 truncate text-txt-muted/80 max-w-[140px]">
+                            {selectedComponent.textPreview ||
+                              selectedComponent.tagName}
+                          </span>
+                          <span className="shrink-0 text-txt-muted/70">
+                            slide {(selectedComponent.slideIndex ?? 0) + 1}
+                          </span>
+                          <button
+                            type="button"
+                            className="shrink-0 rounded-full p-0.5 text-txt-muted hover:bg-void-600 hover:text-txt"
+                            aria-label="Clear selection"
+                            title="Clear selection"
+                            onClick={() => clearComponentSelection()}
+                          >
+                            <X size={14} />
+                          </button>
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
                 </div>
               ) : null}
