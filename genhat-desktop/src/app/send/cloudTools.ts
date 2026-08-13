@@ -25,10 +25,10 @@ export const WEB_SEARCH_TOOL: CloudToolDefinition = {
           type: "string",
           enum: ["snippet", "full", "standard", "deep"],
           description:
-            "snippet = quick factual lookup (titles/snippets); " +
-            "full = single search with fuller page content; " +
-            "standard = multi-facet research gather for composite questions; " +
-            "deep = broader multi-facet research for exhaustive answers",
+            "snippet = fast Tavily lookup (prefer this); " +
+            "full = slower single search with more chunks; " +
+            "standard = multi-facet research (several searches); " +
+            "deep = exhaustive multi-facet research (slowest)",
         },
       },
       required: ["query", "depth"],
@@ -113,8 +113,15 @@ export const MCP_SPREADSHEET_TOOL: CloudToolDefinition = {
     parameters: {
       type: "object",
       properties: {
-        title: { type: "string", description: "Workbook title / output filename stem" },
-        output_name: { type: "string" },
+        title: {
+          type: "string",
+          description:
+            "Short workbook title / download filename stem (e.g. 'Andaman 5-Day Trip'). Never paste the user's full prompt.",
+        },
+        output_name: {
+          type: "string",
+          description: "Same as title — short file stem, no extension",
+        },
         sheets: {
           type: "array",
           description:

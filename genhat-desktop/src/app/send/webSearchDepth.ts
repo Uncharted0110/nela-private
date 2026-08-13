@@ -23,8 +23,8 @@ export function normalizeWebToolDepth(raw: unknown): WebToolDepth {
   if (s === "deep") return "deep";
   if (s === "standard" || s === "thorough") return "standard";
   if (s === "full") return "full";
-  // Sensible default when the model omits depth.
-  return "full";
+  // Default to snippet (Tavily `fast`) — full/advanced is 5–15s per call.
+  return "snippet";
 }
 
 export async function runWebSearchWithDepth(opts: {

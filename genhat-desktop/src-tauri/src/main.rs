@@ -262,7 +262,7 @@ fn main() {
                     // Autostart incremental sync of $HOME (diff-only on later launches).
                     let handle = app.handle().clone();
                     tauri::async_runtime::spawn(async move {
-                        tokio::time::sleep(std::time::Duration::from_millis(1_200)).await;
+                        tokio::time::sleep(std::time::Duration::from_secs(8)).await;
                         engine.spawn_home_autostart(Some(handle));
                     });
                 }
@@ -275,7 +275,7 @@ fn main() {
                         app.manage(state);
                         let handle = app.handle().clone();
                         tauri::async_runtime::spawn(async move {
-                            tokio::time::sleep(std::time::Duration::from_millis(1_200)).await;
+                            tokio::time::sleep(std::time::Duration::from_secs(8)).await;
                             engine.spawn_home_autostart(Some(handle));
                         });
                     }

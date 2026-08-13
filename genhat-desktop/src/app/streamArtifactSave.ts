@@ -15,6 +15,10 @@ import {
 import { parseCSV } from "./send/csvParse";
 import { extractCsvSheetArtifacts } from "./sanitizeCsvArtifact";
 import {
+  deriveArtifactFilename,
+  extractWorkbookFilename,
+} from "./artifactFilename";
+import {
   normalizeSpreadsheetPlan,
   sanitizeExcelSheetName,
 } from "./spreadsheetPlan";
@@ -58,6 +62,7 @@ function withMediaEmbeds(
 export async function saveStreamedHtmlArtifact(input: {
   rawBody: string;
   topic: string;
+  filename?: string;
   asPresentation?: boolean;
   imagePool?: ImagePoolEntry[];
   chartPool?: ChartPoolEntry[];
@@ -71,12 +76,18 @@ export async function saveStreamedHtmlArtifact(input: {
     }
     const parsed = parsePresentationHtmlArtifactOutput(input.rawBody, input.topic);
     const themed = withThemeOverride(embed(parsed.html), input.topic);
+    const outputName = deriveArtifactFilename({
+      llmName: input.filename || extractWorkbookFilename(input.rawBody),
+      htmlTitle: parsed.title,
+      topic: input.topic,
+      fallback: "presentation",
+    });
     return Api.generateHtml({
       title: parsed.title,
       archetype: "landing",
       sections: [],
       html: themed,
-      output_name: parsed.output_name,
+      output_name: outputName,
     });
   }
 
@@ -85,12 +96,18 @@ export async function saveStreamedHtmlArtifact(input: {
   }
   const parsed = parseHtmlArtifactOutput(input.rawBody, input.topic);
   const themed = withThemeOverride(embed(parsed.html), input.topic);
+  const outputName = deriveArtifactFilename({
+    llmName: input.filename || extractWorkbookFilename(input.rawBody),
+    htmlTitle: parsed.title,
+    topic: input.topic,
+    fallback: "webpage",
+  });
   return Api.generateHtml({
     title: parsed.title,
     archetype: "landing",
     sections: [],
     html: themed,
-    output_name: parsed.output_name,
+    output_name: outputName,
   });
 }
 
@@ -98,6 +115,7 @@ export async function saveStreamedCsvArtifact(input: {
   rawBody: string;
   topic: string;
   title?: string;
+  filename?: string;
 }): Promise<ArtifactResult> {
   const sheetArtifacts = extractCsvSheetArtifacts(input.rawBody);
   if (!sheetArtifacts.length) {
@@ -128,18 +146,21 @@ export async function saveStreamedCsvArtifact(input: {
     throw new Error("Streamed CSV had no header row");
   }
 
-  const outputName = (input.title || input.topic || "spreadsheet")
-    .replace(/[\\/:*?"<>|]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 80);
+  const outputName = deriveArtifactFilename({
+    llmName:
+      input.filename ||
+      extractWorkbookFilename(input.rawBody) ||
+      null,
+    topic: input.topic,
+    fallback: "spreadsheet",
+  });
 
   return Api.generateSpreadsheet(
     normalizeSpreadsheetPlan(
       {
         sheets,
         ops: [],
-        output_name: outputName || "spreadsheet",
+        output_name: outputName,
       },
       { prompt: input.topic, hasSourceData: false }
     )
@@ -151,6 +172,7 @@ export async function saveStreamedArtifact(input: {
   rawBody: string;
   topic: string;
   title?: string;
+  filename?: string;
   asPresentation?: boolean;
   imagePool?: ImagePoolEntry[];
   chartPool?: ChartPoolEntry[];
@@ -160,11 +182,13 @@ export async function saveStreamedArtifact(input: {
       rawBody: input.rawBody,
       topic: input.topic,
       title: input.title,
+      filename: input.filename,
     });
   }
   return saveStreamedHtmlArtifact({
     rawBody: input.rawBody,
     topic: input.topic,
+    filename: input.filename,
     asPresentation: input.asPresentation,
     imagePool: input.imagePool,
     chartPool: input.chartPool,

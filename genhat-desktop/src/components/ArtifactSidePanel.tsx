@@ -30,6 +30,7 @@ import ArtifactPreviewEditBar from "./ArtifactPreviewEditBar";
 import ArtifactPreviewEditLog from "./ArtifactPreviewEditLog";
 import ArtifactImagePicker from "./ArtifactImagePicker";
 import { cancelImagePicker } from "../stores/imagePickerStore";
+import { useArtifactStreamStore } from "../stores/artifactStreamStore";
 
 const PANEL_WIDTH_KEY = "nela.artifactPanelWidthPx";
 const PANEL_MIN_WIDTH = 320;
@@ -97,6 +98,31 @@ function HtmlSourceStream({
         ) : null}
       </pre>
       <div ref={endRef} />
+    </div>
+  );
+}
+
+function CsvWritingStatus() {
+  const chars = useArtifactStreamStore((s) => s.chars);
+  const sheetsSeen = useArtifactStreamStore((s) => s.sheetsSeen);
+  const title = useArtifactStreamStore((s) => s.title);
+  return (
+    <div className="h-full flex items-center justify-center p-6">
+      <div className="max-w-sm text-center space-y-3">
+        <span className="inline-block w-5 h-5 border-2 border-neon border-t-transparent rounded-full animate-spin" />
+        <p className="text-sm text-txt">
+          {title ? `Writing ${title}…` : "Writing spreadsheet…"}
+        </p>
+        <p className="text-xs text-txt-muted">
+          {sheetsSeen > 0
+            ? `${sheetsSeen} sheet${sheetsSeen === 1 ? "" : "s"} so far`
+            : "Waiting for the first table…"}
+          {chars > 0 ? ` · ${(chars / 1024).toFixed(1)} KB` : ""}
+        </p>
+        <p className="text-[0.68rem] text-txt-muted">
+          The grid opens when the workbook is saved.
+        </p>
+      </div>
     </div>
   );
 }
@@ -639,19 +665,36 @@ export default function ArtifactSidePanel({
     }
   }, [editOpen, selectedComponent]);
 
+  // While tokens are still arriving, debounce parse so we don't rebuild every
+  // sheet on the main thread ~60 times/sec (that's the multi-page Excel freeze).
+  const [previewCsv, setPreviewCsv] = useState(csv ?? "");
+  useEffect(() => {
+    if (!streamActive) {
+      setPreviewCsv(csv ?? "");
+      return;
+    }
+    const t = window.setTimeout(() => setPreviewCsv(csv ?? ""), 300);
+    return () => clearTimeout(t);
+  }, [csv, streamActive]);
+
+  const LIVE_PREVIEW_ROWS = 80;
+  const liveCsvStreaming = Boolean(streamActive) && !savedPath;
+
   const csvGridRows = useMemo(() => {
-    const cleaned = sanitizeCsvArtifactBody(csv || "");
-    const { headers, rows } = parseCSV(cleaned);
+    if (liveCsvStreaming) return [] as string[][];
+    const cleaned = sanitizeCsvArtifactBody(previewCsv || "");
+    const { headers, rows } = parseCSV(cleaned, { maxRows: LIVE_PREVIEW_ROWS });
     if (!headers.length) return [] as string[][];
     return [headers, ...rows];
-  }, [csv]);
+  }, [previewCsv, liveCsvStreaming]);
 
   const streamingCsvSheets = useMemo(() => {
-    const arts = extractCsvSheetArtifacts(csv || "");
+    if (liveCsvStreaming) return null;
+    const arts = extractCsvSheetArtifacts(previewCsv || "");
     if (arts.length <= 1) return null;
     return arts
       .map((a, i) => {
-        const { headers, rows } = parseCSV(a.csv);
+        const { headers, rows } = parseCSV(a.csv, { maxRows: LIVE_PREVIEW_ROWS });
         if (!headers.length) return null;
         return {
           name: sanitizeExcelSheetName(a.title || `Sheet${i + 1}`),
@@ -659,7 +702,7 @@ export default function ArtifactSidePanel({
         };
       })
       .filter((s): s is { name: string; rows: string[][] } => s !== null);
-  }, [csv]);
+  }, [previewCsv, liveCsvStreaming]);
 
   const sheetRows = xlsxRows && xlsxRows.length > 0 ? xlsxRows : csvGridRows;
   const sheetName =
@@ -895,7 +938,9 @@ export default function ArtifactSidePanel({
       <div className="flex-1 min-h-0 bg-void-900 flex flex-col">
         <div className="flex-1 min-h-0">
           {type === "text/csv" ? (
-            sheetView === "code" ? (
+            liveCsvStreaming ? (
+              <CsvWritingStatus />
+            ) : sheetView === "code" ? (
               <CsvSourceStream csv={csv ?? ""} follow={streaming} />
             ) : xlsxLoading && !sheetRows.length ? (
               <div className="p-4 text-sm text-txt-muted flex items-center gap-2">

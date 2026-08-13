@@ -16,7 +16,7 @@ export const HTML_CLOUD_FREEFORM_STATIC = `You generate a complete, self-contain
 OUTPUT FORMAT (mandatory):
 1. BEFORE the tag: 2–4 sentences in plain text explaining what page you are building (never write the words "nela-artifact" here).
 2. Then open a tag exactly like:
-   <nela-artifact type="text/html" title="Short Page Title">
+   <nela-artifact type="text/html" title="Short Page Title" filename="Short File Name">
 3. Emit a complete HTML document starting with <!DOCTYPE html>.
 4. Close with </nela-artifact>.
 5. AFTER the tag: 2–4 sentences summarizing what is on the page and inviting edits.
@@ -301,7 +301,8 @@ export function htmlPlanRequest(
       `Write a complete HTML webpage for: "${text}". ` +
       `Stay on this exact subject. ` +
       `If this is a dashboard / analytics request, place nela-chart markers for host-rendered charts (never hand-write Chart.js). ` +
-      `Wrap the document in <nela-artifact type="text/html" title="...">...</nela-artifact>. ` +
+      `Wrap the document in <nela-artifact type="text/html" title="Short Page Title" filename="Short File Name">...</nela-artifact>. ` +
+      `filename is the download name (no extension) — never paste the user's full prompt. ` +
       `Invent your own design — do not use a JSON section template.`
     );
   }

@@ -1,11 +1,14 @@
 //! Multi-stage ingestion pipeline — Two-Pass architecture.
 //!
-//! Pass 1 (fast scan): Rayon parallel parse with a strict 500ms timeout,
-//! Tantivy index + petgraph assemble, single commit, return immediately.
-//! Files that time out / hit retriable errors go into `deferred_files`.
+//! Pass 1 (fast scan): bounded private Rayon pool (see [`IndexerBudget`]),
+//! parse **on the worker** (no detached timeout threads), chunk + yield so the
+//! UI stays scheduled. Large PDFs are deferred to Pass 2 via a cheap size
+//! pre-filter. Tantivy index + petgraph assemble, then commit.
 //!
-//! Pass 2 (background): see `state.rs` — low-concurrency retry with 5s timeout.
+//! Pass 2 (background): see `state.rs` — low-concurrency retry on the same
+//! budget (`min(2, pass1_threads)`).
 
+use crate::doc_graph::budget::{self, IndexerBudget};
 use crate::doc_graph::engine::assembler::assemble_markdown;
 use crate::doc_graph::errors::{EngineError, ParserError};
 use crate::doc_graph::graph::builder::{
@@ -18,12 +21,12 @@ use crate::doc_graph::search::embeddings::Embedder;
 use crate::doc_graph::search::hybrid::hybrid_search;
 use crate::doc_graph::search::indexer::TantivyIndex;
 use ignore::WalkBuilder;
-use rayon::prelude::*;
+use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc;
 use std::sync::Arc;
+use std::thread;
 use std::time::{Duration, Instant};
 
 /// Legacy flat cap (kept for callers); discovery uses [`max_file_bytes_for_ext`].
@@ -42,10 +45,16 @@ pub fn max_file_bytes_for_ext(ext: &str) -> u64 {
         _ => 3 * 1024 * 1024,
     }
 }
-/// Pass 1 per-file parse timeout (fast scan).
+/// Legacy Pass 1 timeout constant (no longer used to abandon threads).
 pub const PARSE_TIMEOUT_PASS1: Duration = Duration::from_millis(500);
-/// Pass 2 per-file parse timeout (background retry).
+/// Legacy Pass 2 timeout constant (no longer used to abandon threads).
 pub const PARSE_TIMEOUT_PASS2: Duration = Duration::from_millis(5_000);
+/// Files processed per Pass 1 chunk before yielding to the OS/UI.
+const PASS1_CHUNK: usize = 48;
+/// Sleep between Pass 1 chunks so the compositor / event loop can run.
+const PASS1_YIELD: Duration = Duration::from_millis(30);
+/// Cheap Pass 1 pre-filter: PDFs over this size go to Pass 2 (no spawn/timeout).
+const PASS1_DEFER_PDF_BYTES: u64 = 8 * 1024 * 1024;
 /// Cap errors retained in the report.
 const MAX_ERRORS: usize = 50;
 
@@ -337,65 +346,75 @@ fn parse_one_pass2(registry: &ParserRegistry, path: &Path) -> Result<ParsedDocum
     }
 }
 
-/// Parse with a wall-clock timeout. On timeout returns `ParserError::Timeout`.
+/// Parse on the **calling** thread (Rayon worker). No extra OS thread, no
+/// abandon-on-timeout leak. `timeout` is ignored — kept for call-site compat.
 pub fn parse_with_timeout(
     registry: Arc<ParserRegistry>,
     path: PathBuf,
-    timeout: Duration,
+    _timeout: Duration,
 ) -> Result<(PathBuf, ParsedDocument), (PathBuf, ParserError)> {
-    parse_with_timeout_inner(registry, path, timeout, false)
+    parse_on_caller(&registry, path, false)
 }
 
-/// Pass 2 timed parse — PDFs go through the robust fallback path.
+/// Pass 2 parse on the calling thread — PDFs go through the robust fallback path.
 pub fn parse_pass2_with_timeout(
     registry: Arc<ParserRegistry>,
     path: PathBuf,
-    timeout: Duration,
+    _timeout: Duration,
 ) -> Result<(PathBuf, ParsedDocument), (PathBuf, ParserError)> {
-    parse_with_timeout_inner(registry, path, timeout, true)
+    parse_on_caller(&registry, path, true)
 }
 
-fn parse_with_timeout_inner(
-    registry: Arc<ParserRegistry>,
+fn parse_on_caller(
+    registry: &ParserRegistry,
     path: PathBuf,
-    timeout: Duration,
     pass2: bool,
 ) -> Result<(PathBuf, ParsedDocument), (PathBuf, ParserError)> {
-    let (tx, rx) = mpsc::sync_channel(1);
-    let path_for_thread = path.clone();
-    let thread_name = if pass2 {
-        "doc-graph-pass2-parse"
-    } else {
-        "doc-graph-parse"
-    };
-    let spawn = std::thread::Builder::new()
-        .name(thread_name.into())
-        .spawn(move || {
-            let result = if pass2 {
-                parse_one_pass2(&registry, &path_for_thread)
-            } else {
-                parse_one(&registry, &path_for_thread)
-            };
-            let _ = tx.send(result);
-        });
-
-    if let Err(e) = spawn {
-        return Err((
-            path,
-            ParserError::ParseFailure(format!("failed to spawn parse thread: {e}")),
-        ));
+    #[cfg(test)]
+    {
+        let n = PARSE_INFLIGHT.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+        PARSE_PEAK.fetch_max(n, std::sync::atomic::Ordering::SeqCst);
     }
+    let result = if pass2 {
+        parse_one_pass2(registry, &path)
+    } else {
+        parse_one(registry, &path)
+    };
+    #[cfg(test)]
+    PARSE_INFLIGHT.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    match result {
+        Ok(doc) => Ok((path, doc)),
+        Err(e) => Err((path, e)),
+    }
+}
 
-    match rx.recv_timeout(timeout) {
-        Ok(Ok(doc)) => Ok((path, doc)),
-        Ok(Err(e)) => Err((path, e)),
-        Err(mpsc::RecvTimeoutError::Timeout) => {
-            Err((path, ParserError::Timeout(timeout.as_millis() as u64)))
-        }
-        Err(mpsc::RecvTimeoutError::Disconnected) => Err((
-            path,
-            ParserError::ParseFailure("parse worker disconnected".into()),
-        )),
+#[cfg(test)]
+static PARSE_INFLIGHT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+#[cfg(test)]
+static PARSE_PEAK: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+fn should_defer_pass1(path: &Path) -> Option<String> {
+    let ext = path
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if ext != "pdf" {
+        return None;
+    }
+    let Ok(meta) = path.metadata() else {
+        return None;
+    };
+    if meta.len() > PASS1_DEFER_PDF_BYTES {
+        Some(format!(
+            "{}: {} bytes exceeds Pass 1 PDF cap ({}); deferred",
+            path.display(),
+            meta.len(),
+            PASS1_DEFER_PDF_BYTES
+        ))
+    } else {
+        None
     }
 }
 
@@ -415,7 +434,7 @@ enum MapOutcome {
 pub fn run_pipeline(
     root: &Path,
     data_dir: &Path,
-    kb: &mut KnowledgeBase,
+    kb: &RwLock<KnowledgeBase>,
     index: &TantivyIndex,
     embedder: &Embedder,
     max_files: Option<usize>,
@@ -429,9 +448,12 @@ pub fn run_pipeline(
     };
 
     if replace {
-        *kb = KnowledgeBase::new();
-        kb.vectors.clear();
-        kb.vector_chunk_ids.clear();
+        {
+            let mut kb = kb.write();
+            *kb = KnowledgeBase::new();
+            kb.vectors.clear();
+            kb.vector_chunk_ids.clear();
+        }
         index.clear()?;
         let mut empty = IndexManifest::default();
         empty.root = root.to_string_lossy().to_string();
@@ -488,7 +510,7 @@ pub fn run_pipeline(
 pub fn run_incremental_sync(
     root: &Path,
     data_dir: &Path,
-    kb: &mut KnowledgeBase,
+    kb: &RwLock<KnowledgeBase>,
     index: &TantivyIndex,
     embedder: &Embedder,
     max_files: Option<usize>,
@@ -543,9 +565,12 @@ pub fn run_incremental_sync(
         ..Default::default()
     });
 
-    // Purge deleted files from graph + Tantivy.
+    // Purge deleted files from graph + Tantivy (short write lock).
     for path in &plan.to_remove {
-        let chunk_ids = remove_document_by_path(kb, path);
+        let chunk_ids = {
+            let mut kb = kb.write();
+            remove_document_by_path(&mut kb, path)
+        };
         let path_str = path.to_string_lossy().to_string();
         index.delete_by_file_path(&path_str)?;
         if !chunk_ids.is_empty() {
@@ -556,10 +581,13 @@ pub fn run_incremental_sync(
 
     if plan.to_index.is_empty() && plan.to_remove.is_empty() {
         index.commit()?;
-        kb.save_graph(&data_dir.join("graph.bin"))?;
-        kb.save_vectors(&data_dir.join("vectors.bin"))?;
+        {
+            let kb = kb.read();
+            kb.save_graph(&data_dir.join("graph.bin"))?;
+            kb.save_vectors(&data_dir.join("vectors.bin"))?;
+        }
         manifest.save(data_dir)?;
-        let stats = kb.stats();
+        let stats = kb.read().stats();
         let total_ms = t0.elapsed().as_millis();
         emit(IndexingProgress {
             phase: "done".into(),
@@ -596,7 +624,10 @@ pub fn run_incremental_sync(
 
     // Remove old graph/index entries before re-indexing changed paths.
     for path in &plan.to_index {
-        let chunk_ids = remove_document_by_path(kb, path);
+        let chunk_ids = {
+            let mut kb = kb.write();
+            remove_document_by_path(&mut kb, path)
+        };
         let path_str = path.to_string_lossy().to_string();
         index.delete_by_file_path(&path_str)?;
         if !chunk_ids.is_empty() {
@@ -662,7 +693,7 @@ pub fn run_incremental_sync(
 pub fn sync_paths(
     paths: &[PathBuf],
     data_dir: &Path,
-    kb: &mut KnowledgeBase,
+    kb: &RwLock<KnowledgeBase>,
     index: &TantivyIndex,
     embedder: &Embedder,
     on_progress: Option<ProgressCallback>,
@@ -760,7 +791,10 @@ pub fn sync_paths(
     });
 
     for path in &to_remove {
-        let chunk_ids = remove_document_by_path(kb, path);
+        let chunk_ids = {
+            let mut kb = kb.write();
+            remove_document_by_path(&mut kb, path)
+        };
         let path_str = path.to_string_lossy().to_string();
         index.delete_by_file_path(&path_str)?;
         if !chunk_ids.is_empty() {
@@ -770,7 +804,10 @@ pub fn sync_paths(
     }
 
     for path in &to_index {
-        let chunk_ids = remove_document_by_path(kb, path);
+        let chunk_ids = {
+            let mut kb = kb.write();
+            remove_document_by_path(&mut kb, path)
+        };
         let path_str = path.to_string_lossy().to_string();
         index.delete_by_file_path(&path_str)?;
         if !chunk_ids.is_empty() {
@@ -779,13 +816,14 @@ pub fn sync_paths(
         manifest.remove(path);
     }
 
-    let mut report = if to_index.is_empty() {
+    let report = if to_index.is_empty() {
         if !to_remove.is_empty() {
             index.commit()?;
+            let kb = kb.read();
             kb.save_graph(&data_dir.join("graph.bin"))?;
             kb.save_vectors(&data_dir.join("vectors.bin"))?;
         }
-        let stats = kb.stats();
+        let stats = kb.read().stats();
         PipelineReport {
             root: root.to_string_lossy().to_string(),
             files_discovered: to_remove.len(),
@@ -866,10 +904,13 @@ fn path_is_under_excluded(path: &Path) -> bool {
 }
 
 /// Shared Pass 1 parse → Tantivy → assemble → commit for an explicit file list.
+///
+/// Uses a **private** Rayon pool sized by [`IndexerBudget`]. Parses on the
+/// worker (no detached timeout threads). Holds `kb.write()` only per chunk.
 fn index_paths_batch(
     root: &Path,
     data_dir: &Path,
-    kb: &mut KnowledgeBase,
+    kb: &RwLock<KnowledgeBase>,
     index: &TantivyIndex,
     _embedder: &Embedder,
     files: &[PathBuf],
@@ -883,102 +924,119 @@ fn index_paths_batch(
         }
     };
     let files_discovered = files.len();
+    let budget = IndexerBudget::detect();
+    let pool = budget::build_pass1_pool(&budget).map_err(|e| {
+        EngineError::Other(format!("doc-graph Pass 1 pool failed: {e}"))
+    })?;
 
     emit(IndexingProgress {
         phase: "parsing".into(),
         files_discovered,
         message: format!(
-            "Pass 1 fast scan: {files_discovered} files (≤{}ms timeout)",
-            PARSE_TIMEOUT_PASS1.as_millis()
+            "Pass 1 fast scan: {files_discovered} files ({})",
+            budget.progress_label()
         ),
         ..Default::default()
     });
 
     let registry = Arc::new(ParserRegistry::new());
     let t_parse = Instant::now();
+    let mut t_asm_acc = Duration::ZERO;
 
-    let map_results: Vec<MapOutcome> = files
-        .par_iter()
-        .map(|path| match parse_with_timeout(
-            registry.clone(),
-            path.clone(),
-            PARSE_TIMEOUT_PASS1,
-        ) {
-            Ok((path, parsed)) => {
-                let prepared = prepare_chunks(&path, &parsed);
-                let n = prepared.len();
-                match index_prepared_chunks(index, &prepared) {
-                    Ok(()) => MapOutcome::Ok(MappedDoc {
-                        path,
-                        parsed,
-                        chunks_indexed: n,
-                    }),
-                    Err(e) => MapOutcome::Failed(path, e.to_string()),
-                }
-            }
-            Err((path, err)) => {
-                let msg = format!("{}: {err}", path.display());
-                if err.is_retriable() {
-                    MapOutcome::Deferred(path, msg)
-                } else {
-                    MapOutcome::Failed(path, msg)
-                }
-            }
-        })
-        .collect();
-    let parse_ms = t_parse.elapsed().as_millis();
-
-    let mut mapped: Vec<MappedDoc> = Vec::new();
+    let mut fingerprints: HashMap<String, FileFingerprint> = HashMap::new();
     let mut deferred_files: Vec<PathBuf> = Vec::new();
     let mut errors: Vec<String> = Vec::new();
     let mut files_failed = 0usize;
+    let mut files_parsed = 0usize;
     let mut chunks_indexed = 0usize;
 
-    for outcome in map_results {
-        match outcome {
-            MapOutcome::Ok(doc) => {
-                chunks_indexed += doc.chunks_indexed;
-                mapped.push(doc);
+    for (chunk_idx, chunk) in files.chunks(PASS1_CHUNK).enumerate() {
+        let map_results: Vec<MapOutcome> = budget::in_place_map(&pool, chunk, |path| {
+            if let Some(msg) = should_defer_pass1(path) {
+                return MapOutcome::Deferred(path.clone(), msg);
             }
-            MapOutcome::Deferred(path, msg) => {
-                deferred_files.push(path);
-                push_error(&mut errors, format!("{msg} [deferred→pass2]"));
+            match parse_on_caller(&registry, path.clone(), false) {
+                Ok((path, parsed)) => {
+                    let prepared = prepare_chunks(&path, &parsed);
+                    let n = prepared.len();
+                    match index_prepared_chunks(index, &prepared) {
+                        Ok(()) => MapOutcome::Ok(MappedDoc {
+                            path,
+                            parsed,
+                            chunks_indexed: n,
+                        }),
+                        Err(e) => MapOutcome::Failed(path, e.to_string()),
+                    }
+                }
+                Err((path, err)) => {
+                    let msg = format!("{}: {err}", path.display());
+                    if err.is_retriable() {
+                        MapOutcome::Deferred(path, msg)
+                    } else {
+                        MapOutcome::Failed(path, msg)
+                    }
+                }
             }
-            MapOutcome::Failed(_path, msg) => {
-                files_failed += 1;
-                push_error(&mut errors, msg);
-            }
-        }
-    }
-    let files_parsed = mapped.len();
-    let files_deferred = deferred_files.len();
+        });
 
-    emit(IndexingProgress {
-        phase: "assemble".into(),
-        files_discovered,
-        files_parsed,
-        files_failed,
-        chunks_indexed,
-        message: format!(
-            "Building graph ({files_parsed} ok, {files_deferred} deferred to Pass 2)"
-        ),
-    });
-
-    let t_asm = Instant::now();
-    let mut fingerprints: HashMap<String, FileFingerprint> = HashMap::new();
-    for doc in &mapped {
-        if let Some(fp) =
-            FileFingerprint::from_path_with_extraction(&doc.path, &doc.parsed.extraction)
+        let t_asm = Instant::now();
         {
-            fingerprints.insert(IndexManifest::key(&doc.path), fp);
+            let mut kb = kb.write();
+            for outcome in map_results {
+                match outcome {
+                    MapOutcome::Ok(doc) => {
+                        chunks_indexed += doc.chunks_indexed;
+                        files_parsed += 1;
+                        if let Some(fp) = FileFingerprint::from_path_with_extraction(
+                            &doc.path,
+                            &doc.parsed.extraction,
+                        ) {
+                            fingerprints.insert(IndexManifest::key(&doc.path), fp);
+                        }
+                        if let Err(e) = assemble_graph_only(&mut kb, &doc.path, &doc.parsed) {
+                            push_error(
+                                &mut errors,
+                                format!("assemble {}: {e}", doc.path.display()),
+                            );
+                        }
+                    }
+                    MapOutcome::Deferred(path, msg) => {
+                        deferred_files.push(path);
+                        push_error(&mut errors, format!("{msg} [deferred→pass2]"));
+                    }
+                    MapOutcome::Failed(_path, msg) => {
+                        files_failed += 1;
+                        push_error(&mut errors, msg);
+                    }
+                }
+            }
         }
-        if let Err(e) = assemble_graph_only(kb, &doc.path, &doc.parsed) {
-            push_error(&mut errors, format!("assemble {}: {e}", doc.path.display()));
-        }
+        t_asm_acc += t_asm.elapsed();
+
+        emit(IndexingProgress {
+            phase: "parsing".into(),
+            files_discovered,
+            files_parsed,
+            files_failed,
+            chunks_indexed,
+            message: format!(
+                "Pass 1 chunk {}/{} ({}) — {} ok, {} deferred, {} failed",
+                chunk_idx + 1,
+                files.len().div_ceil(PASS1_CHUNK).max(1),
+                budget.progress_label(),
+                files_parsed,
+                deferred_files.len(),
+                files_failed
+            ),
+        });
+
+        thread::sleep(PASS1_YIELD);
     }
-    drop(mapped);
-    let assemble_ms = t_asm.elapsed().as_millis();
+
+    let parse_ms = t_parse.elapsed().saturating_sub(t_asm_acc).as_millis();
+    let assemble_ms = t_asm_acc.as_millis();
     let embed_ms = 0u128;
+    let files_deferred = deferred_files.len();
 
     emit(IndexingProgress {
         phase: "flush".into(),
@@ -986,17 +1044,23 @@ fn index_paths_batch(
         files_parsed,
         files_failed,
         chunks_indexed,
-        message: "Committing Pass 1 Tantivy index (search available now)".into(),
+        message: format!(
+            "Committing Pass 1 Tantivy index ({})",
+            budget.progress_label()
+        ),
     });
 
     let t_flush = Instant::now();
     index.commit()?;
-    kb.save_graph(&data_dir.join("graph.bin"))?;
-    kb.save_vectors(&data_dir.join("vectors.bin"))?;
+    {
+        let kb = kb.read();
+        kb.save_graph(&data_dir.join("graph.bin"))?;
+        kb.save_vectors(&data_dir.join("vectors.bin"))?;
+    }
     let flush_ms = t_flush.elapsed().as_millis();
     let total_ms = t0.elapsed().as_millis() + discovery_ms;
 
-    let stats = kb.stats();
+    let stats = kb.read().stats();
     emit(IndexingProgress {
         phase: "done".into(),
         files_discovered,
@@ -1004,7 +1068,8 @@ fn index_paths_batch(
         files_failed,
         chunks_indexed,
         message: format!(
-            "Pass 1 done: {files_parsed} files in {total_ms}ms; {files_deferred} queued for Pass 2"
+            "Pass 1 done: {files_parsed} files in {total_ms}ms; {files_deferred} queued for Pass 2 ({})",
+            budget.progress_label()
         ),
     });
 
@@ -1043,9 +1108,7 @@ pub fn index_one_deferred(
     index: &TantivyIndex,
     registry: &Arc<ParserRegistry>,
 ) -> Result<(usize, FileFingerprint), ParserError> {
-    let (path, parsed) =
-        parse_pass2_with_timeout(registry.clone(), path.to_path_buf(), PARSE_TIMEOUT_PASS2)
-            .map_err(|(_p, e)| e)?;
+    let (path, parsed) = parse_on_caller(registry, path.to_path_buf(), true).map_err(|(_p, e)| e)?;
     let prepared = prepare_chunks(&path, &parsed);
     let n = prepared.len();
     index_prepared_chunks(index, &prepared).map_err(|e| ParserError::ParseFailure(e.to_string()))?;
@@ -1144,5 +1207,78 @@ mod split_tests {
         assert_eq!(parts.len(), 2);
         assert_eq!(parts[0], a);
         assert_eq!(parts[1], b);
+    }
+}
+
+#[cfg(test)]
+mod parse_ceiling_tests {
+    use super::*;
+    use crate::doc_graph::budget::{self, IndexerBudget};
+    use std::sync::atomic::Ordering;
+    use std::thread;
+    use std::time::Duration;
+
+    #[test]
+    fn parse_on_caller_never_spawns_orphan_threads() {
+        let before = named_thread_count("doc-graph-parse");
+        let registry = ParserRegistry::new();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("note.txt");
+        std::fs::write(&path, "hello world from parse ceiling test").unwrap();
+        let result = parse_on_caller(&registry, path, false);
+        assert!(result.is_ok(), "parse failed: {:?}", result.err());
+        thread::sleep(Duration::from_millis(50));
+        let after = named_thread_count("doc-graph-parse");
+        assert_eq!(
+            after, before,
+            "parse_on_caller must not leave doc-graph-parse threads"
+        );
+        assert_eq!(PARSE_INFLIGHT.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn bounded_pool_peak_does_not_exceed_budget() {
+        PARSE_PEAK.store(0, Ordering::SeqCst);
+        PARSE_INFLIGHT.store(0, Ordering::SeqCst);
+        let budget = IndexerBudget::from_parts(8, 16, false, false, Some(2));
+        assert_eq!(budget.pass1_threads, 2);
+        let pool = budget::build_pass1_pool(&budget).expect("pool");
+        let registry = Arc::new(ParserRegistry::new());
+        let dir = tempfile::tempdir().expect("tempdir");
+        let paths: Vec<PathBuf> = (0..8)
+            .map(|i| {
+                let p = dir.path().join(format!("f{i}.txt"));
+                std::fs::write(&p, format!("file {i} body for parse ceiling")).unwrap();
+                p
+            })
+            .collect();
+
+        budget::in_place_map(&pool, &paths, |path| {
+            let _ = parse_on_caller(&registry, path.clone(), false);
+            thread::sleep(Duration::from_millis(40));
+        });
+
+        let peak = PARSE_PEAK.load(Ordering::SeqCst);
+        assert!(
+            peak <= budget.pass1_threads,
+            "peak live parses {peak} exceeded budget {}",
+            budget.pass1_threads
+        );
+        assert_eq!(PARSE_INFLIGHT.load(Ordering::SeqCst), 0);
+        assert_eq!(named_thread_count("doc-graph-parse"), 0);
+    }
+
+    fn named_thread_count(prefix: &str) -> usize {
+        let Ok(entries) = std::fs::read_dir("/proc/self/task") else {
+            return 0;
+        };
+        entries
+            .flatten()
+            .filter(|e| {
+                std::fs::read_to_string(e.path().join("comm"))
+                    .map(|s| s.trim().starts_with(prefix))
+                    .unwrap_or(false)
+            })
+            .count()
     }
 }

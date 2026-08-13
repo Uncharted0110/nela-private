@@ -8,6 +8,8 @@ export type NelaArtifactMime = "text/html" | "text/csv";
 export type StreamArtifactMeta = {
   type: NelaArtifactMime;
   title: string;
+  /** Download stem from filename="…" on the first tag (optional). */
+  filename?: string;
 };
 
 export type StreamArtifactEmit = {
@@ -38,11 +40,15 @@ function parseAttrs(attrText: string): StreamArtifactMeta {
   const titleMatch =
     attrText.match(/\btitle\s*=\s*["']([^"']+)["']/i) ||
     attrText.match(/\btitle\s*=\s*([^\s>]+)/i);
+  const filenameMatch =
+    attrText.match(/\bfilename\s*=\s*["']([^"']+)["']/i) ||
+    attrText.match(/\bfilename\s*=\s*([^\s>]+)/i);
   const rawType = (typeMatch?.[1] ?? "text/html").trim().toLowerCase();
   const type: NelaArtifactMime =
     rawType === "text/csv" || rawType === "csv" ? "text/csv" : "text/html";
   const title = (titleMatch?.[1] ?? "").trim() || "Artifact";
-  return { type, title };
+  const filename = (filenameMatch?.[1] ?? "").trim() || undefined;
+  return filename ? { type, title, filename } : { type, title };
 }
 
 /**
@@ -209,6 +215,8 @@ export class StreamArtifactParser {
   private awaitingMoreCsv = false;
   /** True while a reconstructed (2nd+) CSV sheet tag is still open. */
   private openCsvSheetTagged = false;
+  /** Workbook download name from the first tag's filename attr. */
+  private workbookFilename: string | undefined;
 
   get isActive(): boolean {
     return this.inArtifact || this.fallbackMode !== null;
@@ -274,6 +282,10 @@ export class StreamArtifactParser {
       if (openMatch && openMatch.index !== undefined) {
         const before = this.buffer.slice(0, openMatch.index);
         this.meta = parseAttrs(openMatch[1] ?? "");
+        if (this.meta.filename) this.workbookFilename = this.meta.filename;
+        else if (this.workbookFilename) {
+          this.meta = { ...this.meta, filename: this.workbookFilename };
+        }
         this.inArtifact = true;
         this.buffer = this.buffer.slice(openMatch.index + openMatch[0].length);
         this.chatEmittedBeforeOpen += before;
@@ -283,8 +295,11 @@ export class StreamArtifactParser {
         let wrapPrefix = "";
         if (this.meta.type === "text/csv") {
           const safeTitle = this.meta.title.replace(/"/g, "");
+          const safeFile = (this.workbookFilename || "").replace(/"/g, "");
           this.openCsvSheetTagged = true;
-          wrapPrefix = `<nela-artifact type="text/csv" title="${safeTitle}">\n`;
+          wrapPrefix = safeFile
+            ? `<nela-artifact type="text/csv" title="${safeTitle}" filename="${safeFile}">\n`
+            : `<nela-artifact type="text/csv" title="${safeTitle}">\n`;
         }
 
         const after = this.consumeArtifactBody();
@@ -502,6 +517,9 @@ export class StreamArtifactParser {
       }
 
       const nextMeta = parseAttrs(openMatch[1] ?? "");
+      if (nextMeta.filename && !this.workbookFilename) {
+        this.workbookFilename = nextMeta.filename;
+      }
       this.buffer = this.buffer.slice(openMatch.index + openMatch[0].length);
 
       if (nextMeta.type !== "text/csv") {
@@ -515,7 +533,9 @@ export class StreamArtifactParser {
         return { chatDelta, artifactDelta, closed: true };
       }
 
-      this.meta = nextMeta;
+      this.meta = this.workbookFilename
+        ? { ...nextMeta, filename: this.workbookFilename }
+        : nextMeta;
       this.inArtifact = true;
       const safeTitle = nextMeta.title.replace(/"/g, "");
       this.openCsvSheetTagged = true;

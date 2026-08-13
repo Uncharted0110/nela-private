@@ -142,11 +142,15 @@ fn run_watch_loop(engine: Arc<DocGraphEngine>, root: PathBuf, stop: Arc<AtomicBo
         let periodic_due = last_full_sync.elapsed() >= PERIODIC_RESYNC;
 
         if debounce_ready {
-            let batch: Vec<PathBuf> = pending.iter().take(MAX_BATCH).cloned().collect();
-            for p in &batch {
-                pending.remove(p);
+            if engine.is_indexing() || engine.background_status().active {
+                // Keep events queued; never start a second all-core job.
+            } else {
+                let batch: Vec<PathBuf> = pending.iter().take(MAX_BATCH).cloned().collect();
+                for p in &batch {
+                    pending.remove(p);
+                }
+                flush_paths(&engine, &batch);
             }
-            flush_paths(&engine, &batch);
         }
 
         if periodic_due {
@@ -183,11 +187,10 @@ fn flush_paths(engine: &Arc<DocGraphEngine>, paths: &[PathBuf]) {
 
     let result = (|| -> Result<(), crate::doc_graph::errors::EngineError> {
         let embedder = engine.embedder()?;
-        let mut kb = engine.kb.write();
         let report = sync_paths(
             paths,
             &engine.data_dir,
-            &mut kb,
+            &engine.kb,
             &engine.index,
             &embedder,
             None,
@@ -204,7 +207,6 @@ fn flush_paths(engine: &Arc<DocGraphEngine>, paths: &[PathBuf]) {
                 .iter()
                 .map(PathBuf::from)
                 .collect();
-            drop(kb);
             engine.end_indexing();
             engine.spawn_pass2(deferred, None);
             return Ok(());
@@ -224,11 +226,10 @@ fn flush_full_resync(engine: &Arc<DocGraphEngine>, root: &Path) {
     }
     let result = (|| -> Result<(), crate::doc_graph::errors::EngineError> {
         let embedder = engine.embedder()?;
-        let mut kb = engine.kb.write();
         let report = crate::doc_graph::engine::run_incremental_sync(
             root,
             &engine.data_dir,
-            &mut kb,
+            &engine.kb,
             &engine.index,
             &embedder,
             None,
@@ -246,7 +247,6 @@ fn flush_full_resync(engine: &Arc<DocGraphEngine>, root: &Path) {
                 .iter()
                 .map(PathBuf::from)
                 .collect();
-            drop(kb);
             engine.end_indexing();
             engine.spawn_pass2(deferred, None);
             return Ok(());

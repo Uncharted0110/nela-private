@@ -3,9 +3,8 @@
 //! `KnowledgeBase` (DocGraph) is held behind `Arc`-shared `RwLock` so Pass 2
 //! background retries can mutate structure while queries hold read locks.
 
-use crate::doc_graph::engine::pipeline::{
-    BackgroundIndexStatus, IndexingProgress, PARSE_TIMEOUT_PASS2,
-};
+use crate::doc_graph::budget::{self, IndexerBudget};
+use crate::doc_graph::engine::pipeline::{BackgroundIndexStatus, IndexingProgress};
 use crate::doc_graph::errors::EngineError;
 use crate::doc_graph::graph::schema::{KnowledgeBase, KnowledgeBaseStats};
 use crate::doc_graph::manifest::{FileFingerprint, IndexManifest};
@@ -21,8 +20,8 @@ use tauri::Emitter;
 
 /// How often Pass 2 commits Tantivy + flushes graph.bin.
 const PASS2_COMMIT_EVERY: usize = 8;
-/// Max Rayon workers for Pass 2 (keep UI/CPU responsive).
-const PASS2_THREADS: usize = 2;
+/// First-launch HOME crawl cap (later launches are incremental / uncapped).
+const AUTOSTART_FIRST_LAUNCH_MAX_FILES: usize = 400;
 
 pub struct DocGraphEngine {
     pub data_dir: PathBuf,
@@ -159,6 +158,17 @@ impl DocGraphEngine {
         let handle = std::thread::Builder::new()
             .name("doc-graph-autostart".into())
             .spawn(move || {
+                budget::lower_current_thread_priority();
+                let budget = IndexerBudget::detect();
+                if budget.on_battery {
+                    log::info!(
+                        "Doc-graph autostart skipped (on battery; {})",
+                        budget.progress_label()
+                    );
+                    engine.end_indexing();
+                    return;
+                }
+
                 let home = std::env::var_os("HOME")
                     .or_else(|| std::env::var_os("USERPROFILE"))
                     .map(PathBuf::from);
@@ -172,6 +182,19 @@ impl DocGraphEngine {
                     engine.end_indexing();
                     return;
                 }
+
+                let first_launch = IndexManifest::load(&engine.data_dir)
+                    .map(|m| m.files.is_empty())
+                    .unwrap_or(true);
+                let max_files = if first_launch {
+                    Some(AUTOSTART_FIRST_LAUNCH_MAX_FILES)
+                } else {
+                    None
+                };
+                log::info!(
+                    "Doc-graph autostart: {} (first_launch={first_launch}, max_files={max_files:?})",
+                    budget.progress_label()
+                );
 
                 let on_progress: crate::doc_graph::engine::ProgressCallback = Arc::new({
                     let app = app.clone();
@@ -189,19 +212,15 @@ impl DocGraphEngine {
 
                 let result = (|| -> Result<_, EngineError> {
                     let embedder = engine.embedder()?;
-                    let report = {
-                        let mut kb = engine.kb.write();
-                        crate::doc_graph::engine::run_incremental_sync(
-                            &home,
-                            &engine.data_dir,
-                            &mut kb,
-                            &engine.index,
-                            &embedder,
-                            None,
-                            Some(on_progress.clone()),
-                        )?
-                    };
-                    Ok(report)
+                    crate::doc_graph::engine::run_incremental_sync(
+                        &home,
+                        &engine.data_dir,
+                        &engine.kb,
+                        &engine.index,
+                        &embedder,
+                        max_files,
+                        Some(on_progress.clone()),
+                    )
                 })();
 
                 engine.end_indexing();
@@ -267,6 +286,7 @@ impl DocGraphEngine {
         let handle = std::thread::Builder::new()
             .name("doc-graph-pass2".into())
             .spawn(move || {
+                budget::lower_current_thread_priority();
                 engine.run_pass2(deferred, on_progress);
             })
             .expect("spawn Pass 2 worker");
@@ -292,22 +312,20 @@ impl DocGraphEngine {
             }
         };
 
+        let budget = IndexerBudget::detect();
         emit(IndexingProgress {
             phase: "pass2".into(),
             message: format!(
-                "Pass 2: retrying {} deferred files (≤{}ms, {} threads)",
+                "Pass 2: retrying {} deferred files ({}, pass2_threads={})",
                 deferred.len(),
-                PARSE_TIMEOUT_PASS2.as_millis(),
-                PASS2_THREADS
+                budget.progress_label(),
+                budget.pass2_threads
             ),
             ..Default::default()
         });
 
         let registry = Arc::new(ParserRegistry::new());
-        let pool = match rayon::ThreadPoolBuilder::new()
-            .num_threads(PASS2_THREADS)
-            .build()
-        {
+        let pool = match budget::build_pass2_pool(&budget) {
             Ok(p) => p,
             Err(e) => {
                 log::error!("Pass 2 pool failed: {e}");
@@ -324,57 +342,50 @@ impl DocGraphEngine {
             }
 
             let results: Vec<(PathBuf, Result<(usize, Option<FileFingerprint>), String>)> =
-                pool.install(|| {
-                use rayon::prelude::*;
-                batch
-                    .par_iter()
-                    .map(|path| {
-                        if self.bg_cancel.load(Ordering::SeqCst) {
-                            return (path.clone(), Err("cancelled".into()));
-                        }
-                        // Pass 2: PDF uses pdfium/lopdf fallback; catch_unwind inside parse_one_pass2.
-                        let parse_reg = registry.clone();
-                        let parsed = crate::doc_graph::engine::pipeline::parse_pass2_with_timeout(
-                            parse_reg,
-                            path.clone(),
-                            PARSE_TIMEOUT_PASS2,
-                        );
-                        match parsed {
-                            Ok((path, doc)) => {
-                                let prepared =
-                                    crate::doc_graph::graph::builder::prepare_chunks(&path, &doc);
-                                let n = prepared.len();
+                budget::in_place_map(&pool, batch, |path| {
+                    if self.bg_cancel.load(Ordering::SeqCst) {
+                        return (path.clone(), Err("cancelled".into()));
+                    }
+                    // Pass 2: PDF uses pdfium/lopdf fallback; parse on this worker.
+                    let parse_reg = registry.clone();
+                    let parsed = crate::doc_graph::engine::pipeline::parse_pass2_with_timeout(
+                        parse_reg,
+                        path.clone(),
+                        std::time::Duration::ZERO,
+                    );
+                    match parsed {
+                        Ok((path, doc)) => {
+                            let prepared =
+                                crate::doc_graph::graph::builder::prepare_chunks(&path, &doc);
+                            let n = prepared.len();
+                            if let Err(e) =
+                                crate::doc_graph::graph::builder::index_prepared_chunks(
+                                    &self.index,
+                                    &prepared,
+                                )
+                            {
+                                return (path, Err(e.to_string()));
+                            }
+                            let fp = FileFingerprint::from_path_with_extraction(
+                                &path,
+                                &doc.extraction,
+                            )
+                            .or_else(|| FileFingerprint::from_path(&path));
+                            {
+                                let mut kb = self.kb.write();
                                 if let Err(e) =
-                                    crate::doc_graph::graph::builder::index_prepared_chunks(
-                                        &self.index,
-                                        &prepared,
+                                    crate::doc_graph::graph::builder::assemble_graph_only(
+                                        &mut kb, &path, &doc,
                                     )
                                 {
                                     return (path, Err(e.to_string()));
                                 }
-                                let fp = FileFingerprint::from_path_with_extraction(
-                                    &path,
-                                    &doc.extraction,
-                                )
-                                .or_else(|| FileFingerprint::from_path(&path));
-                                // Short write lock for structural graph update.
-                                {
-                                    let mut kb = self.kb.write();
-                                    if let Err(e) =
-                                        crate::doc_graph::graph::builder::assemble_graph_only(
-                                            &mut kb, &path, &doc,
-                                        )
-                                    {
-                                        return (path, Err(e.to_string()));
-                                    }
-                                }
-                                (path, Ok((n, fp)))
                             }
-                            Err((path, e)) => (path, Err(e.to_string())),
+                            (path, Ok((n, fp)))
                         }
-                    })
-                    .collect()
-            });
+                        Err((path, e)) => (path, Err(e.to_string())),
+                    }
+                });
 
             let mut batch_ok = 0usize;
             let mut recovered: Vec<(PathBuf, Option<FileFingerprint>)> = Vec::new();
@@ -443,10 +454,10 @@ impl DocGraphEngine {
             files_parsed: status.completed,
             files_failed: status.failed,
             message: format!(
-                "Pass 2 complete: {} recovered, {} failed (timeout was {}ms)",
+                "Pass 2 complete: {} recovered, {} failed ({})",
                 status.completed,
                 status.failed,
-                PARSE_TIMEOUT_PASS2.as_millis()
+                IndexerBudget::detect().progress_label()
             ),
             ..Default::default()
         });

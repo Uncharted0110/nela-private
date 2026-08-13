@@ -7,6 +7,10 @@ import {
   extractHtmlPlanFallback,
   parseArtifactPlanJson,
 } from "./artifactPlanJson";
+import {
+  deriveArtifactFilename,
+  extractWorkbookFilename,
+} from "./artifactFilename";
 
 const MIN_HTML_CHARS = 400;
 const MIN_VISIBLE_TEXT_CHARS = 120;
@@ -338,13 +342,23 @@ export function parseHtmlArtifactOutput(
 
   const fromTitle = extractTitleFromHtml(html);
   const title = fromTitle || topic.trim().slice(0, 120) || "Generated Page";
-  let output_name = slugifyArtifactName(fromTitle || topic);
+  let output_name = deriveArtifactFilename({
+    llmName: extractWorkbookFilename(raw),
+    htmlTitle: fromTitle,
+    topic,
+    fallback: "webpage",
+  });
 
   if (raw.trim().startsWith("{") || raw.includes('"output_name"')) {
     try {
       const plan = parseArtifactPlanJson(raw);
       if (typeof plan.output_name === "string" && plan.output_name.trim()) {
-        output_name = slugifyArtifactName(plan.output_name);
+        output_name = deriveArtifactFilename({
+          llmName: plan.output_name,
+          htmlTitle: fromTitle,
+          topic,
+          fallback: "webpage",
+        });
       }
     } catch {
       // ignore — slug from topic is fine
@@ -369,7 +383,12 @@ export function parsePresentationHtmlArtifactOutput(
 
   const fromTitle = extractTitleFromHtml(html);
   const title = fromTitle || topic.trim().slice(0, 120) || "Presentation";
-  const output_name = slugifyArtifactName(fromTitle || topic);
+  const output_name = deriveArtifactFilename({
+    llmName: extractWorkbookFilename(raw),
+    htmlTitle: fromTitle,
+    topic,
+    fallback: "presentation",
+  });
 
   return { html, output_name, title };
 }

@@ -1,5 +1,6 @@
 //! FastEmbed ONNX wrapper — quantized BAAI/bge-small-en-v1.5 (INT8).
 
+use crate::doc_graph::budget::IndexerBudget;
 use crate::doc_graph::errors::EngineError;
 use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
 use parking_lot::Mutex;
@@ -15,9 +16,17 @@ pub struct Embedder {
 
 impl Embedder {
     pub fn new() -> Result<Self, EngineError> {
+        let budget = IndexerBudget::detect();
+        log::info!(
+            "FastEmbed ORT intra_threads={} ({})",
+            budget.embed_threads,
+            budget.progress_label()
+        );
         // Quantized INT8 BGE-small — ~5–10× faster on CPU than full-precision.
         let model = TextEmbedding::try_new(
-            InitOptions::new(EmbeddingModel::BGESmallENV15Q).with_show_download_progress(true),
+            InitOptions::new(EmbeddingModel::BGESmallENV15Q)
+                .with_show_download_progress(true)
+                .with_intra_threads(budget.embed_threads.max(1)),
         )
         .map_err(|e| EngineError::Embedding(e.to_string()))?;
 

@@ -1,7 +1,7 @@
 import { Api } from "../../api";
 import type { ChatMessage, WebSearchResult } from "../../types";
 import { friendlyErrorFromUnknown } from "../friendlyError";
-import { createStreamChunkFlusher, createLatestValueFlusher } from "../streamUiBatch";
+import { createStreamChunkFlusher, createLatestValueFlusher, createThrottledFlusher } from "../streamUiBatch";
 import {
   CONTEXT_COMPACTION_KEEP_RECENT,
   CONTEXT_COMPACTION_THRESHOLD,
@@ -19,13 +19,13 @@ import {
 } from "../artifactChatCopy";
 import { StreamArtifactParser, scrubChatArtifactProtocol, stripPartialArtifactTags } from "../streamArtifactParser";
 import { saveStreamedArtifact } from "../streamArtifactSave";
-import { sanitizeCsvArtifactBody } from "../sanitizeCsvArtifact";
 import { ArtifactChartPool } from "../artifactChartPool";
 import { useCloudStore } from "../../stores/cloudStore";
 import { streamChatByMode } from "./cloudOrLocalStream";
 import type { SendHandlerContext } from "./types";
 import { runCloudAwareToolLoop } from "./cloudNativeToolLoop";
 import { useChatModeStore } from "../../stores/chatModeStore";
+import { useArtifactStreamStore } from "../../stores/artifactStreamStore";
 
 export async function handleSendTextChat(
   text: string,
@@ -140,30 +140,58 @@ export async function handleSendTextChat(
   let rawModelOutput = "";
   let streamedArtifactType: "text/html" | "text/csv" = "text/html";
   let streamedArtifactTitle = "";
+  let streamedArtifactFilename = "";
   let chatProse = "";
   let chatFollowup = "";
   let artifactClosed = false;
 
-  const artifactUiFlusher = createStreamChunkFlusher(() => {
-    const displayBody =
-      streamedArtifactType === "text/csv"
-        ? sanitizeCsvArtifactBody(streamedArtifactBody)
-        : streamedArtifactBody;
+  let csvPanelOpened = false;
+  const pushArtifactSession = () => {
+    if (streamedArtifactType === "text/csv") {
+      const store = useArtifactStreamStore.getState();
+      if (!csvPanelOpened) {
+        store.begin({
+          sessionId: sid,
+          type: "text/csv",
+          title: streamedArtifactTitle,
+        });
+      }
+      store.setCsv(streamedArtifactBody, streamedArtifactTitle);
+      if (csvPanelOpened) return;
+      csvPanelOpened = true;
+      ctx.updateSession(sid, {
+        artifactStreamActive: true,
+        artifactPanelOpen: true,
+        streamingArtifactType: streamedArtifactType,
+        streamingArtifactTitle: streamedArtifactTitle || undefined,
+      });
+      return;
+    }
     ctx.updateSession(sid, {
       artifactStreamActive: true,
       artifactPanelOpen: true,
       streamingArtifactType: streamedArtifactType,
       streamingArtifactTitle: streamedArtifactTitle || undefined,
-      ...(streamedArtifactType === "text/csv"
-        ? { streamingArtifactCsv: displayBody }
-        : { streamingArtifactHtml: displayBody }),
+      streamingArtifactHtml: streamedArtifactBody,
     });
-  });
+  };
+  const csvUiFlusher = createThrottledFlusher(pushArtifactSession, 280);
+  const htmlUiFlusher = createStreamChunkFlusher(pushArtifactSession);
+  const artifactUiFlusher = {
+    push: (chunk: string) => {
+      if (streamedArtifactType === "text/csv") csvUiFlusher.push();
+      else htmlUiFlusher.push(chunk);
+    },
+    flushNow: () => {
+      csvUiFlusher.flushNow();
+      htmlUiFlusher.flushNow();
+    },
+  };
 
   const applyAutoArtifactEmit = (emit: {
     chatDelta: string;
     artifactDelta: string;
-    meta?: { type: "text/html" | "text/csv"; title: string };
+    meta?: { type: "text/html" | "text/csv"; title: string; filename?: string };
     closed?: boolean;
   }) => {
     if (emit.chatDelta) {
@@ -181,6 +209,7 @@ export async function handleSendTextChat(
     if (emit.meta) {
       streamedArtifactType = emit.meta.type;
       streamedArtifactTitle = emit.meta.title;
+      if (emit.meta.filename) streamedArtifactFilename = emit.meta.filename;
     }
     if (emit.artifactDelta) {
       streamedArtifactBody += emit.artifactDelta;
@@ -223,17 +252,20 @@ export async function handleSendTextChat(
       (Boolean(body) && /class=["']slide/i.test(body));
     if (autoArtifacts && body) {
       try {
+        await new Promise((r) => setTimeout(r, 0));
         const saved = await saveStreamedArtifact({
           type: streamedArtifactType,
           rawBody: body,
           topic: text,
           title: streamedArtifactTitle || undefined,
+          filename: streamedArtifactFilename || undefined,
           asPresentation,
           chartPool:
             streamedArtifactType === "text/html" ? chartPool.list() : undefined,
         });
         artifactPath = saved.path;
         artifactStage = "LivePreview";
+        useArtifactStreamStore.getState().clear();
       } catch (saveErr) {
         console.warn("Auto artifact save failed:", saveErr);
       }
@@ -332,14 +364,10 @@ export async function handleSendTextChat(
         artifactStage: artifactStage ?? prev.artifactStage,
         artifactPanelOpen: Boolean(body) ? true : prev.artifactPanelOpen,
         artifactStreamActive: Boolean(body),
-        ...(body && streamedArtifactType === "text/csv"
-          ? { streamingArtifactCsv: streamedArtifactBody }
-          : body
-            ? { streamingArtifactHtml: streamedArtifactBody }
-            : {
-                streamingArtifactHtml: undefined,
-                streamingArtifactCsv: undefined,
-              }),
+        streamingArtifactCsv: undefined,
+        ...(body && streamedArtifactType === "text/html"
+          ? { streamingArtifactHtml: streamedArtifactBody }
+          : { streamingArtifactHtml: undefined }),
         streamingArtifactType: body ? streamedArtifactType : undefined,
         streamingArtifactTitle: title || filename || undefined,
       };

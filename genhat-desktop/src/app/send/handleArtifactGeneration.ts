@@ -8,6 +8,7 @@ import { buildPresentationFallbackPlan } from "../presentationDocumentPlan";
 import { streamChatByMode, willRouteToCloud } from "./cloudOrLocalStream";
 import { useCloudStore } from "../../stores/cloudStore";
 import { useChatModeStore } from "../../stores/chatModeStore";
+import { useArtifactStreamStore } from "../../stores/artifactStreamStore";
 import {
   buildSpreadsheetDataContext,
   buildSpreadsheetFallbackPlan,
@@ -77,8 +78,10 @@ import {
 } from "../artifactChatCopy";
 import { friendlyErrorFromUnknown } from "../friendlyError";
 import { saveStreamedArtifact } from "../streamArtifactSave";
-import { sanitizeCsvArtifactBody } from "../sanitizeCsvArtifact";
-import { createStreamChunkFlusher } from "../streamUiBatch";
+import {
+  createStreamChunkFlusher,
+  createThrottledFlusher,
+} from "../streamUiBatch";
 import {
   extractAmbientSearchQuery,
   shouldRunAmbientFileSearch,
@@ -160,11 +163,21 @@ export async function handleArtifactGeneration(
   let artifactWebSearchResult: WebSearchResult | null = null;
   let artifactGeneratedByModel: string | undefined;
 
+  let lastArtifactStage: PipelineStageKind | null = null;
   const updateArtifactMsg = (
     stage: PipelineStageKind,
     path: string | null = null,
     contentOverride?: string
   ) => {
+    // Per-token stage pokes freeze React (full session clone + chat rerender).
+    if (
+      stage === lastArtifactStage &&
+      path === null &&
+      contentOverride === undefined
+    ) {
+      return;
+    }
+    lastArtifactStage = stage;
     ctx.updateSession(sid, (prev) => {
       const updated = [...prev.messages];
       const idx = updated
@@ -867,7 +880,7 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
             (rowPlan.explicit && rowPlan.count
               ? ` Include EXACTLY ${rowPlan.count} data rows on the primary sheet.`
               : "") +
-            ` When the topic has distinct tables (e.g. trip Overview + Itinerary + Transport + Hotels + Activities + Budget), emit MULTIPLE <nela-artifact type="text/csv" title="ShortTabName">...</nela-artifact> blocks — one Excel sheet each. If your intro lists N sheets, emit exactly N tagged blocks. Use short titles (≤31 chars). A single simple table may use one artifact.`
+            ` When the topic has distinct tables (e.g. trip Overview + Itinerary + Transport + Hotels + Activities + Budget), emit MULTIPLE <nela-artifact type="text/csv" title="ShortTabName" filename="Short File Name">...</nela-artifact> blocks — one Excel sheet each. Trip plans MUST be multi-sheet (not a single fare table). If your intro lists N sheets, emit exactly N tagged blocks. Set filename on the first tag to a short download name. A single simple table may use one artifact.`
           : `Generate a plan for the user request: "${text}".${rowCountSuffix}`;
     const spreadsheetContext =
       schemaId === "html_synthesis" && spreadsheetData
@@ -1117,12 +1130,54 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
     let streamedArtifactType: "text/html" | "text/csv" =
       cloudSpreadsheetFreeform ? "text/csv" : "text/html";
     let streamedArtifactTitle = "";
+    let streamedArtifactFilename = "";
 
-    const artifactUiFlusher = createStreamChunkFlusher(() => {
-      const displayBody =
-        streamedArtifactType === "text/csv"
-          ? sanitizeCsvArtifactBody(streamedArtifactBody)
-          : streamedArtifactBody;
+    let csvPanelOpened = false;
+    const pushArtifactSession = () => {
+      if (streamedArtifactType === "text/csv") {
+        const store = useArtifactStreamStore.getState();
+        if (!csvPanelOpened) {
+          store.begin({
+            sessionId: sid,
+            type: "text/csv",
+            title: streamedArtifactTitle,
+          });
+        }
+        store.setCsv(streamedArtifactBody, streamedArtifactTitle);
+        if (csvPanelOpened) return;
+        csvPanelOpened = true;
+        ctx.updateSession(sid, (prev) => {
+          const updated = [...prev.messages];
+          const idx = updated
+            .map((m, i) => ({ m, i }))
+            .reverse()
+            .find(({ m }) => m.role === "assistant" && m.artifactStage !== undefined)?.i;
+          if (idx !== undefined && updated[idx]) {
+            const prevContent = updated[idx]!.content || "";
+            const cleaned = stripPartialArtifactTags(prevContent).trim();
+            updated[idx] = {
+              ...updated[idx]!,
+              content:
+                cleaned &&
+                !looksLikeHtmlContent(cleaned) &&
+                !/<nela-artifact\b/i.test(cleaned)
+                  ? cleaned
+                  : "",
+              artifactUseSidePanel: true,
+              artifactTitle: streamedArtifactTitle || updated[idx]!.artifactTitle,
+              streamingArtifactType: streamedArtifactType,
+            };
+          }
+          return {
+            artifactStreamActive: true,
+            artifactPanelOpen: true,
+            streamingArtifactType: streamedArtifactType,
+            streamingArtifactTitle: streamedArtifactTitle || undefined,
+            messages: updated,
+          };
+        });
+        return;
+      }
       ctx.updateSession(sid, (prev) => {
         const updated = [...prev.messages];
         const idx = updated
@@ -1151,23 +1206,25 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
           streamingArtifactType: streamedArtifactType,
           streamingArtifactTitle: streamedArtifactTitle || undefined,
           messages: updated,
-          ...(streamedArtifactType === "text/csv"
-            ? { streamingArtifactCsv: displayBody }
-            : { streamingArtifactHtml: displayBody }),
+          streamingArtifactHtml: streamedArtifactBody,
         };
       });
-    });
+    };
+    const artifactUiFlusher = cloudSpreadsheetFreeform
+      ? createThrottledFlusher(pushArtifactSession, 280)
+      : createStreamChunkFlusher(pushArtifactSession);
 
     const applyStreamEmit = (emit: {
       chatDelta: string;
       artifactDelta: string;
-      meta?: { type: "text/html" | "text/csv"; title: string };
+      meta?: { type: "text/html" | "text/csv"; title: string; filename?: string };
       closed?: boolean;
     }) => {
       if (emit.chatDelta) planJson += emit.chatDelta;
       if (emit.meta) {
         streamedArtifactType = emit.meta.type;
         streamedArtifactTitle = emit.meta.title;
+        if (emit.meta.filename) streamedArtifactFilename = emit.meta.filename;
       }
       if (emit.artifactDelta) {
         streamedArtifactBody += emit.artifactDelta;
@@ -1255,6 +1312,8 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
             if (cloudAnyFreeform && streamParser) {
               applyStreamEmit(streamParser.finalize());
               artifactUiFlusher.flushNow();
+              // Let the live grid paint once before the sync CSV→xlsx convert.
+              await new Promise((r) => setTimeout(r, 0));
               // CSV: pass the full raw stream so every <nela-artifact type="text/csv">
               // becomes a worksheet. Never pre-sanitize to the first sheet only.
               const body =
@@ -1283,6 +1342,7 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
                   rawBody: body,
                   topic: text,
                   title: streamedArtifactTitle || undefined,
+                  filename: streamedArtifactFilename || undefined,
                   asPresentation: schemaId === "presentation_synthesis",
                   imagePool:
                     streamedArtifactType === "text/html" ? imagePool : undefined,
@@ -1361,6 +1421,7 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
                       streamingArtifactType: streamedArtifactType,
                     };
                   }
+                  useArtifactStreamStore.getState().clear();
                   return {
                     loading: false,
                     artifactStreamActive: true,
@@ -1370,9 +1431,10 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
                     streamingArtifactType: streamedArtifactType,
                     streamingArtifactTitle: title,
                     messages: updated,
-                    ...(streamedArtifactType === "text/csv"
-                      ? { streamingArtifactCsv: streamedArtifactBody }
-                      : { streamingArtifactHtml: streamedArtifactBody }),
+                    streamingArtifactCsv: undefined,
+                    ...(streamedArtifactType === "text/html"
+                      ? { streamingArtifactHtml: streamedArtifactBody }
+                      : {}),
                   };
                 });
                 useChatModeStore.getState().setLiveToolStatus(null);

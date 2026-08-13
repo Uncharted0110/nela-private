@@ -139,28 +139,8 @@ function splitCsvBySections(raw: string): CsvSheetArtifact[] {
     if (out.length > 1) return out;
   }
 
-  // Blank-line separated blocks that each look like their own CSV table.
-  const blocks = cleaned.split(/\n\s*\n+/);
-  if (blocks.length > 1) {
-    const out: CsvSheetArtifact[] = [];
-    let prevHeader = "";
-    for (const block of blocks) {
-      const body = sanitizeCsvInner(block);
-      if (!body || !looksLikeCsvTable(body)) continue;
-      const header = body.split(/\r?\n/).find((l) => l.trim())?.trim() || "";
-      // New sheet when header row changes (distinct tables).
-      if (out.length === 0 || (header && header !== prevHeader)) {
-        out.push({ title: `Sheet${out.length + 1}`, csv: body });
-        prevHeader = header;
-      } else {
-        // Same header continuation — append rows to last sheet.
-        const last = out[out.length - 1]!;
-        const rows = body.split(/\r?\n/).slice(1).join("\n");
-        if (rows.trim()) last.csv = `${last.csv}\n${rows}`;
-      }
-    }
-    if (out.length > 1) return out;
-  }
+  // Do NOT split on blank lines. Live streams often insert blank rows, and
+  // treating each block as a sheet re-parses the whole workbook every paint.
 
   return [];
 }

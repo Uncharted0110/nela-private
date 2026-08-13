@@ -4,18 +4,55 @@
  */
 
 import type { ExtractedWebTable, SpreadsheetPlan } from "../types";
+import { deriveArtifactFilename } from "./artifactFilename";
 import { normalizeSpreadsheetPlan, sanitizeExcelSheetName } from "./spreadsheetPlan";
-
-function slugifySpreadsheetName(text: string): string {
-  return text
-    .replace(/[\\/:*?"<>|]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 80) || "spreadsheet";
-}
 
 /** Minimum rows required before trusting a web-extracted table. */
 const MIN_WEB_TABLE_ROWS = 2;
+
+/**
+ * Deterministic web-table → Excel is only safe when the user asked for
+ * "this list/table from the web" (rankings, box office, standings).
+ * Trip / itinerary / hotel+activity workbooks must go through the LLM.
+ */
+export function isTabularLookupQuery(prompt: string): boolean {
+  const p = (prompt || "").toLowerCase();
+  if (
+    /\b(itinerary|trip plan|day[- ]?by[- ]?day|workbook|multi[- ]?sheet|things to (see|do)|sightsee|hotels?|hostels?|tours?|activities|packing list)\b/.test(
+      p
+    ) &&
+    /\b(excel|spreadsheet|workbook|sheet|csv)\b/.test(p)
+  ) {
+    return false;
+  }
+  if (
+    /\b(plan|design|organize)\b/.test(p) &&
+    /\b(trip|travel|vacation|holiday|tour|itinerary)\b/.test(p)
+  ) {
+    return false;
+  }
+  return (
+    /\b(top\s+\d+|highest[- ]grossing|box office|leaderboard|standings|rankings?|list of\s+\d+)\b/i.test(
+      p
+    )
+  );
+}
+
+function looksLikeFareScrape(table: ExtractedWebTable): boolean {
+  const headers = (table.headers ?? []).map((h) => h.toLowerCase()).join(" ");
+  const sample = (table.rows?.[0] ?? []).join(" ").toLowerCase();
+  if (/\bfare type\b/.test(headers)) return true;
+  if (/\bseen:\b/.test(sample)) return true;
+  if (
+    /\bfrom\b/.test(headers) &&
+    /\bto\b/.test(headers) &&
+    /\bprice\b|\bfare\b/.test(headers) &&
+    /\bdates?\b|\bdepart\b/.test(headers)
+  ) {
+    return true;
+  }
+  return false;
+}
 
 const COLUMN_ALIASES: Record<string, string[]> = {
   rank: ["rank", "peak", "#", "no.", "no", "number", "pos", "position"],
@@ -109,7 +146,11 @@ export function buildSpreadsheetPlanFromWebTable(
   prompt: string
 ): SpreadsheetPlan {
   const mapped = remapTableColumnsForPrompt(table, prompt);
-  const sheetName = sanitizeExcelSheetName(slugifySpreadsheetName(prompt));
+  const fileName = deriveArtifactFilename({
+    topic: prompt,
+    fallback: "spreadsheet",
+  });
+  const sheetName = sanitizeExcelSheetName(fileName);
   return {
     ops: [
       {
@@ -119,7 +160,7 @@ export function buildSpreadsheetPlanFromWebTable(
       },
       { op: "RENAME_SHEET", name: sheetName },
     ],
-    output_name: slugifySpreadsheetName(prompt),
+    output_name: fileName,
   };
 }
 
@@ -133,9 +174,13 @@ export function tryBuildDeterministicWebSpreadsheetPlan(
   expectedRows: number | null
 ): SpreadsheetPlan | null {
   if (!tables?.length) return null;
+  if (!isTabularLookupQuery(prompt)) return null;
 
   const table = tables[0];
   if (!table.headers?.length || table.rows.length < MIN_WEB_TABLE_ROWS) {
+    return null;
+  }
+  if (looksLikeFareScrape(table) && !/\b(airfare|flight fare|ticket price|cheap flights?)\b/i.test(prompt)) {
     return null;
   }
 

@@ -57,7 +57,11 @@ pub async fn generate_spreadsheet(
     emit_stage(&app, PipelineStage::WritingCode);
 
     let plan = crate::grammar::plan_normalize::parse_spreadsheet_plan(plan)?;
-    let (path, warning) = crate::spreadsheet::write_spreadsheet_plan(plan)?;
+    let (path, warning) = tauri::async_runtime::spawn_blocking(move || {
+        crate::spreadsheet::write_spreadsheet_plan(plan)
+    })
+    .await
+    .map_err(|e| format!("Spreadsheet write task failed: {e}"))??;
 
     emit_stage(
         &app,
@@ -333,7 +337,16 @@ pub fn get_schema_grammar(schema_id: String) -> Result<String, String> {
 /// When `max_rows` is set, only the header plus that many data rows are returned
 /// (keeps memory bounded for large workbooks during edit flows).
 #[tauri::command]
-pub fn parse_spreadsheet_data(
+pub async fn parse_spreadsheet_data(
+    path: String,
+    max_rows: Option<usize>,
+) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || parse_spreadsheet_data_inner(path, max_rows))
+        .await
+        .map_err(|e| format!("Spreadsheet parse task failed: {e}"))?
+}
+
+fn parse_spreadsheet_data_inner(
     path: String,
     max_rows: Option<usize>,
 ) -> Result<serde_json::Value, String> {

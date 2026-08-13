@@ -10,6 +10,7 @@
 //! After Pass 1, deferred files are retried via Pass 2 (5s timeout) and the
 //! bench waits for `pass2-done` before printing the final summary.
 
+use app_lib::doc_graph::budget::IndexerBudget;
 use app_lib::doc_graph::engine::{query_kb, run_pipeline, PipelineReport};
 use app_lib::doc_graph::state::DocGraphEngine;
 use clap::Parser;
@@ -74,9 +75,17 @@ fn main() {
         args.max_files
     };
 
+    let budget = IndexerBudget::detect();
     println!("doc-graph-bench");
     println!("  root: {}", root.display());
     println!("  out:  {}", out_dir.display());
+    println!(
+        "  budget: {} (pass1={} pass2={} embed={})",
+        budget.progress_label(),
+        budget.pass1_threads,
+        budget.pass2_threads,
+        budget.embed_threads
+    );
     match max_files {
         Some(m) => println!("  max-files: {m}"),
         None => println!("  max-files: (uncapped)"),
@@ -125,20 +134,17 @@ fn main() {
     });
 
     // --- Pass 1 ---
-    let report: PipelineReport = {
-        let mut kb = engine.kb.write();
-        run_pipeline(
-            &root,
-            &engine.data_dir,
-            &mut kb,
-            &engine.index,
-            &embedder,
-            max_files,
-            true,
-            Some(on_progress.clone()),
-        )
-        .expect("Pass 1 pipeline failed")
-    };
+    let report: PipelineReport = run_pipeline(
+        &root,
+        &engine.data_dir,
+        &engine.kb,
+        &engine.index,
+        &embedder,
+        max_files,
+        true,
+        Some(on_progress.clone()),
+    )
+    .expect("Pass 1 pipeline failed");
 
     let pass1_files_per_sec = if report.timing.total_ms > 0 {
         (report.files_parsed as f64) / (report.timing.total_ms as f64 / 1000.0)

@@ -44,9 +44,12 @@ export function useAppLifecycle() {
   const activeWorkspace = useWorkspaceStore(s => s.activeWorkspace);
   const workspaceScope = useWorkspaceStore(s => s.workspaceScope);
   const sessionStoreReady = useSessionStore(s => s.sessionStoreReady);
-  const sessions = useSessionStore(s => s.sessions);
   const activeSessionId = useSessionStore(s => s.activeSessionId);
   const openSessionIds = useSessionStore(s => s.openSessionIds);
+  /** IDs only — do not re-render the app shell on every streaming CSV token. */
+  const sessionIdsKey = useSessionStore((s) =>
+    s.sessions.map((session) => session.id).join("|")
+  );
   /** Lean fingerprint so streaming token updates do not re-trigger persistence. */
   const sessionPersistRevision = useSessionStore((s) =>
     s.sessions
@@ -453,18 +456,19 @@ export function useAppLifecycle() {
 
   // Keep open viewer tabs valid if chat history changes
   useEffect(() => {
-    if (sessions.length === 0) return;
     const sessionStore = useSessionStore.getState();
+    const current = sessionStore.sessions;
+    if (current.length === 0) return;
     sessionStore.setOpenSessionIds((prev) => {
-      const valid = prev.filter((id) => sessions.some((s) => s.id === id));
-      return valid.length > 0 ? valid : [sessions[0].id];
+      const valid = prev.filter((id) => current.some((s) => s.id === id));
+      return valid.length > 0 ? valid : [current[0]!.id];
     });
-  }, [sessions]);
+  }, [sessionIdsKey]);
 
   // Cleanup invalid context usage entries
   useEffect(() => {
-    const valid = new Set(sessions.map((session) => session.id));
     const sessionStore = useSessionStore.getState();
+    const valid = new Set(sessionStore.sessions.map((session) => session.id));
     sessionStore.setContextUsageBySession((prev) => {
       let changed = false;
       const next: Record<string, ChatContextUsage> = {};
@@ -477,11 +481,13 @@ export function useAppLifecycle() {
       });
       return changed ? next : prev;
     });
-  }, [sessions]);
+  }, [sessionIdsKey]);
 
   // Cleanup invalid mindmaps entries
   useEffect(() => {
-    const validSessionIds = new Set(sessions.map((session) => session.id));
+    const validSessionIds = new Set(
+      useSessionStore.getState().sessions.map((session) => session.id)
+    );
     const chatModeStore = useChatModeStore.getState();
     chatModeStore.setMindmapsBySession((prev) => {
       const next: Record<string, MindMapGraph[]> = {};
@@ -502,7 +508,7 @@ export function useAppLifecycle() {
         (currentOverlay.mindmapId && !((currentMindmapsBySession[currentOverlay.sessionId] ?? []).some(map => map.id === currentOverlay.mindmapId))))) {
       chatModeStore.setActiveMindmapOverlay(null);
     }
-  }, [sessions, mindmapsBySession, activeMindmapOverlay]);
+  }, [sessionIdsKey, mindmapsBySession, activeMindmapOverlay]);
 
   // Clear mode switch notice after a short duration
   useEffect(() => {

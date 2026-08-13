@@ -16,6 +16,7 @@ export interface ExcelSheetGridProps {
   /** Optional per-cell background colors as `#RRGGBB` (sparse). */
   cellFills?: Record<string, string>;
   maxRows?: number;
+  maxCols?: number;
   streaming?: boolean;
 }
 
@@ -45,6 +46,7 @@ export default function ExcelSheetGrid({
   headerRow = true,
   cellFills,
   maxRows = 120,
+  maxCols = 24,
   streaming = false,
 }: ExcelSheetGridProps) {
   const tabs: ExcelSheetTab[] =
@@ -65,11 +67,11 @@ export default function ExcelSheetGrid({
     const cols = active.rows.reduce((m, r) => Math.max(m, r.length), 0);
     const sliced = active.rows.slice(0, maxRows);
     return {
-      colCount: Math.max(cols, 1),
+      colCount: Math.max(Math.min(cols, maxCols), 1),
       displayRows: sliced,
-      truncated: active.rows.length > maxRows,
+      truncated: active.rows.length > maxRows || cols > maxCols,
     };
-  }, [active.rows, maxRows]);
+  }, [active.rows, maxRows, maxCols]);
 
   if (
     !active.rows.length ||
@@ -120,9 +122,13 @@ export default function ExcelSheetGrid({
                       style.color = "#ffffff";
                       style.fontWeight = 600;
                     }
-                    const urlMatch = value.match(/https?:\/\/[^\s"'<>]+/i);
+                    const urlMatch = streaming
+                      ? null
+                      : value.match(/https?:\/\/[^\s"'<>]+/i);
                     const bareUrl =
-                      /^https?:\/\/\S+$/i.test(value.trim()) ? value.trim() : null;
+                      !streaming && /^https?:\/\/\S+$/i.test(value.trim())
+                        ? value.trim()
+                        : null;
                     return (
                       <td
                         key={ci}

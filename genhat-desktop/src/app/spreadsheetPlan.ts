@@ -6,6 +6,7 @@ import {
   extractSpreadsheetPlanFallback,
   parseJsonCandidates,
 } from "./artifactPlanJson";
+import { deriveArtifactFilename } from "./artifactFilename";
 import type { SpreadsheetOp, SpreadsheetPlan, SpreadsheetSheet } from "../types";
 
 export interface SpreadsheetDataContext {
@@ -135,17 +136,20 @@ export const SPREADSHEET_CLOUD_CSV_STATIC = `You generate spreadsheet data as CS
 OUTPUT FORMAT (mandatory):
 1. BEFORE any tag: 2–4 sentences explaining the workbook (plain text ONLY — never write the words "nela-artifact" outside the real tags).
 2. Emit ONE OR MORE sheets. Each sheet is its own artifact tag:
-   <nela-artifact type="text/csv" title="Short Sheet Title">
+   <nela-artifact type="text/csv" title="Short Sheet Title" filename="Short File Name">
    CSV header row
    CSV data rows…
    </nela-artifact>
 3. Use a DIFFERENT short title (≤31 chars) for each sheet — these become Excel tab names.
-4. AFTER the last tag: 2–4 sentences summarizing sheets, columns, row coverage, and caveats.
+4. On the FIRST tag only, set filename="…" to a short download name (no extension, no user-prompt paste). Example: filename="Andaman 5-Day Trip".
+5. AFTER the last tag: 2–4 sentences summarizing sheets, columns, row coverage, and caveats.
 
 MULTI-SHEET RULES (critical):
 - When the topic has distinct tables, emit MULTIPLE <nela-artifact type="text/csv"> blocks (one per sheet).
   Examples: trip plan → Overview, Itinerary, Transport, Hotels, Activities, Budget; business → Overview, Revenue, Costs; research → Summary, Sources.
+- Travel / trip / itinerary requests MUST be multi-sheet (Overview + Itinerary + Transport + Hotels + Activities + Budget). Never output only a flight-fare table.
 - Name every sheet in your intro (“six tabs: …”), then emit that many tagged blocks — never describe multiple sheets and only output one.
+- Web search tables are inputs, not the workbook. A fare scrape belongs on Transport only.
 - Do NOT dump unrelated columns into a single mega-sheet when separate sheets would be clearer.
 - A simple single-table request may use exactly one artifact tag.
 
@@ -325,12 +329,14 @@ export function normalizeSpreadsheetPlan(
   plan: Record<string, unknown>,
   options: { prompt: string; hasSourceData: boolean; expectedRowCount?: number | null }
 ): SpreadsheetPlan {
-  const output_name =
-    typeof plan.output_name === "string" && plan.output_name.trim()
-      ? plan.output_name.trim()
-      : typeof plan.title === "string" && plan.title.trim()
-        ? plan.title.trim()
-        : slugifySpreadsheetName(options.prompt);
+  const output_name = deriveArtifactFilename({
+    llmName:
+      (typeof plan.output_name === "string" && plan.output_name.trim()) ||
+      (typeof plan.title === "string" && plan.title.trim()) ||
+      null,
+    topic: options.prompt,
+    fallback: "spreadsheet",
+  });
 
   // Preferred path: explicit sheets[] (cloud tool / multi-CSV / JSON multi-sheet).
   const rawSheets = Array.isArray(plan.sheets) ? plan.sheets : [];

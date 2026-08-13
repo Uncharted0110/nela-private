@@ -44,7 +44,7 @@ export function slideTopicWebQuery(topic: string): string {
   return `${cleaned} key facts history`.slice(0, 120);
 }
 
-/** Prefer full-page fetch when web is combined with artifact generation. */
+/** Fast Tavily chunks for artifact grounding; full pages via web_extract. */
 export function webSearchOptionsForArtifact(
   schemaId: string,
   contextWindowTokens = 4096
@@ -54,15 +54,8 @@ export function webSearchOptionsForArtifact(
 } {
   const smallCtx = contextWindowTokens <= 4096;
   const maxResults = smallCtx ? 3 : ARTIFACT_WEB_MAX_RESULTS;
-
-  if (
-    schemaId === "spreadsheet_synthesis" ||
-    schemaId === "presentation_synthesis" ||
-    schemaId === "html_synthesis"
-  ) {
-    return { fetchContent: true, maxResults };
-  }
-  return { fetchContent: true, maxResults };
+  void schemaId;
+  return { fetchContent: false, maxResults };
 }
 
 /** Max chars to keep from web formatted context for artifact plans. */
@@ -76,11 +69,13 @@ export function webContextCharLimit(contextWindowTokens: number): number {
 /** Strict grounding for spreadsheets / numeric artifacts. */
 export function webArtifactGroundingPreamble(): string {
   return (
-    "VERIFIED WEB SOURCES (source of truth for this artifact):\n" +
-    "- Use ONLY facts explicitly stated in the excerpts below.\n" +
-    "- Do NOT invent, estimate, or guess numbers, names, dates, or rankings.\n" +
-    "- If sources conflict or omit data, leave cells blank or note \"unverified\" — do not fabricate.\n" +
-    "- For tables/lists: copy values exactly as written in the source text.\n\n"
+    "WEB RESEARCH (supporting context — the USER REQUEST is the workbook):\n" +
+    "- Build the sheets the user asked for (e.g. itinerary, hotels, activities, budget). " +
+    "Do NOT replace the whole workbook with a single scraped web table (flight fares, search results, etc.).\n" +
+    "- Use excerpts for real names, prices, dates, and booking URLs when they match the request.\n" +
+    "- A fare/search table may become one Transport/Flights sheet — never the only sheet of a trip plan.\n" +
+    "- If a needed detail is missing, mark it \"check closer to travel\" rather than inventing precise live fares.\n" +
+    "- Put booking URLs in a dedicated Link / Source URL column as bare https://… values.\n\n"
   );
 }
 

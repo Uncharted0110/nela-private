@@ -24,7 +24,10 @@ import { mergeWebSearchResults, runWebSearchToolLoop } from "./webSearchToolLoop
 import { normalizeWebToolDepth, runWebSearchWithDepth } from "./webSearchDepth";
 import { knowledgeBaseToSearchResult, fileUrlToPath, isLocalFileHitUrl } from "./fileSearchCitations";
 import type { GenerationOptions } from "./types";
-import { MAX_WEB_SEARCH_TOOL_ROUNDS } from "./webSearchLimits";
+import {
+  MAX_ARTIFACT_WEB_RESEARCH_ROUNDS,
+  MAX_WEB_SEARCH_TOOL_ROUNDS,
+} from "./webSearchLimits";
 import { useDocGraphStore } from "../../stores/docGraphStore";
 import { useModelStore } from "../../stores/modelStore";
 import {
@@ -338,11 +341,7 @@ async function executeToolCall(
     try {
       const artifact = await Api.generateSpreadsheet(
         normalizeSpreadsheetPlan(args as Record<string, unknown>, {
-          prompt: String(
-            (args as { title?: string; output_name?: string }).title ||
-              (args as { output_name?: string }).output_name ||
-              "spreadsheet"
-          ),
+          prompt: "spreadsheet",
           hasSourceData: false,
         })
       );
@@ -749,7 +748,7 @@ export async function runCloudArtifactWebResearch(opts: {
   signal?: AbortSignal;
   onStatus?: (status: string | null) => void;
 }): Promise<WebSearchResult | null> {
-  const webDepth = opts.webDepth ?? "full";
+  const webDepth = opts.webDepth ?? "snippets";
   const fileSearchEnabled = Boolean(opts.fileSearchEnabled);
   const kind =
     opts.schemaId === "presentation_synthesis"
@@ -773,8 +772,9 @@ export async function runCloudArtifactWebResearch(opts: {
           "Call web_search repeatedly with SHORT keyword queries covering DIFFERENT facets " +
           "(e.g. flights, destinations, day activities, seasons, transport)." +
           localHint +
-          "Never paste the full user prompt as the query. Prefer depth=full when you need page text. " +
-          `You may search up to ${MAX_TOOL_ROUNDS} times. After enough research, reply with a one-line acknowledgement — do not write the artifact.`,
+          "Never paste the full user prompt as the query. Prefer depth=snippet (fast). " +
+          "Call web_extract only for 1–3 URLs that need full page text. " +
+          `You may search up to ${MAX_ARTIFACT_WEB_RESEARCH_ROUNDS} times. After enough research, reply with a one-line acknowledgement — do not write the artifact.`,
       },
       {
         role: "user",
@@ -822,7 +822,7 @@ export async function runCloudArtifactWebResearch(opts: {
   let webSearchResult: WebSearchResult | null = null;
 
   try {
-    for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+    for (let round = 0; round < MAX_ARTIFACT_WEB_RESEARCH_ROUNDS; round++) {
       const decision = await new Promise<{
         content: string;
         tool_calls?: CloudToolCall[];
@@ -900,8 +900,8 @@ export async function runCloudArtifactWebResearch(opts: {
       }
 
       // Encourage multi-facet research until the model stops or hits the round cap.
-      if (webSearchResult && round + 1 < MAX_TOOL_ROUNDS) {
-        const remaining = MAX_TOOL_ROUNDS - (round + 1);
+      if (webSearchResult && round + 1 < MAX_ARTIFACT_WEB_RESEARCH_ROUNDS) {
+        const remaining = MAX_ARTIFACT_WEB_RESEARCH_ROUNDS - (round + 1);
         const localRoundHint = fileSearchEnabled
           ? " Call search_knowledge_base only if a local-file facet is clearly needed."
           : "";
@@ -912,7 +912,7 @@ export async function runCloudArtifactWebResearch(opts: {
             content:
               `You have ~${remaining} search rounds left. ` +
               "If important facets are still missing (flights, dates, places, hours, prices, nature spots, transfers), " +
-              "call web_search again with a NEW focused query." +
+              "call web_search again with a NEW focused query (depth=snippet)." +
               localRoundHint +
               " Otherwise reply briefly that research is done.",
           },

@@ -37,18 +37,16 @@ pub async fn start_indexing_directory(
 
         let embedder = engine.embedder()?;
         // Incremental sync: only new/changed files under `root` are re-indexed.
-        let report = {
-            let mut kb = engine.kb.write();
-            run_incremental_sync(
-                &root,
-                &engine.data_dir,
-                &mut kb,
-                &engine.index,
-                &embedder,
-                None,
-                Some(on_progress.clone()),
-            )?
-        };
+        // Write lock is taken per chunk inside the pipeline so queries stay live.
+        let report = run_incremental_sync(
+            &root,
+            &engine.data_dir,
+            &engine.kb,
+            &engine.index,
+            &embedder,
+            None,
+            Some(on_progress.clone()),
+        )?;
         engine.end_indexing();
 
         let deferred: Vec<PathBuf> = report

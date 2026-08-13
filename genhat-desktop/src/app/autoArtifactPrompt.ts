@@ -26,11 +26,11 @@ For HTML dashboards / plots: call render_chart (data only) first, then embed
 
 Formats when (and only when) an artifact is warranted — angle brackets are MANDATORY:
 - Webpage or HTML slides:
-  <nela-artifact type="text/html" title="Short Title">
-  <!DOCTYPE html>...complete document...
+  <nela-artifact type="text/html" title="Short Document Title" filename="Short File Name">
+    <!DOCTYPE html>...complete document...
   </nela-artifact>
 - Spreadsheet / table workbook (one tag per Excel sheet when there are distinct tables):
-  <nela-artifact type="text/csv" title="Overview">
+  <nela-artifact type="text/csv" title="Overview" filename="Andaman 5-Day Trip">
   header1,header2
   row1col1,row1col2
   </nela-artifact>
@@ -38,6 +38,8 @@ Formats when (and only when) an artifact is warranted — angle brackets are MAN
   ...
   </nela-artifact>
   If you promise multiple sheets in prose, you MUST emit that many tagged blocks.
+  Trip / itinerary Excels MUST include separate Hotels and Activities sheets with booking URLs — never only a fare table.
+  filename="…" is the download name (short, no extension). Never paste the user's full prompt as the filename.
 
 When you DO emit an artifact, chat copy is mandatory (Claude-style):
 1. BEFORE the opening tag: 2–4 sentences explaining what you are creating and the approach.

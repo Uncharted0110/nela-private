@@ -36,6 +36,11 @@ pub fn physical_core_count() -> usize {
     HostProfile::detect().physical_cores
 }
 
+/// One-shot AC/battery probe (no `Governor` instance required).
+pub fn probe_on_battery() -> bool {
+    detect_battery()
+}
+
 /// Central thermal and power governor.
 ///
 /// Stored as `Arc<Governor>` in Tauri app state so every subsystem can read
