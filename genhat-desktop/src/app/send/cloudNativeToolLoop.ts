@@ -454,6 +454,7 @@ async function executeToolCall(
       title: typeof args.title === "string" ? args.title : undefined,
       labels: args.labels,
       values: args.values,
+      series: Array.isArray(args.series) ? args.series : undefined,
       theme: typeof args.theme === "string" ? args.theme : undefined,
     });
     opts.onToolStatus?.(null);
@@ -574,7 +575,7 @@ export async function runCloudNativeToolLoop(
     }
     if (hasRenderChart) {
       parts.push(
-        "You have a render_chart tool for dashboards and plots. Call it with chart_type (bar|pie|line), title, labels[], and values[] — " +
+        "You have a render_chart tool for dashboards and plots. Call it with chart_type (bar|pie|line|timeline|dual_line|grouped_bar), title, labels[], and values[] — mix types, not all bars. For dual_line/grouped_bar also pass series[]. " +
           "never invent Chart.js or hand-written echarts.init. Embed the returned nela-chart:N token in HTML as " +
           '<div data-nela-chart="nela-chart:N"></div>.'
       );
@@ -956,7 +957,8 @@ export async function runCloudArtifactChartPrep(opts: {
         role: "system",
         content:
           `You prepare charts for a ${kind} the user will generate next. ` +
-          "Call render_chart once per plot (max 4) with chart_type (bar|pie|line), title, labels[], and values[]. " +
+          "Call render_chart once per plot (max 4) with mixed chart_type (bar, pie, line, timeline, dual_line, grouped_bar), title, labels[], and values[]. " +
+          "Do not make every chart a bar. For dual_line or grouped_bar pass series: [{name, values}, ...]. " +
           "Use only numbers from the user request or the supplied data context — do not invent live APIs. " +
           "After charts are registered, reply with a one-line acknowledgement — do not write the artifact HTML.",
       },

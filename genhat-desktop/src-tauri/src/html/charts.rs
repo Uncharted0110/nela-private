@@ -2,7 +2,9 @@
 
 use std::collections::HashMap;
 
-use crate::grammar::schema::{HtmlPlan, HtmlSection, HtmlSectionItem, HtmlSectionKind};
+use crate::grammar::schema::{
+    HtmlChartSeries, HtmlPlan, HtmlSection, HtmlSectionItem, HtmlSectionKind,
+};
 
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct ChartPoint {
@@ -15,14 +17,47 @@ pub enum ChartType {
     Bar,
     Pie,
     Line,
+    Timeline,
+    DualLine,
+    GroupedBar,
 }
 
 impl ChartType {
     fn parse(s: &str) -> Self {
-        match s.to_lowercase().as_str() {
+        let key = s.to_lowercase().replace('-', "_");
+        match key.as_str() {
             "pie" => Self::Pie,
             "line" => Self::Line,
+            "timeline" => Self::Timeline,
+            "dual_line" | "dualline" | "double_line" => Self::DualLine,
+            "grouped_bar" | "grouped" => Self::GroupedBar,
             _ => Self::Bar,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Bar => "bar",
+            Self::Pie => "pie",
+            Self::Line => "line",
+            Self::Timeline => "timeline",
+            Self::DualLine => "dual_line",
+            Self::GroupedBar => "grouped_bar",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SortMode {
+    Value,
+    Label,
+}
+
+impl SortMode {
+    fn parse(s: Option<&str>) -> Self {
+        match s.unwrap_or("value").to_lowercase().as_str() {
+            "label" | "date" | "time" | "timeline" => Self::Label,
+            _ => Self::Value,
         }
     }
 }
@@ -69,6 +104,7 @@ pub fn aggregate_chart(
     value_col: Option<&str>,
     aggregation: Option<&str>,
     max_points: usize,
+    sort: Option<&str>,
 ) -> Vec<ChartPoint> {
     let cap = if max_points == 0 { 48 } else { max_points };
     let mut points = match value_col.map(str::trim).filter(|s| !s.is_empty()) {
@@ -78,10 +114,86 @@ pub fn aggregate_chart(
         }
         None => aggregate_count_by_label(headers, rows, label_col),
     };
-    if points.len() > cap {
-        points.truncate(cap);
-    }
+    sort_and_cap(&mut points, SortMode::parse(sort), cap);
     points
+}
+
+fn sort_and_cap(points: &mut Vec<ChartPoint>, sort: SortMode, cap: usize) {
+    match sort {
+        SortMode::Value => {
+            points.sort_by(|a, b| {
+                b.value
+                    .partial_cmp(&a.value)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            if points.len() > cap {
+                points.truncate(cap);
+            }
+        }
+        SortMode::Label => {
+            points.sort_by(|a, b| compare_chart_labels(&a.label, &b.label));
+            if points.len() > cap {
+                let skip = points.len() - cap;
+                *points = points.split_off(skip);
+            }
+        }
+    }
+}
+
+fn compare_chart_labels(a: &str, b: &str) -> std::cmp::Ordering {
+    match (try_parse_date(a), try_parse_date(b)) {
+        (Some(da), Some(db)) => da.cmp(&db),
+        _ => a.cmp(b),
+    }
+}
+
+fn try_parse_date(s: &str) -> Option<(i32, u32, u32)> {
+    let t = s.trim();
+    let sep = if t.contains('-') {
+        '-'
+    } else if t.contains('/') {
+        '/'
+    } else {
+        return None;
+    };
+    let parts: Vec<&str> = t.split(sep).collect();
+    if parts.len() != 3 {
+        return None;
+    }
+    let a: i32 = parts[0].parse().ok()?;
+    let b: u32 = parts[1].parse().ok()?;
+    let c: i32 = parts[2].parse().ok()?;
+    if parts[0].len() == 4 {
+        Some((a, b, c as u32))
+    } else if parts[2].len() == 4 {
+        if a > 12 {
+            Some((c, b, a as u32))
+        } else {
+            Some((c, a as u32, b))
+        }
+    } else {
+        None
+    }
+}
+
+fn value_cols(section: &HtmlSection) -> Vec<String> {
+    if let Some(cols) = &section.value_columns {
+        let cleaned: Vec<String> = cols
+            .iter()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        if !cleaned.is_empty() {
+            return cleaned;
+        }
+    }
+    section
+        .value_column
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| vec![s.to_string()])
+        .unwrap_or_default()
 }
 
 /// Resolve CHART sections from attached tabular data. When source data exists,
@@ -114,30 +226,76 @@ pub fn resolve_plan_charts(plan: &mut HtmlPlan) {
             continue;
         }
         let label_col = section.label_column.as_deref().unwrap_or("");
-        let value_col = section.value_column.as_deref().unwrap_or("");
         if label_col.is_empty() {
             continue;
         }
-        let points = aggregate_chart(
-            &headers,
-            &data_rows,
-            label_col,
-            if value_col.is_empty() {
-                None
-            } else {
-                Some(value_col)
-            },
-            section.aggregation.as_deref(),
-            48,
-        );
-        section.items = points
-            .into_iter()
-            .map(|p| HtmlSectionItem {
-                label: p.label,
-                detail: None,
-                meta: Some(format_chart_number(p.value)),
-            })
-            .collect();
+        let cols = value_cols(section);
+        let sort = section.sort.as_deref();
+        let agg = section.aggregation.as_deref();
+        if cols.len() >= 2 {
+            let first = aggregate_chart(
+                &headers,
+                &data_rows,
+                label_col,
+                Some(&cols[0]),
+                agg,
+                48,
+                sort,
+            );
+            let labels: Vec<String> = first.iter().map(|p| p.label.clone()).collect();
+            let mut series = vec![HtmlChartSeries {
+                name: cols[0].clone(),
+                values: first.iter().map(|p| p.value).collect(),
+            }];
+            for col in &cols[1..] {
+                let pts = aggregate_chart(
+                    &headers,
+                    &data_rows,
+                    label_col,
+                    Some(col),
+                    agg,
+                    10_000,
+                    sort,
+                );
+                let map: HashMap<String, f64> =
+                    pts.into_iter().map(|p| (p.label, p.value)).collect();
+                series.push(HtmlChartSeries {
+                    name: col.clone(),
+                    values: labels
+                        .iter()
+                        .map(|l| *map.get(l).unwrap_or(&0.0))
+                        .collect(),
+                });
+            }
+            section.items = first
+                .into_iter()
+                .map(|p| HtmlSectionItem {
+                    label: p.label,
+                    detail: None,
+                    meta: Some(format_chart_number(p.value)),
+                })
+                .collect();
+            section.chart_series = series;
+        } else {
+            let points = aggregate_chart(
+                &headers,
+                &data_rows,
+                label_col,
+                cols.first().map(|s| s.as_str()),
+                agg,
+                48,
+                sort,
+            );
+            section.items = points
+                .into_iter()
+                .map(|p| HtmlSectionItem {
+                    label: p.label,
+                    detail: None,
+                    meta: Some(format_chart_number(p.value)),
+                })
+                .collect();
+            section.chart_series.clear();
+        }
     }
 }
 
@@ -285,15 +443,13 @@ fn aggregate_numeric(
         buckets.entry(label).or_default().push(val);
     }
 
-    let mut points: Vec<ChartPoint> = buckets
+    buckets
         .into_iter()
         .map(|(label, vals)| ChartPoint {
             label,
             value: agg.apply(&vals),
         })
-        .collect();
-    points.sort_by(|a, b| b.value.partial_cmp(&a.value).unwrap_or(std::cmp::Ordering::Equal));
-    points
+        .collect()
 }
 
 fn aggregate_count_by_label(
@@ -313,15 +469,13 @@ fn aggregate_count_by_label(
         }
         *counts.entry(label).or_default() += 1;
     }
-    let mut points: Vec<ChartPoint> = counts
+    counts
         .into_iter()
         .map(|(label, n)| ChartPoint {
             label,
             value: n as f64,
         })
-        .collect();
-    points.sort_by(|a, b| b.value.partial_cmp(&a.value).unwrap_or(std::cmp::Ordering::Equal));
-    points
+        .collect()
 }
 
 fn format_chart_number(v: f64) -> String {
@@ -377,22 +531,32 @@ pub fn render_chart_section(
         );
     }
 
-    let option = echarts_option(chart_type, &points, theme, &section.title);
+    let labels: Vec<String> = section
+        .items
+        .iter()
+        .map(|i| i.label.clone())
+        .collect();
+    let series = if section.chart_series.len() >= 2 {
+        section.chart_series.clone()
+    } else {
+        vec![HtmlChartSeries {
+            name: section.title.clone(),
+            values: points.iter().map(|p| p.value).collect(),
+        }]
+    };
+
+    let option = echarts_option(chart_type, &labels, &series, theme, &section.title);
     let option_json = serde_json::to_string(&option)
         .unwrap_or_else(|_| "{}".to_string())
         .replace('<', "\\u003c");
-    let type_name = match chart_type {
-        ChartType::Bar => "bar",
-        ChartType::Pie => "pie",
-        ChartType::Line => "line",
-    };
+    let type_name = chart_type.as_str();
 
     format!(
         r#"<section class="section chart-section" id="sec-{index}">
   <div class="container">
     <h2 class="section-title">{title}</h2>
     {subtitle}
-    <div class="chart-panel echarts-panel" data-chart-id="{id}" data-chart-type="{type_name}">
+    <div class="chart-panel echarts-panel chart-{type_name}" data-chart-id="{id}" data-chart-type="{type_name}">
       <div class="echarts-host" id="{id}" style="width:100%;height:360px;"></div>
       <script type="application/json" class="echarts-option" id="{id}-option">{option_json}</script>
     </div>
@@ -403,18 +567,24 @@ pub fn render_chart_section(
 
 fn echarts_option(
     chart_type: ChartType,
-    points: &[ChartPoint],
+    labels: &[String],
+    series: &[HtmlChartSeries],
     theme: &str,
     title: &str,
 ) -> serde_json::Value {
     let palette: Vec<&str> = chart_palette(theme);
-    let labels: Vec<&str> = points.iter().map(|p| p.label.as_str()).collect();
-    let values: Vec<f64> = points.iter().map(|p| p.value).collect();
-    let colors: Vec<&str> = points
+    let first = series.first();
+    let values: Vec<f64> = first.map(|s| s.values.clone()).unwrap_or_default();
+    let n = labels.len().min(values.len());
+    let labels = &labels[..n];
+    let values = &values[..n];
+    let colors: Vec<&str> = labels
         .iter()
         .enumerate()
         .map(|(i, _)| palette[i % palette.len()])
         .collect();
+    let rotate = if labels.len() > 8 { 35 } else { 0 };
+    let multi = series.len() >= 2;
 
     match chart_type {
         ChartType::Pie => serde_json::json!({
@@ -426,33 +596,51 @@ fn echarts_option(
                 "type": "pie",
                 "radius": ["36%", "68%"],
                 "itemStyle": { "borderRadius": 6 },
-                "data": points.iter().map(|p| serde_json::json!({
-                    "name": p.label,
-                    "value": p.value
+                "data": labels.iter().zip(values.iter()).map(|(name, value)| serde_json::json!({
+                    "name": name,
+                    "value": value
                 })).collect::<Vec<_>>()
             }]
         }),
-        ChartType::Line => serde_json::json!({
+        ChartType::Line | ChartType::Timeline | ChartType::DualLine => {
+            let area = matches!(chart_type, ChartType::Line | ChartType::Timeline) && !multi;
+            serde_json::json!({
+                "color": palette,
+                "tooltip": { "trigger": "axis" },
+                "grid": { "containLabel": true, "left": "3%", "right": "4%", "bottom": "10%", "top": "14%" },
+                "legend": { "show": multi, "top": 0 },
+                "xAxis": { "type": "category", "data": labels, "boundaryGap": false, "axisLabel": { "rotate": rotate } },
+                "yAxis": { "type": "value" },
+                "series": series.iter().map(|s| serde_json::json!({
+                    "name": s.name,
+                    "type": "line",
+                    "smooth": true,
+                    "areaStyle": if area { serde_json::json!({ "opacity": 0.12 }) } else { serde_json::Value::Null },
+                    "data": s.values.iter().take(n).copied().collect::<Vec<_>>()
+                })).collect::<Vec<_>>()
+            })
+        }
+        ChartType::GroupedBar if multi => serde_json::json!({
             "color": palette,
             "tooltip": { "trigger": "axis" },
-            "grid": { "containLabel": true, "left": "3%", "right": "4%", "bottom": "8%", "top": "12%" },
-            "legend": { "show": false },
-            "xAxis": { "type": "category", "data": labels, "boundaryGap": false },
+            "grid": { "containLabel": true, "left": "3%", "right": "4%", "bottom": "10%", "top": "14%" },
+            "legend": { "show": true, "top": 0 },
+            "xAxis": { "type": "category", "data": labels, "axisLabel": { "rotate": rotate } },
             "yAxis": { "type": "value" },
-            "series": [{
-                "name": title,
-                "type": "line",
-                "smooth": true,
-                "areaStyle": { "opacity": 0.12 },
-                "data": values
-            }]
+            "series": series.iter().map(|s| serde_json::json!({
+                "name": s.name,
+                "type": "bar",
+                "barMaxWidth": 28,
+                "itemStyle": { "borderRadius": [4, 4, 0, 0] },
+                "data": s.values.iter().take(n).copied().collect::<Vec<_>>()
+            })).collect::<Vec<_>>()
         }),
-        ChartType::Bar => serde_json::json!({
+        ChartType::Bar | ChartType::GroupedBar => serde_json::json!({
             "color": palette,
             "tooltip": { "trigger": "axis" },
             "grid": { "containLabel": true, "left": "3%", "right": "4%", "bottom": "8%", "top": "12%" },
             "legend": { "show": false },
-            "xAxis": { "type": "category", "data": labels },
+            "xAxis": { "type": "category", "data": labels, "axisLabel": { "rotate": rotate } },
             "yAxis": { "type": "value" },
             "series": [{
                 "name": title,
@@ -537,7 +725,10 @@ pub const CHART_CSS: &str = r#"
 }
 .layout-dashboard .chart-section { padding: 1rem 0; }
 .layout-dashboard .charts-grid {
-  display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1rem;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 1rem;
+  padding: 0.5rem 0 1.5rem;
 }
 "#;
 
@@ -592,7 +783,7 @@ mod tests {
             vec!["South".into(), "50".into()],
             vec!["North".into(), "25".into()],
         ];
-        let points = aggregate_chart(&headers, &rows, "region", Some("revenue"), Some("sum"), 48);
+        let points = aggregate_chart(&headers, &rows, "region", Some("revenue"), Some("sum"), 48, None);
         assert_eq!(points.len(), 2);
         assert!((points[0].value - 125.0).abs() < f64::EPSILON);
         assert_eq!(points[0].label, "North");
@@ -610,6 +801,7 @@ mod tests {
             Some("Cost Price Total"),
             Some("sum"),
             48,
+            None,
         );
         assert_eq!(points.len(), 2);
         assert!((points.iter().find(|p| p.label == "A").unwrap().value - 1000.0).abs() < f64::EPSILON);
@@ -646,5 +838,67 @@ mod tests {
         assert!(details.iter().any(|d| d.contains("Units Sold")));
         assert!(!details.iter().any(|d| d.contains("Per Unit")));
         assert!(!details.iter().any(|d| d.contains("Product ID")));
+    }
+
+    #[test]
+    fn timeline_sorts_chronologically() {
+        let points = aggregate_chart(
+            &["Date".into(), "Sold".into()],
+            &[
+                vec!["2024-03-01".into(), "5".into()],
+                vec!["2024-01-01".into(), "50".into()],
+                vec!["2024-02-01".into(), "10".into()],
+            ],
+            "Date",
+            Some("Sold"),
+            Some("sum"),
+            48,
+            Some("label"),
+        );
+        let labels: Vec<&str> = points.iter().map(|p| p.label.as_str()).collect();
+        assert_eq!(labels, vec!["2024-01-01", "2024-02-01", "2024-03-01"]);
+    }
+
+    #[test]
+    fn dual_series_aligns_on_first_measure_labels() {
+        let mut plan = HtmlPlan {
+            title: "Inventory".into(),
+            tagline: None,
+            archetype: "dashboard".into(),
+            sections: vec![{
+                let mut s = HtmlSection::with_kind(HtmlSectionKind::Chart);
+                s.title = "Sold vs stock".into();
+                s.chart_type = Some("dual_line".into());
+                s.label_column = Some("Product Name".into());
+                s.value_column = Some("Sold".into());
+                s.value_columns = Some(vec!["Sold".into(), "Stock".into()]);
+                s.aggregation = Some("sum".into());
+                s
+            }],
+            theme: None,
+            output_name: None,
+            html: None,
+            headers: Some(vec![
+                "Product Name".into(),
+                "Sold".into(),
+                "Stock".into(),
+            ]),
+            images: None,
+            source_rows: Some(vec![
+                vec!["A".into(), "10".into(), "3".into()],
+                vec!["B".into(), "4".into(), "20".into()],
+            ]),
+        };
+        resolve_plan_charts(&mut plan);
+        let s = &plan.sections[0];
+        assert_eq!(s.chart_series.len(), 2);
+        assert_eq!(s.items[0].label, "A");
+        assert_eq!(s.chart_series[0].name, "Sold");
+        assert_eq!(s.chart_series[1].name, "Stock");
+        assert!((s.chart_series[0].values[0] - 10.0).abs() < f64::EPSILON);
+        assert!((s.chart_series[1].values[0] - 3.0).abs() < f64::EPSILON);
+        let html = render_chart_section(s, 0, "aurora");
+        assert!(html.contains("dual_line"));
+        assert!(html.contains("\"type\":\"line\""));
     }
 }

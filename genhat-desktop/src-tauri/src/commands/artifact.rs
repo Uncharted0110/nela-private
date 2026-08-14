@@ -460,6 +460,7 @@ pub struct AggregateSpreadsheetChartRequest {
     pub value_column: Option<String>,
     pub aggregation: Option<String>,
     pub max_points: Option<usize>,
+    pub sort: Option<String>,
 }
 
 /// Aggregate chart series from in-memory spreadsheet rows (file-backed dashboards).
@@ -474,6 +475,7 @@ pub fn aggregate_spreadsheet_chart(
         request.value_column.as_deref(),
         request.aggregation.as_deref(),
         request.max_points.unwrap_or(48),
+        request.sort.as_deref(),
     ))
 }
 

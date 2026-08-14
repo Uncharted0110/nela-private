@@ -553,10 +553,13 @@ export interface HtmlSection {
   subtitle?: string;
   body?: string;
   items?: HtmlSectionItem[];
-  chart_type?: "bar" | "pie" | "line";
+  chart_type?: "bar" | "pie" | "line" | "timeline" | "dual_line" | "grouped_bar";
   label_column?: string;
   value_column?: string;
+  value_columns?: string[];
   aggregation?: "sum" | "count" | "avg" | "min" | "max";
+  sort?: "value" | "label";
+  chart_series?: { name: string; values: number[] }[];
   image_index?: number;
 }
 

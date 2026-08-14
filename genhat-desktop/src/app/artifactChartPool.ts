@@ -3,7 +3,15 @@
  * Parallel to artifactImagePool: LLM places nela-chart:N markers; we inject markup.
  */
 
-export type ChartKind = "bar" | "pie" | "line";
+export type ChartKind =
+  | "bar"
+  | "pie"
+  | "line"
+  | "timeline"
+  | "dual_line"
+  | "grouped_bar";
+
+export type ChartSeries = { name: string; values: number[] };
 
 export type ChartPoolEntry = {
   index: number;
@@ -12,6 +20,7 @@ export type ChartPoolEntry = {
   chart_type: ChartKind;
   labels: string[];
   values: number[];
+  series?: ChartSeries[];
   theme: string;
   option: Record<string, unknown>;
   /** Self-contained mount markup (no CDN / boot — added once at embed time). */
@@ -23,6 +32,7 @@ export type RenderChartInput = {
   title?: string;
   labels?: unknown;
   values?: unknown;
+  series?: ChartSeries[] | unknown;
   theme?: string;
 };
 
@@ -76,9 +86,12 @@ function chartPalette(theme: string): string[] {
 }
 
 function parseChartType(raw: string | undefined): ChartKind {
-  const t = (raw || "bar").toLowerCase();
+  const t = (raw || "bar").toLowerCase().replace(/-/g, "_");
   if (t === "pie") return "pie";
   if (t === "line") return "line";
+  if (t === "timeline") return "timeline";
+  if (t === "dual_line" || t === "dualline" || t === "double_line") return "dual_line";
+  if (t === "grouped_bar" || t === "grouped") return "grouped_bar";
   return "bar";
 }
 
@@ -101,19 +114,47 @@ function asNumberArray(value: unknown, len: number): number[] {
   return nums;
 }
 
+function normalizeSeries(input: {
+  title: string;
+  labels: string[];
+  values: number[];
+  series?: ChartSeries[];
+}): ChartSeries[] {
+  const n = input.labels.length;
+  if (input.series && input.series.length >= 2) {
+    return input.series.map((s) => ({
+      name: s.name,
+      values: s.values.slice(0, n),
+    }));
+  }
+  return [{ name: input.title || "Series", values: input.values.slice(0, n) }];
+}
+
 export function buildEchartsOption(input: {
   chart_type: ChartKind;
   title: string;
   labels: string[];
   values: number[];
   theme: string;
+  series?: ChartSeries[];
 }): Record<string, unknown> {
   const palette = chartPalette(input.theme);
-  const n = Math.min(input.labels.length, input.values.length);
+  const seriesIn = normalizeSeries(input);
+  const n = Math.min(
+    input.labels.length,
+    ...seriesIn.map((s) => s.values.length),
+    input.values.length || input.labels.length
+  );
   const labels = input.labels.slice(0, n);
-  const values = input.values.slice(0, n);
+  const values = (seriesIn[0]?.values ?? input.values).slice(0, n);
+  const series = seriesIn.map((s) => ({
+    name: s.name,
+    values: s.values.slice(0, n),
+  }));
   const colors = labels.map((_, i) => palette[i % palette.length]!);
   const title = input.title || "Chart";
+  const rotate = labels.length > 8 ? 35 : 0;
+  const multi = series.length >= 2;
 
   if (input.chart_type === "pie") {
     return {
@@ -132,7 +173,12 @@ export function buildEchartsOption(input: {
     };
   }
 
-  if (input.chart_type === "line") {
+  if (
+    input.chart_type === "line" ||
+    input.chart_type === "timeline" ||
+    input.chart_type === "dual_line"
+  ) {
+    const area = input.chart_type !== "dual_line";
     return {
       color: palette,
       tooltip: { trigger: "axis" },
@@ -140,21 +186,48 @@ export function buildEchartsOption(input: {
         containLabel: true,
         left: "3%",
         right: "4%",
-        bottom: "8%",
-        top: "12%",
+        bottom: "10%",
+        top: "14%",
       },
-      legend: { show: false },
-      xAxis: { type: "category", data: labels, boundaryGap: false },
+      legend: { show: multi, top: 0 },
+      xAxis: {
+        type: "category",
+        data: labels,
+        boundaryGap: false,
+        axisLabel: { rotate },
+      },
       yAxis: { type: "value" },
-      series: [
-        {
-          name: title,
-          type: "line",
-          smooth: true,
-          areaStyle: { opacity: 0.12 },
-          data: values,
-        },
-      ],
+      series: series.map((s) => ({
+        name: s.name,
+        type: "line",
+        smooth: true,
+        areaStyle: area && !multi ? { opacity: 0.12 } : undefined,
+        data: s.values,
+      })),
+    };
+  }
+
+  if (input.chart_type === "grouped_bar" && multi) {
+    return {
+      color: palette,
+      tooltip: { trigger: "axis" },
+      grid: {
+        containLabel: true,
+        left: "3%",
+        right: "4%",
+        bottom: "10%",
+        top: "14%",
+      },
+      legend: { show: true, top: 0 },
+      xAxis: { type: "category", data: labels, axisLabel: { rotate } },
+      yAxis: { type: "value" },
+      series: series.map((s) => ({
+        name: s.name,
+        type: "bar",
+        barMaxWidth: 28,
+        itemStyle: { borderRadius: [4, 4, 0, 0] },
+        data: s.values,
+      })),
     };
   }
 
@@ -169,7 +242,7 @@ export function buildEchartsOption(input: {
       top: "12%",
     },
     legend: { show: false },
-    xAxis: { type: "category", data: labels },
+    xAxis: { type: "category", data: labels, axisLabel: { rotate } },
     yAxis: { type: "value" },
     series: [
       {
@@ -245,8 +318,26 @@ export class ArtifactChartPool {
     const chart_type = parseChartType(input.chart_type);
     const title = String(input.title ?? "Chart").trim().slice(0, 120) || "Chart";
     const labels = asStringArray(input.labels);
-    const values = asNumberArray(input.values, labels.length);
-    const n = Math.min(labels.length, values.length);
+    const seriesIn = Array.isArray(input.series)
+      ? input.series
+          .map((raw) => {
+            const s =
+              raw && typeof raw === "object"
+                ? (raw as { name?: unknown; values?: unknown })
+                : {};
+            return {
+              name: String(s.name ?? "").trim() || "Series",
+              values: asNumberArray(s.values, labels.length),
+            };
+          })
+          .filter((s) => s.values.length > 0)
+      : [];
+    const values = asNumberArray(
+      input.values,
+      labels.length
+    );
+    const primary = seriesIn[0]?.values ?? values;
+    const n = Math.min(labels.length, primary.length);
     if (n < 1) {
       return {
         ok: false,
@@ -256,13 +347,21 @@ export class ArtifactChartPool {
 
     const theme = String(input.theme ?? "aurora").trim() || "aurora";
     const trimmedLabels = labels.slice(0, n);
-    const trimmedValues = values.slice(0, n);
+    const trimmedValues = primary.slice(0, n);
+    const series =
+      seriesIn.length >= 2
+        ? seriesIn.map((s) => ({
+            name: s.name,
+            values: s.values.slice(0, n),
+          }))
+        : undefined;
     const option = buildEchartsOption({
       chart_type,
       title,
       labels: trimmedLabels,
       values: trimmedValues,
       theme,
+      series,
     });
     const index = this.entries.length;
     const token = `nela-chart:${index}`;
@@ -274,6 +373,7 @@ export class ArtifactChartPool {
       chart_type,
       labels: trimmedLabels,
       values: trimmedValues,
+      series,
       theme,
       option,
       fragment,

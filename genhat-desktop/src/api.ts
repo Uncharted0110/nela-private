@@ -1320,6 +1320,7 @@ export const Api = {
     valueColumn?: string | null;
     aggregation?: string | null;
     maxPoints?: number;
+    sort?: string | null;
   }): Promise<Array<{ label: string; value: number }>> {
     return invoke<Array<{ label: string; value: number }>>(
       "aggregate_spreadsheet_chart",

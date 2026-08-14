@@ -221,8 +221,9 @@ export const RENDER_CHART_TOOL: CloudToolDefinition = {
       properties: {
         chart_type: {
           type: "string",
-          enum: ["bar", "pie", "line"],
-          description: "bar = comparisons, pie = proportions, line = trends",
+          enum: ["bar", "pie", "line", "timeline", "dual_line", "grouped_bar"],
+          description:
+            "bar = ranking, pie = share, line/timeline = trend, dual_line = two measures, grouped_bar = side-by-side",
         },
         title: {
           type: "string",
@@ -237,6 +238,17 @@ export const RENDER_CHART_TOOL: CloudToolDefinition = {
           type: "array",
           items: { type: "number" },
           description: "Numeric series aligned with labels",
+        },
+        series: {
+          type: "array",
+          description: "Optional extra series for dual_line / grouped_bar (each aligned with labels)",
+          items: {
+            type: "object",
+            properties: {
+              name: { type: "string" },
+              values: { type: "array", items: { type: "number" } },
+            },
+          },
         },
         theme: {
           type: "string",

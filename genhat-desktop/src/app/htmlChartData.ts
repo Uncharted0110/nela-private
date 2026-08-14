@@ -69,12 +69,16 @@ export type ParsedSpreadsheetSheet = {
 };
 
 export type ChartBinding = {
-  chart_type: "bar" | "pie" | "line";
+  chart_type: "bar" | "pie" | "line" | "timeline" | "dual_line" | "grouped_bar";
   title: string;
   label_column: string;
   value_column?: string;
+  /** Extra numeric series for dual-line / grouped bar. */
+  value_columns?: string[];
   aggregation: "sum" | "count" | "avg" | "min" | "max";
   max_points?: number;
+  /** "label" keeps date/timeline order; default ranks by value. */
+  sort?: "value" | "label";
 };
 
 function filledCount(row: string[] | undefined): number {
@@ -454,7 +458,7 @@ function formatColumnLine(col: ColumnProfile): string {
 function domainHint(domain: WorkbookDomain): string {
   switch (domain) {
     case "inventory":
-      return "This is inventory data. KPIs: product count, units on hand, units sold, inventory value. Do not chart Product ID/SKU as pie slices. Prefer Product Name (top items) for bars. Sum stock/sold/value columns; never sum unit cost.";
+      return "This is inventory data. KPIs: product count, units on hand, units sold, inventory value. Mix chart types: bar ranking, pie share of value, grouped/dual comparison of sold vs stock. Do not chart Product ID/SKU. Sum stock/sold/value; never sum unit cost.";
     case "sales":
       return "This is sales/order data. KPIs: order count, revenue, quantity. Group by customer/region if those are dimensions; otherwise top products/customers.";
     case "hr":
@@ -479,7 +483,11 @@ function buildInterpretation(profile: SheetProfile): string {
     .map(
       (b, i) =>
         `${i + 1}. ${b.chart_type}: ${b.title} [${b.label_column}${
-          b.value_column ? ` × ${b.value_column}` : ""
+          b.value_columns?.length
+            ? ` × ${b.value_columns.join(" + ")}`
+            : b.value_column
+              ? ` × ${b.value_column}`
+              : ""
         }, ${b.aggregation}]`
     )
     .join("\n");
@@ -546,6 +554,7 @@ export function buildWorkbookDataContext(
     `\n${buildInterpretation(active)}` +
     `\nFor CHART sections: set label_column and value_column to real column names from the ACTIVE sheet. ` +
     `Leave items empty or omit items — values are computed from the file. ` +
+    `Use a MIX of chart_type values from the Suggested charts list (bar, pie, line, timeline, dual_line, grouped_bar) — do not make every chart a bar. ` +
     `Use aggregation: sum for totals/stock/sold/value; avg for unit cost/rate/percent; count when there is no numeric measure.\n` +
     `Do not chart identifier columns (IDs, SKUs). If labels are product/item names, that is a top-N ranking, not a pie of every row.\n\n`
   );
@@ -555,54 +564,125 @@ export function suggestChartBindings(
   profile: SheetProfile,
   prompt: string
 ): ChartBinding[] {
-  const lower = prompt.toLowerCase();
-  const label = pickLabelColumn(profile, prompt);
   const measures = pickMeasureColumns(profile, prompt);
-  if (!label) return [];
-
-  const labelCol = profile.columns.find((c) => c.name === label);
-  const highCard = (labelCol?.distinctCount ?? 0) > 12;
-  const labelIsDate = labelCol?.role === "date" || profile.dateLike.includes(label);
-  const wantsPie = /\bpie\b/.test(lower) && !highCard;
-  const wantsLine = /\bline\b/.test(lower) || labelIsDate;
+  const dim = profile.columns.find((c) => c.role === "dimension");
+  const nameLabel = profile.columns.find((c) => c.role === "label")?.name;
+  const catLabel =
+    dim?.name ?? nameLabel ?? pickLabelColumn(profile, prompt);
+  const dateCol =
+    profile.columns.find((c) => c.role === "date")?.name ?? profile.dateLike[0];
 
   const aggFor = (role: ColumnRole | undefined): ChartBinding["aggregation"] =>
     role === "rate" ? "avg" : "sum";
 
-  const bindings: ChartBinding[] = [];
-  const first = measures[0];
-  if (first) {
-    bindings.push({
-      chart_type: wantsPie ? "pie" : wantsLine ? "line" : "bar",
-      title: highCard ? `Top ${first.name} by ${label}` : `${first.name} by ${label}`,
-      label_column: label,
-      value_column: first.name,
-      aggregation: aggFor(first.role),
-      max_points: wantsPie ? 8 : highCard ? 12 : 24,
-    });
-  } else {
-    bindings.push({
-      chart_type: highCard ? "bar" : "pie",
-      title: `Count by ${label}`,
-      label_column: label,
-      aggregation: "count",
-      max_points: highCard ? 12 : 8,
+  const out: ChartBinding[] = [];
+  const used = new Set<string>();
+  const add = (b: ChartBinding) => {
+    const series = b.value_columns?.join(",") ?? b.value_column ?? "";
+    const key = `${b.chart_type}|${b.label_column}|${series}`;
+    if (used.has(key) || out.length >= 4) return;
+    used.add(key);
+    out.push(b);
+  };
+
+  const m0 = measures[0];
+  const qtyMeasures = measures.filter((m) => m.role === "quantity");
+  const compare = qtyMeasures.length >= 2 ? qtyMeasures : measures;
+  const c0 = compare[0];
+  const c1 = compare[1];
+  const c2 = compare[2];
+  const pieMeasure =
+    measures.find((m) => m.role === "money" && m.name !== m0?.name) ??
+    measures.find((m) => m.role === "money") ??
+    m0;
+
+  if (catLabel && m0) {
+    add({
+      chart_type: "bar",
+      title: `Top ${m0.name} by ${catLabel}`,
+      label_column: catLabel,
+      value_column: m0.name,
+      aggregation: aggFor(m0.role),
+      max_points: 12,
     });
   }
 
-  const second = measures[1];
-  if (second && bindings.length < 2) {
-    const pieOk = !highCard && bindings[0]?.chart_type !== "pie";
-    bindings.push({
-      chart_type: pieOk && second.role === "money" ? "pie" : "bar",
-      title: highCard ? `Top ${second.name} by ${label}` : `${second.name} by ${label}`,
-      label_column: label,
-      value_column: second.name,
-      aggregation: aggFor(second.role),
-      max_points: pieOk ? 8 : highCard ? 12 : 24,
+  const pieLabel = dim && dim.distinctCount <= 12 ? dim.name : catLabel;
+  if (pieLabel && pieMeasure) {
+    add({
+      chart_type: "pie",
+      title: `Share of ${pieMeasure.name}`,
+      label_column: pieLabel,
+      value_column: pieMeasure.name,
+      aggregation: aggFor(pieMeasure.role),
+      max_points: 8,
+    });
+  } else if (pieLabel && !m0) {
+    add({
+      chart_type: "pie",
+      title: `Count by ${pieLabel}`,
+      label_column: pieLabel,
+      aggregation: "count",
+      max_points: 8,
     });
   }
-  return bindings.slice(0, 2);
+
+  if (dateCol && m0) {
+    add({
+      chart_type: "timeline",
+      title: `${m0.name} over time`,
+      label_column: dateCol,
+      value_column: m0.name,
+      aggregation: aggFor(m0.role),
+      max_points: 48,
+      sort: "label",
+    });
+    if (c1) {
+      add({
+        chart_type: "dual_line",
+        title: `${c0!.name} vs ${c1.name} over time`,
+        label_column: dateCol,
+        value_column: c0!.name,
+        value_columns: [c0!.name, c1.name],
+        aggregation: "sum",
+        max_points: 48,
+        sort: "label",
+      });
+    }
+  } else if (catLabel && c0 && c1) {
+    const grouped = c2 ? [c0.name, c1.name, c2.name] : [c0.name, c1.name];
+    add({
+      chart_type: "grouped_bar",
+      title: grouped.length === 3
+        ? `${c0.name} vs ${c1.name} vs ${c2!.name}`
+        : `${c0.name} vs ${c1.name}`,
+      label_column: catLabel,
+      value_column: c0.name,
+      value_columns: grouped,
+      aggregation: "sum",
+      max_points: 10,
+    });
+    add({
+      chart_type: "dual_line",
+      title: `${c0.name} vs ${c1.name} by ${catLabel}`,
+      label_column: catLabel,
+      value_column: c0.name,
+      value_columns: [c0.name, c1.name],
+      aggregation: "sum",
+      max_points: 12,
+    });
+  } else if (dateCol && !m0) {
+    add({
+      chart_type: "timeline",
+      title: `Volume over time`,
+      label_column: dateCol,
+      aggregation: "count",
+      max_points: 48,
+      sort: "label",
+    });
+  }
+
+  return out.slice(0, 4);
 }
 
 export function attachSpreadsheetToPlan(
@@ -616,7 +696,21 @@ export function attachSpreadsheetToPlan(
   });
 }
 
-/** Fill CHART sections that omitted column bindings, using profile heuristics. */
+function sectionFromBinding(b: ChartBinding): HtmlSection {
+  return {
+    kind: "CHART",
+    title: b.title,
+    chart_type: b.chart_type,
+    label_column: b.label_column,
+    value_column: b.value_column,
+    value_columns: b.value_columns,
+    aggregation: b.aggregation,
+    sort: b.sort,
+    items: [],
+  };
+}
+
+/** Apply file-backed chart mix onto the plan — overwrite types so dashboards are not all bars. */
 export function ensureChartBindingsOnPlan(
   plan: HtmlPlan,
   bindings: ChartBinding[]
@@ -625,19 +719,21 @@ export function ensureChartBindingsOnPlan(
   let next = 0;
   const sections = (plan.sections ?? []).map((section) => {
     if (section.kind !== "CHART") return section;
-    if (section.label_column?.trim()) return section;
     const b = bindings[next++];
     if (!b) return section;
-    return {
-      ...section,
-      label_column: b.label_column,
-      value_column: b.value_column,
-      aggregation: b.aggregation,
-      chart_type: section.chart_type || b.chart_type,
-      title: section.title?.trim() ? section.title : b.title,
-      items: [],
-    };
+    return { ...section, ...sectionFromBinding(b) };
   });
+  const extras: HtmlSection[] = [];
+  while (next < bindings.length) {
+    extras.push(sectionFromBinding(bindings[next++]!));
+  }
+  if (extras.length) {
+    const textIdx = sections.findIndex((s) => s.kind === "TEXT");
+    const statsIdx = sections.findIndex((s) => s.kind === "STATS");
+    if (textIdx >= 0) sections.splice(textIdx, 0, ...extras);
+    else if (statsIdx >= 0) sections.splice(statsIdx + 1, 0, ...extras);
+    else sections.push(...extras);
+  }
   return { ...plan, sections };
 }
 

@@ -19,7 +19,7 @@ export const GENERATE_CHART_TOOL_SCHEMA = {
       properties: {
         chart_type: {
           type: "string",
-          enum: ["bar", "pie", "line"],
+          enum: ["bar", "pie", "line", "timeline", "dual_line", "grouped_bar"],
         },
         title: { type: "string" },
         labels: { type: "array", items: { type: "string" } },

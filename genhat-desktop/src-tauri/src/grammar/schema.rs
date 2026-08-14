@@ -274,7 +274,7 @@ pub struct HtmlSection {
     pub body: Option<String>,
     #[serde(default)]
     pub items: Vec<HtmlSectionItem>,
-    /// Chart variant when `kind` is `CHART`: `bar`, `pie`, or `line`.
+    /// Chart variant when `kind` is `CHART`: `bar`, `pie`, `line`, `timeline`, `dual_line`, `grouped_bar`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chart_type: Option<String>,
     /// Source column for category labels (file-backed dashboards).
@@ -283,9 +283,18 @@ pub struct HtmlSection {
     /// Source column for numeric values (file-backed dashboards).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub value_column: Option<String>,
+    /// Extra numeric series for dual-line / grouped bar.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value_columns: Option<Vec<String>>,
     /// Aggregation over duplicate labels: `sum`, `count`, `avg`, `min`, `max`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub aggregation: Option<String>,
+    /// Chart point order: `value` (rank) or `label` (timeline / chronological).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sort: Option<String>,
+    /// Host-resolved extra series aligned with `items` labels.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub chart_series: Vec<HtmlChartSeries>,
     /// Index into `HtmlPlan::images` for IMAGE sections / hero visuals.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image_index: Option<u32>,
@@ -302,10 +311,20 @@ impl HtmlSection {
             chart_type: None,
             label_column: None,
             value_column: None,
+            value_columns: None,
             aggregation: None,
+            sort: None,
+            chart_series: vec![],
             image_index: None,
         }
     }
+}
+
+/// One named numeric series for dual-line / grouped-bar charts.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HtmlChartSeries {
+    pub name: String,
+    pub values: Vec<f64>,
 }
 
 /// Row/card item inside a section (menu item, feature, FAQ, stat, etc.).

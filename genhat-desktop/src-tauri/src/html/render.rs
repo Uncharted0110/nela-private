@@ -198,13 +198,13 @@ pub fn render_html_plan(plan: HtmlPlan) -> String {
         )
     }).unwrap_or_default();
 
-    let body_sections: String = plan
-        .sections
-        .iter()
-        .enumerate()
-        .map(|(i, s)| render_section(&layout, i, s, theme, plan.images.as_deref()))
-        .collect::<Vec<_>>()
-        .join("\n");
+    let body_sections: String = render_body_sections(
+        &plan.archetype,
+        &layout,
+        &plan.sections,
+        theme,
+        plan.images.as_deref(),
+    );
 
     let hero_tagline = if tagline.is_empty() {
         String::new()
@@ -400,9 +400,18 @@ pub(crate) fn normalize_sections(
         }
     }
 
-    for section in pool.drain(..) {
-        ordered.push(enrich_section(section));
+    let leftover: Vec<HtmlSection> = pool.drain(..).map(enrich_section).collect();
+    let (extra_charts, extra_other): (Vec<_>, Vec<_>) = leftover
+        .into_iter()
+        .partition(|s| s.kind == HtmlSectionKind::Chart);
+    if let Some(idx) = ordered.iter().position(|s| s.kind == HtmlSectionKind::Text) {
+        for (offset, chart) in extra_charts.into_iter().enumerate() {
+            ordered.insert(idx + offset, chart);
+        }
+    } else {
+        ordered.extend(extra_charts);
     }
+    ordered.extend(extra_other);
 
     ordered
 }
@@ -642,6 +651,42 @@ fn item(label: &str, detail: &str, meta: Option<&str>) -> HtmlSectionItem {
         detail: Some(detail.to_string()),
         meta: meta.map(|s| s.to_string()),
     }
+}
+
+fn render_body_sections(
+    archetype: &str,
+    layout: &ArchetypeLayout,
+    sections: &[HtmlSection],
+    theme: &str,
+    images: Option<&[crate::grammar::schema::ArtifactImageAsset]>,
+) -> String {
+    if archetype != "dashboard" {
+        return sections
+            .iter()
+            .enumerate()
+            .map(|(i, s)| render_section(layout, i, s, theme, images))
+            .collect::<Vec<_>>()
+            .join("\n");
+    }
+
+    let mut out = String::new();
+    let mut i = 0;
+    while i < sections.len() {
+        if sections[i].kind == HtmlSectionKind::Chart {
+            let mut block = String::new();
+            while i < sections.len() && sections[i].kind == HtmlSectionKind::Chart {
+                block.push_str(&charts::render_chart_section(&sections[i], i, theme));
+                i += 1;
+            }
+            out.push_str(&format!(
+                r#"<div class="container charts-grid">{block}</div>"#
+            ));
+        } else {
+            out.push_str(&render_section(layout, i, &sections[i], theme, images));
+            i += 1;
+        }
+    }
+    out
 }
 
 fn render_section(layout: &ArchetypeLayout, index: usize, section: &HtmlSection, theme: &str, images: Option<&[crate::grammar::schema::ArtifactImageAsset]>) -> String {

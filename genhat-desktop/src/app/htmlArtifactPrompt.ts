@@ -126,10 +126,10 @@ const ARCHETYPE_SECTIONS: Record<string, { kinds: HtmlSectionKind[]; hint: strin
     hint: "Creative portfolio — project grid, about split",
   },
   dashboard: {
-    kinds: ["HERO", "STATS", "CHART", "CHART", "TEXT"],
+    kinds: ["HERO", "STATS", "CHART", "CHART", "CHART", "CHART", "TEXT"],
     hint:
-      "Analytics dashboard — KPI STATS band, two CHART sections (bar/pie/line), TEXT insights. " +
-      "When source data is attached: CHART sections MUST use label_column + value_column (exact header names) and aggregation; leave items empty.",
+      "Analytics dashboard — KPI STATS band, four CHART sections with mixed types (bar, pie, line/timeline, dual_line or grouped_bar), TEXT insights. " +
+      "When source data is attached: CHART sections MUST use label_column + value_column (exact header names) and aggregation; leave items empty. Follow Suggested charts.",
   },
   documentation: {
     kinds: ["HERO", "TEXT", "GRID", "FAQ"],
@@ -183,9 +183,10 @@ Return ONLY valid JSON matching this shape:
       "title": "Section heading",
       "subtitle": "optional",
       "body": "optional paragraph",
-      "chart_type": "bar" | "pie" | "line",
+      "chart_type": "bar" | "pie" | "line" | "timeline" | "dual_line" | "grouped_bar",
       "label_column": "optional — exact CSV/XLSX header",
       "value_column": "optional — exact CSV/XLSX header",
+      "value_columns": ["optional extra numeric headers for dual_line / grouped_bar"],
       "aggregation": "sum" | "count" | "avg" | "min" | "max",
       "image_index": 0,
       "items": [{ "label": "...", "detail": "...", "meta": "numeric string for charts" }]
@@ -200,7 +201,7 @@ Section kind reference:
 - GRID: items = cards (menu items, features, products) — use meta for price
 - SPLIT: body = long about/story paragraph
 - STATS: items = metrics (label = number, detail = label text) — auto-filled when source data attached
-- CHART: chart_type required; bar for comparisons, pie for proportions, line for trends
+- CHART: chart_type required; mix types from the data: bar (ranking), pie (share), line/timeline (over time), dual_line (two measures), grouped_bar (side-by-side comparison)
 - IMAGE: full-width illustration; set image_index from the image catalog when available
 - QUOTES: items = testimonials (label = quote, detail = attribution)
 - FAQ: items = questions (label = Q, detail = A)
@@ -210,7 +211,7 @@ Section kind reference:
 Rules:
 - Fill EVERY required section with real, topic-specific content (no lorem ipsum).
 - Use at least 3 items in GRID sections; at least 2 in FAQ/QUOTES when present.
-- Dashboard archetype: include exactly two CHART sections with different chart_type when possible.
+- Dashboard archetype: include four CHART sections with mixed chart_type (not all bars) when source data allows.
 - For interactive archetype: GRID must list actual pickable items, never marketing bullets.
 - Pick theme that fits the topic (food/local → sunset or rose, tech → cyber or midnight, data → aurora or corporate).
 - No markdown, no code fences, no explanations outside JSON.`;
@@ -326,7 +327,7 @@ GRID: at least 8 real items to pick from (movies, songs, recipes — match the t
     return `Build an analytics dashboard page for: "${text}".
 
 Archetype: dashboard. Sections: ${spec.kinds.join(", ")}.
-Include two CHART sections (bar, pie, or line) plus KPI STATS and a TEXT insights section.
+Include four CHART sections with mixed types (bar, pie, line/timeline, dual_line or grouped_bar) plus KPI STATS and a TEXT insights section.
 ${dataNote}`;
   }
   return `Create a complete page plan for: "${text}".
