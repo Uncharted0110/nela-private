@@ -118,6 +118,9 @@ export async function handleSendRag(
                 generateTime: totalTime,
                 firstTokenTime:
                   timeToFirstToken !== null ? timeToFirstToken : undefined,
+                ...(ctx.selectedModel?.trim()
+                  ? { generatedByModel: ctx.selectedModel.trim() }
+                  : {}),
               },
             ];
 
