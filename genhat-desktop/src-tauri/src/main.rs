@@ -462,6 +462,7 @@ fn main() {
             app_lib::commands::artifact::apply_presentation_ops,
             app_lib::commands::artifact::generate_html,
             app_lib::commands::artifact::parse_spreadsheet_data,
+            app_lib::commands::artifact::aggregate_spreadsheet_chart,
             app_lib::commands::artifact_images::download_image_data_uri,
             app_lib::commands::artifact_images::extract_document_images,
             app_lib::commands::artifact::get_governor_state,

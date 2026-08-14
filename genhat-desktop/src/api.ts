@@ -1312,6 +1312,21 @@ export const Api = {
     });
   },
 
+  /** Aggregate chart points from spreadsheet rows (file-backed dashboards). */
+  async aggregateSpreadsheetChart(request: {
+    headers: string[];
+    rows: string[][];
+    labelColumn: string;
+    valueColumn?: string | null;
+    aggregation?: string | null;
+    maxPoints?: number;
+  }): Promise<Array<{ label: string; value: number }>> {
+    return invoke<Array<{ label: string; value: number }>>(
+      "aggregate_spreadsheet_chart",
+      { request }
+    );
+  },
+
   /** Download a remote image as a base64 data URI for artifact embedding. */
   async downloadImageDataUri(url: string): Promise<string> {
     return invoke<string>("download_image_data_uri", { url });

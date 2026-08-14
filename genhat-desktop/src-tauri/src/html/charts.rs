@@ -61,6 +61,29 @@ impl Aggregation {
     }
 }
 
+/// Aggregate a chart series from tabular rows (shared by HTML render + cloud pool).
+pub fn aggregate_chart(
+    headers: &[String],
+    rows: &[Vec<String>],
+    label_col: &str,
+    value_col: Option<&str>,
+    aggregation: Option<&str>,
+    max_points: usize,
+) -> Vec<ChartPoint> {
+    let cap = if max_points == 0 { 48 } else { max_points };
+    let mut points = match value_col.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(value) => {
+            let agg = Aggregation::parse(aggregation.unwrap_or("sum"));
+            aggregate_numeric(headers, rows, label_col, value, agg)
+        }
+        None => aggregate_count_by_label(headers, rows, label_col),
+    };
+    if points.len() > cap {
+        points.truncate(cap);
+    }
+    points
+}
+
 /// Resolve CHART sections from attached tabular data. When source data exists,
 /// numeric values are always computed from the file — never from model-provided items.
 pub fn resolve_plan_charts(plan: &mut HtmlPlan) {
@@ -95,12 +118,18 @@ pub fn resolve_plan_charts(plan: &mut HtmlPlan) {
         if label_col.is_empty() {
             continue;
         }
-        let agg = Aggregation::parse(section.aggregation.as_deref().unwrap_or("sum"));
-        let points = if value_col.is_empty() {
-            aggregate_count_by_label(&headers, &data_rows, label_col)
-        } else {
-            aggregate_numeric(&headers, &data_rows, label_col, value_col, agg)
-        };
+        let points = aggregate_chart(
+            &headers,
+            &data_rows,
+            label_col,
+            if value_col.is_empty() {
+                None
+            } else {
+                Some(value_col)
+            },
+            section.aggregation.as_deref(),
+            48,
+        );
         section.items = points
             .into_iter()
             .map(|p| HtmlSectionItem {
@@ -113,20 +142,24 @@ pub fn resolve_plan_charts(plan: &mut HtmlPlan) {
 }
 
 fn resolve_stats_from_data(plan: &mut HtmlPlan, headers: &[String], rows: &[Vec<String>]) {
-    let numeric_cols: Vec<(usize, String)> = headers
+    let mut numeric_cols: Vec<(usize, String, bool)> = headers
         .iter()
         .enumerate()
         .filter_map(|(i, h)| {
+            if skip_stat_column(h) {
+                return None;
+            }
             let has_num = rows.iter().any(|r| {
                 r.get(i).and_then(|s| parse_number(s)).is_some()
             });
             if has_num {
-                Some((i, h.clone()))
+                Some((i, h.clone(), prefer_stat_column(h)))
             } else {
                 None
             }
         })
         .collect();
+    numeric_cols.sort_by(|a, b| b.2.cmp(&a.2));
 
     for section in &mut plan.sections {
         if section.kind != HtmlSectionKind::Stats {
@@ -134,10 +167,10 @@ fn resolve_stats_from_data(plan: &mut HtmlPlan, headers: &[String], rows: &[Vec<
         }
         let mut items = vec![HtmlSectionItem {
             label: format!("{}", rows.len()),
-            detail: Some("Data rows".to_string()),
+            detail: Some(stat_row_label(headers).to_string()),
             meta: None,
         }];
-        for (i, name) in numeric_cols.iter().take(3) {
+        for (i, name, _) in numeric_cols.iter().take(3) {
             let vals: Vec<f64> = rows
                 .iter()
                 .filter_map(|r| r.get(*i).and_then(|s| parse_number(s)))
@@ -145,10 +178,17 @@ fn resolve_stats_from_data(plan: &mut HtmlPlan, headers: &[String], rows: &[Vec<
             if vals.is_empty() {
                 continue;
             }
-            let total = vals.iter().sum::<f64>();
+            let n = name.to_lowercase();
+            let use_avg = n.contains("per unit") || n.contains("unit cost") || n.contains("unit price");
+            let value = if use_avg {
+                vals.iter().sum::<f64>() / vals.len() as f64
+            } else {
+                vals.iter().sum::<f64>()
+            };
+            let prefix = if use_avg { "Avg" } else { "Total" };
             items.push(HtmlSectionItem {
-                label: format_chart_number(total),
-                detail: Some(format!("Total {name}")),
+                label: format_chart_number(value),
+                detail: Some(format!("{prefix} {name}")),
                 meta: None,
             });
         }
@@ -164,8 +204,56 @@ fn column_index(headers: &[String], name: &str) -> Option<usize> {
 }
 
 fn parse_number(s: &str) -> Option<f64> {
-    let cleaned = s.trim().replace(',', "");
-    cleaned.parse::<f64>().ok()
+    let t = s.trim();
+    if t.is_empty() {
+        return None;
+    }
+    let negative = t.starts_with('(') && t.ends_with(')');
+    let cleaned = t
+        .trim_matches(|c: char| c == '(' || c == ')')
+        .replace(',', "")
+        .replace(['$', '₹', '€', '£', '%', ' '], "");
+    let value: f64 = cleaned.parse().ok()?;
+    Some(if negative { -value } else { value })
+}
+
+fn skip_stat_column(name: &str) -> bool {
+    let n = name.to_lowercase();
+    n == "id"
+        || n.ends_with(" id")
+        || n.contains("sku")
+        || n.contains("per unit")
+        || n.contains("unit cost")
+        || n.contains("unit price")
+        || n.contains("price per")
+        || n.contains("percent")
+        || n.contains('%')
+        || n.contains(" rate")
+        || n.ends_with(" rate")
+}
+
+fn prefer_stat_column(name: &str) -> bool {
+    let n = name.to_lowercase();
+    n.contains("total")
+        || n.contains("value")
+        || n.contains("revenue")
+        || n.contains("sold")
+        || n.contains("stock")
+        || n.contains("amount")
+        || n.contains("salary")
+}
+
+fn stat_row_label(headers: &[String]) -> &'static str {
+    let blob = headers.join(" ").to_lowercase();
+    if blob.contains("product") || blob.contains("inventory") || blob.contains("sku") {
+        "Products"
+    } else if blob.contains("order") || blob.contains("invoice") {
+        "Orders"
+    } else if blob.contains("employee") {
+        "Employees"
+    } else {
+        "Data rows"
+    }
 }
 
 fn aggregate_numeric(
@@ -494,5 +582,69 @@ mod tests {
         assert_eq!(items.len(), 2);
         assert!(items.iter().any(|i| i.label == "North" && i.meta.as_deref() == Some("125")));
         assert!(items.iter().any(|i| i.label == "South" && i.meta.as_deref() == Some("50")));
+    }
+
+    #[test]
+    fn aggregate_chart_caps_and_sums() {
+        let headers = vec!["region".into(), "revenue".into()];
+        let rows = vec![
+            vec!["North".into(), "100".into()],
+            vec!["South".into(), "50".into()],
+            vec!["North".into(), "25".into()],
+        ];
+        let points = aggregate_chart(&headers, &rows, "region", Some("revenue"), Some("sum"), 48);
+        assert_eq!(points.len(), 2);
+        assert!((points[0].value - 125.0).abs() < f64::EPSILON);
+        assert_eq!(points[0].label, "North");
+    }
+
+    #[test]
+    fn parses_currency_and_skips_unit_cost_kpis() {
+        let points = aggregate_chart(
+            &["Product Name".into(), "Cost Price Total".into()],
+            &[
+                vec!["A".into(), "$1,000".into()],
+                vec!["B".into(), "$250".into()],
+            ],
+            "Product Name",
+            Some("Cost Price Total"),
+            Some("sum"),
+            48,
+        );
+        assert_eq!(points.len(), 2);
+        assert!((points.iter().find(|p| p.label == "A").unwrap().value - 1000.0).abs() < f64::EPSILON);
+
+        let mut plan = HtmlPlan {
+            title: "Inventory".into(),
+            tagline: None,
+            archetype: "dashboard".into(),
+            sections: vec![HtmlSection::with_kind(HtmlSectionKind::Stats)],
+            theme: None,
+            output_name: None,
+            html: None,
+            headers: Some(vec![
+                "Product ID".into(),
+                "Product Name".into(),
+                "Cost Price Per Unit".into(),
+                "Cost Price Total".into(),
+                "Number of Units Sold".into(),
+            ]),
+            images: None,
+            source_rows: Some(vec![
+                vec!["P1".into(), "Widget".into(), "10".into(), "100".into(), "5".into()],
+                vec!["P2".into(), "Gadget".into(), "20".into(), "200".into(), "8".into()],
+            ]),
+        };
+        resolve_plan_charts(&mut plan);
+        let details: Vec<_> = plan.sections[0]
+            .items
+            .iter()
+            .filter_map(|i| i.detail.as_deref())
+            .collect();
+        assert!(details.iter().any(|d| *d == "Products"));
+        assert!(details.iter().any(|d| d.contains("Cost Price Total")));
+        assert!(details.iter().any(|d| d.contains("Units Sold")));
+        assert!(!details.iter().any(|d| d.contains("Per Unit")));
+        assert!(!details.iter().any(|d| d.contains("Product ID")));
     }
 }

@@ -380,6 +380,11 @@ fn parse_spreadsheet_data_inner(
             "sheet_name": "CSV",
             "rows": rows,
             "truncated": row_cap.is_some_and(|cap| data_rows >= cap),
+            "sheets": [{
+                "sheet_name": "CSV",
+                "rows": rows,
+                "truncated": row_cap.is_some_and(|cap| data_rows >= cap),
+            }],
         }));
     }
 
@@ -444,6 +449,32 @@ fn parse_spreadsheet_data_inner(
         "truncated": first.get("truncated").cloned().unwrap_or(serde_json::Value::Bool(false)),
         "sheets": sheets_out,
     }))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AggregateSpreadsheetChartRequest {
+    pub headers: Vec<String>,
+    pub rows: Vec<Vec<String>>,
+    pub label_column: String,
+    pub value_column: Option<String>,
+    pub aggregation: Option<String>,
+    pub max_points: Option<usize>,
+}
+
+/// Aggregate chart series from in-memory spreadsheet rows (file-backed dashboards).
+#[tauri::command]
+pub fn aggregate_spreadsheet_chart(
+    request: AggregateSpreadsheetChartRequest,
+) -> Result<Vec<crate::html::charts::ChartPoint>, String> {
+    Ok(crate::html::charts::aggregate_chart(
+        &request.headers,
+        &request.rows,
+        &request.label_column,
+        request.value_column.as_deref(),
+        request.aggregation.as_deref(),
+        request.max_points.unwrap_or(48),
+    ))
 }
 
 

@@ -242,7 +242,7 @@ export function buildHtmlArtifactSystemParts(
       ? `CHARTS: An AVAILABLE CHARTS catalog is in the user message. Embed ONLY with <div data-nela-chart="nela-chart:0"></div> (etc). Do NOT write Chart.js, Plotly, or echarts.init — the desktop injects working ECharts markup.`
       : `If the page needs plots and no chart catalog is present, use tables/stats instead of inventing chart JavaScript.`;
     const dataHint = options.hasSourceData
-      ? "Source spreadsheet data may be attached — use real columns for tables/KPIs; do not invent numbers."
+      ? "Source spreadsheet is attached. Follow the INTERPRETATION block: use exact column names, host-rendered charts in AVAILABLE CHARTS (already file-aggregated), skip ID/SKU pies, and write insights that match the domain (inventory, sales, etc.). Do not invent numbers."
       : "";
     return {
       cacheable: HTML_CLOUD_FREEFORM_STATIC,
@@ -256,9 +256,12 @@ export function buildHtmlArtifactSystemParts(
   const dataRules = options?.hasSourceData
     ? `SOURCE DATA RULES (attached file — STRICT):
 - NEVER invent or guess numeric values. All chart numbers are computed from the file in the renderer.
-- CHART sections: set label_column, value_column, aggregation (sum|count|avg|min|max). Omit items or use an empty items array.
-- STATS numeric KPIs are auto-computed from the file — focus chart column choices and TEXT insights.
-- Use exact column header names from the data context.`
+- CHART sections: set label_column, value_column, aggregation (sum|count|avg|min|max) using EXACT header names from the ACTIVE sheet. Omit items or use an empty items array.
+- STATS numeric KPIs are auto-computed from the file — focus chart column choices and TEXT insights grounded in the INTERPRETATION block (domain, preferred measures, columns to skip).
+- If the workbook has multiple sheets, chart the ACTIVE sheet unless the user named another sheet.
+- Use exact column header names from the data context.
+- Do not chart identifier columns (Product ID, SKU, employee id). Prefer names/categories. For long product lists, bind top-N rankings (units sold, inventory value), not a pie of every row.
+- Sum stock/sold/value totals. Use avg for unit cost / per-unit / percent columns.`
     : `NO SOURCE FILE:
 - CHART sections: provide items with label (category) and meta (numeric value as string).
 - You may use plausible illustrative data for demos when no file is attached.`;
@@ -318,7 +321,7 @@ GRID: at least 8 real items to pick from (movies, songs, recipes — match the t
   }
   if (archetype === "dashboard") {
     const dataNote = options?.hasSourceData
-      ? "Source spreadsheet is attached — reference real column names in CHART sections; do not invent numbers."
+      ? "Source spreadsheet is attached — follow the INTERPRETATION block. Bind CHART sections to exact ACTIVE-sheet headers; do not invent numbers. Skip ID/SKU columns. TEXT insights should explain stock, sales, and value using the profile."
       : "No file attached — use realistic demo numbers in CHART items.";
     return `Build an analytics dashboard page for: "${text}".
 

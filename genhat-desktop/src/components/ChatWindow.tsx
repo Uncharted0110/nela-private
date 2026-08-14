@@ -4,6 +4,7 @@ import MarkdownRenderer from "./MarkdownRenderer";
 import VoiceInputButton from "./VoiceInputButton";
 import type { ChatMessage, MediaAsset, IngestionStatus, ChatMode, ChatSession } from "../types";
 import { COPY } from "../app/copy";
+import { isSpreadsheetPath } from "../app/spreadsheetDashboardIntent";
 import { useAdvancedMode } from "../hooks/useAdvancedMode";
 import { useSlashCommandInput } from "../hooks/useSlashCommandInput";
 import SlashCommandMenu from "./SlashCommandMenu";
@@ -448,28 +449,25 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
       );
     }
 
-    if (advanced && chatMode === "text" && !ragEnabled) {
-      return (
-        <button
-          className="w-full flex items-center gap-2.5 py-2 px-3 rounded-lg text-sm text-txt-secondary bg-transparent border-none cursor-pointer transition-all duration-150 hover:bg-glass-hover hover:text-txt"
-          onClick={() => {
-            onAttachDirectDocuments?.();
-            setShowAttachMenu(false);
-          }}
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-            <polyline points="14 2 14 8 20 8" />
-          </svg>
-          <div className="flex flex-col items-start">
-            <span className="font-medium">{COPY.addDocumentsTitle}</span>
-            <span className="text-[0.78rem] text-txt-muted">{COPY.addDocumentsHint}</span>
-          </div>
-        </button>
-      );
-    }
+    const attachToChatButton = (
+      <button
+        className="w-full flex items-center gap-2.5 py-2 px-3 rounded-lg text-sm text-txt-secondary bg-transparent border-none cursor-pointer transition-all duration-150 hover:bg-glass-hover hover:text-txt"
+        onClick={() => {
+          onAttachDirectDocuments?.();
+          setShowAttachMenu(false);
+        }}
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+        </svg>
+        <div className="flex flex-col items-start">
+          <span className="font-medium">{COPY.attachToChatTitle}</span>
+          <span className="text-[0.78rem] text-txt-muted">{COPY.attachToChatHint}</span>
+        </div>
+      </button>
+    );
 
-    return (
+    const libraryButtons = (
       <>
         <button
           className="w-full flex items-center gap-2.5 py-2 px-3 rounded-lg text-sm text-txt-secondary bg-transparent border-none cursor-pointer transition-all duration-150 hover:bg-glass-hover hover:text-txt"
@@ -483,8 +481,8 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
             <polyline points="14 2 14 8 20 8" />
           </svg>
           <div className="flex flex-col items-start">
-            <span className="font-medium">{COPY.addDocumentsTitle}</span>
-            <span className="text-[0.78rem] text-txt-muted">{COPY.addDocumentsHint}</span>
+            <span className="font-medium">{COPY.addToLibraryTitle}</span>
+            <span className="text-[0.78rem] text-txt-muted">{COPY.addToLibraryHint}</span>
           </div>
         </button>
         <button
@@ -504,6 +502,18 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
         </button>
       </>
     );
+
+    if (chatMode === "text") {
+      const showLibrary = !advanced || ragEnabled;
+      return (
+        <>
+          {attachToChatButton}
+          {showLibrary ? libraryButtons : null}
+        </>
+      );
+    }
+
+    return libraryButtons;
   };
 
   const attachButtonLabel =
@@ -549,6 +559,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
 
   const renderDirectDocumentAttachments = () => {
     if (chatMode !== "text" || directDocumentPaths.length === 0) return null;
+    const spreadsheetAttached = directDocumentPaths.some(isSpreadsheetPath);
 
     return (
       <div className="w-full mb-2">
@@ -568,6 +579,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
         <div className="flex flex-wrap gap-1.5">
           {directDocumentPaths.map((path) => {
             const name = path.split(/[/\\]/).pop() ?? "document";
+            const spreadsheet = isSpreadsheetPath(path);
             return (
               <span
                 key={path}
@@ -575,6 +587,9 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
                 title={path}
               >
                 <span className="truncate">{name}</span>
+                {spreadsheet ? (
+                  <span className="shrink-0 text-txt-muted">· spreadsheet</span>
+                ) : null}
                 <button
                   className="w-4 h-4 inline-flex items-center justify-center rounded text-txt-muted hover:text-danger"
                   onClick={() => onRemoveDirectDocument?.(path)}
@@ -590,6 +605,11 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
             );
           })}
         </div>
+        {spreadsheetAttached ? (
+          <p className="mt-1.5 mb-0 text-[0.75rem] text-txt-muted">
+            Ask for a dashboard or charts from this file.
+          </p>
+        ) : null}
       </div>
     );
   };
@@ -690,7 +710,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
                 </button>
 
                 {showAttachMenu && (
-                  <div className="animate-attach-menu absolute bottom-full left-0 mb-2 w-[220px] rounded-xl bg-void-700/80 backdrop-blur-xl border border-glass-border shadow-[0_8px_32px_rgba(0,0,0,0.5)] p-1 z-50">
+                  <div className="animate-attach-menu absolute bottom-full left-0 mb-2 w-[280px] rounded-xl bg-void-700/80 backdrop-blur-xl border border-glass-border shadow-[0_8px_32px_rgba(0,0,0,0.5)] p-1 z-50">
                     {renderAttachMenu()}
                   </div>
                 )}
@@ -969,7 +989,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
               </button>
 
               {showAttachMenu && (
-                <div className="animate-attach-menu absolute bottom-full left-0 mb-2 w-[220px] rounded-xl bg-void-700/80 backdrop-blur-xl border border-glass-border shadow-[0_8px_32px_rgba(0,0,0,0.5)] p-1 z-50">
+                <div className="animate-attach-menu absolute bottom-full left-0 mb-2 w-[280px] rounded-xl bg-void-700/80 backdrop-blur-xl border border-glass-border shadow-[0_8px_32px_rgba(0,0,0,0.5)] p-1 z-50">
                   {renderAttachMenu()}
                 </div>
               )}

@@ -48,6 +48,10 @@ export async function attachDirectDocuments(): Promise<void> {
       multiple: true,
       filters: [
         {
+          name: "Spreadsheets",
+          extensions: ["xlsx", "xls", "ods", "csv", "tsv"],
+        },
+        {
           name: "Documents",
           extensions: DOCUMENT_PICKER_EXTENSIONS,
         },

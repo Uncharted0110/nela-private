@@ -111,6 +111,15 @@ impl IntentResolver {
 
         // High-signal natural-language triggers (only the most unambiguous phrases).
         let lower = trimmed.to_lowercase();
+        // Attached workbook + dashboard/chart language → HTML (before excel synthesis).
+        if extra_flag_true(extra, "has_spreadsheet_attach")
+            && matches_spreadsheet_dashboard_trigger(&lower)
+        {
+            return Some(IntentDecision::artifact(
+                "mcp-server-html",
+                "html_synthesis",
+            ));
+        }
         if matches_artifact_trigger_excel(&lower) {
             return Some(IntentDecision::artifact(
                 "mcp-server-excel",
@@ -494,6 +503,57 @@ fn is_structural_artifact_edit(lower: &str) -> bool {
         || lower.contains("add row")
 }
 
+fn extra_flag_true(extra: &HashMap<String, String>, key: &str) -> bool {
+    extra
+        .get(key)
+        .map(|v| {
+            let t = v.trim().to_lowercase();
+            t == "true" || t == "1" || t == "yes"
+        })
+        .unwrap_or(false)
+}
+
+fn has_dashboard_language(lower: &str) -> bool {
+    lower.contains("dashboard")
+        || lower.contains("kpi")
+        || lower.contains("analytics")
+        || lower.contains("visualize")
+        || lower.contains("visualise")
+        || lower.contains("visualization")
+        || lower.contains("visualisation")
+        || lower.contains("pie chart")
+        || lower.contains("bar chart")
+        || lower.contains("bar graph")
+        || lower.contains("line chart")
+        || lower.contains("line graph")
+        || lower.contains("data visualization")
+        || lower.contains("data visualisation")
+        || lower.contains("chart")
+        || lower.contains("plot")
+}
+
+fn wants_new_spreadsheet_not_dashboard(lower: &str) -> bool {
+    let has_excel_noun = lower.contains("excel")
+        || lower.contains("spreadsheet")
+        || lower.contains("xlsx")
+        || lower.contains("workbook");
+    let has_create_verb = lower.contains("create")
+        || lower.contains("make")
+        || lower.contains("build")
+        || lower.contains("generate")
+        || lower.contains("write")
+        || lower.contains("give me");
+    has_excel_noun && has_create_verb && !lower.contains("dashboard")
+}
+
+/// Attached spreadsheet + dashboard/chart request → HTML dashboard artifact.
+fn matches_spreadsheet_dashboard_trigger(lower: &str) -> bool {
+    if is_information_seeking_prompt(lower) {
+        return false;
+    }
+    has_dashboard_language(lower) && !wants_new_spreadsheet_not_dashboard(lower)
+}
+
 fn matches_artifact_trigger_html(lower: &str) -> bool {
     let has_html_noun = lower.contains("html")
         || lower.contains("webpage")
@@ -562,5 +622,47 @@ mod tests {
     fn substring_change_in_changed_is_not_edit_verb() {
         assert!(!has_edit_verb_word("facebook changed the world"));
         assert!(has_edit_verb_word("please change the title"));
+    }
+
+    #[test]
+    fn attached_spreadsheet_make_dashboard_is_html() {
+        assert!(matches_spreadsheet_dashboard_trigger(
+            "make a dashboard from this excel"
+        ));
+        assert!(matches_spreadsheet_dashboard_trigger(
+            "pie chart of expenses by category"
+        ));
+        assert!(matches_spreadsheet_dashboard_trigger(
+            "show me a bar chart of revenue"
+        ));
+    }
+
+    #[test]
+    fn attached_spreadsheet_create_excel_is_not_html() {
+        assert!(!matches_spreadsheet_dashboard_trigger(
+            "create a new excel sheet from this file"
+        ));
+        assert!(!matches_spreadsheet_dashboard_trigger(
+            "make a spreadsheet with the same columns"
+        ));
+        assert!(matches_artifact_trigger_excel(
+            "create a new excel sheet from this file"
+        ));
+    }
+
+    #[test]
+    fn make_dashboard_without_attach_is_not_html_trigger() {
+        assert!(!matches_artifact_trigger_html("make a dashboard"));
+        assert!(matches_spreadsheet_dashboard_trigger("make a dashboard"));
+    }
+
+    #[test]
+    fn explain_chart_question_is_not_html_dashboard() {
+        assert!(!matches_spreadsheet_dashboard_trigger(
+            "explain this chart in the attached file"
+        ));
+        assert!(!matches_spreadsheet_dashboard_trigger(
+            "what is the average revenue"
+        ));
     }
 }

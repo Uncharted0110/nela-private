@@ -19,6 +19,10 @@ export const COPY = {
   // Attach menu (was: Add Files / Ingest / direct)
   addDocumentsTitle: "Add documents",
   addDocumentsHint: "PDF, Word, PowerPoint, text, and more.",
+  attachToChatTitle: "Attach to this chat",
+  attachToChatHint: "Excel, CSV, PDF — ask for a dashboard or questions. Not indexed.",
+  addToLibraryTitle: "Add to library",
+  addToLibraryHint: "Index into your document library for Search my documents.",
   addFolderTitle: "Add a folder",
   addFolderHint: "Add every supported file in a folder.",
   uploadImageTitle: "Upload an image",

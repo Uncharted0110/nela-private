@@ -19,6 +19,12 @@ import { friendlyErrorFromUnknown } from "../friendlyError";
 import type { SendHandlerContext } from "./types";
 import { buildSendHandlerContext } from "./buildContext";
 import { useCloudStore } from "../../stores/cloudStore";
+import {
+  DASHBOARD_HTML_SCHEMA,
+  DASHBOARD_HTML_TOOL,
+  hasSpreadsheetAttach,
+  wantsSpreadsheetDashboard,
+} from "../spreadsheetDashboardIntent";
 
 /** Prefer store-backed send: call with text only. Optional ctx kept for tests. */
 export async function executeHandleSend(
@@ -190,10 +196,32 @@ export async function executeHandleSend(
       return;
     }
 
+    const spreadsheetAttached = hasSpreadsheetAttach(promptDocumentPaths);
+    const artifactCtx =
+      ctx.directDocumentPaths.length > 0
+        ? ctx
+        : { ...ctx, directDocumentPaths: promptDocumentPaths };
+
+    if (spreadsheetAttached && wantsSpreadsheetDashboard(promptText)) {
+      await handleArtifactGeneration(
+        promptText,
+        DASHBOARD_HTML_TOOL,
+        DASHBOARD_HTML_SCHEMA,
+        sid,
+        artifactCtx,
+        ctrl,
+        artifactOptions
+      );
+      return;
+    }
+
     try {
       const intentExtra: Record<string, string> = {};
       if (sessionArtifactPath) {
         intentExtra.artifact_path = sessionArtifactPath;
+      }
+      if (spreadsheetAttached) {
+        intentExtra.has_spreadsheet_attach = "true";
       }
       const intent = await Api.resolveIntent(promptText, intentExtra);
       resolvedIntentKind = intent.kind.kind;
@@ -204,7 +232,7 @@ export async function executeHandleSend(
           tool,
           schema_id,
           sid,
-          ctx,
+          artifactCtx,
           ctrl,
           artifactOptions
         );

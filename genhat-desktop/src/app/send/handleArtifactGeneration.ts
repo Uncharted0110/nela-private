@@ -23,7 +23,15 @@ import { inferHtmlTheme } from "../htmlThemeInference";
 import {
   attachSpreadsheetToPlan,
   buildHtmlDataContext,
-  spreadsheetFromParsed,
+  buildWorkbookDataContext,
+  ensureChartBindingsOnPlan,
+  MAX_ARTIFACT_SPREADSHEET_ROWS,
+  pickActiveSheet,
+  profileWorkbook,
+  sheetsFromParsed,
+  sheetToSpreadsheetData,
+  suggestChartBindings,
+  type SheetProfile,
   type SpreadsheetData,
 } from "../htmlChartData";
 import {
@@ -33,6 +41,7 @@ import {
   embedPoolImagesInHtml,
   formatImageCatalogForPrompt,
 } from "../artifactImagePool";
+import { buildFileBackedChartPool } from "../spreadsheetChartPool";
 import {
   embedPoolChartsInHtml,
   formatChartCatalogForPrompt,
@@ -235,6 +244,8 @@ export async function handleArtifactGeneration(
     let headers: string[] | undefined;
     let rows: string[][] | undefined;
     let spreadsheetData: SpreadsheetData | null = null;
+    let workbookProfiles: SheetProfile[] = [];
+    let activeSheetProfile: SheetProfile | null = null;
     let ambientFileContent = "";
     let usedDocGraphMarkdown = false;
 
@@ -318,18 +329,31 @@ export async function handleArtifactGeneration(
 
       if (isSpreadsheet) {
         try {
-          const parsed = await Api.parseSpreadsheetData(path);
-          const sheet = spreadsheetFromParsed(parsed.rows);
-          if (sheet) {
-            // Prefer the first structured spreadsheet for table ops.
+          const parsed = await Api.parseSpreadsheetData(
+            path,
+            MAX_ARTIFACT_SPREADSHEET_ROWS
+          );
+          const allSheets = sheetsFromParsed(parsed);
+          const profiles = profileWorkbook(allSheets);
+          if (profiles.length > 0) {
             if (!spreadsheetData) {
-              headers = sheet.headers;
-              rows = sheet.rows;
-              spreadsheetData = sheet;
+              workbookProfiles = profiles;
+              activeSheetProfile = pickActiveSheet(profiles, text);
+              const active = activeSheetProfile ?? profiles[0]!;
+              activeSheetProfile = active;
+              spreadsheetData = sheetToSpreadsheetData(active);
+              headers = spreadsheetData.headers;
+              rows = spreadsheetData.rows;
             }
+            const summary = profiles
+              .map(
+                (s) =>
+                  `${s.name}: [${s.headers.join(", ")}] (${s.rowCount} rows)`
+              )
+              .join("\n");
             return formatAmbientFileSection(
               path,
-              `Columns: [${sheet.headers.join(", ")}]\nRow count: ${sheet.rows.length}`
+              `Sheets:\n${summary}\nActive: ${spreadsheetData.sheetName ?? profiles[0]?.name}`
             );
           }
         } catch (err) {
@@ -639,7 +663,13 @@ export async function handleArtifactGeneration(
         ambientContent: !hasSourceData ? ambientFileContent : undefined,
       });
     } else if (headers && headers.length > 0) {
-      if (spreadsheetData) {
+      if (workbookProfiles.length && activeSheetProfile) {
+        dataContext += buildWorkbookDataContext(
+          workbookProfiles,
+          activeSheetProfile,
+          12
+        );
+      } else if (spreadsheetData) {
         dataContext += buildHtmlDataContext(spreadsheetData, 12);
       } else {
         dataContext +=
@@ -679,10 +709,17 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
     const slidePlan = extractSlideCount(text);
     const themeHint = inferPresentationTheme(text);
     const htmlThemeHint = inferHtmlTheme(text);
-    const htmlArchetype =
+    let htmlArchetype =
       schemaId === "html_synthesis" ? inferHtmlPageStructure(text) : "landing";
     const htmlHasSourceData =
       schemaId === "html_synthesis" && spreadsheetData !== null;
+    if (
+      htmlHasSourceData &&
+      wantsArtifactCharts(text, true) &&
+      htmlArchetype !== "dashboard"
+    ) {
+      htmlArchetype = "dashboard";
+    }
 
     const containsFileContext = Boolean(ambientFileContent?.trim());
     const useCloud = willRouteToCloud({
@@ -733,6 +770,10 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
       cloudPresentationFreeform || cloudHtmlFreeform || cloudSpreadsheetFreeform;
 
     let chartPool: ChartPoolEntry[] = [];
+    const chartBindings =
+      activeSheetProfile != null
+        ? suggestChartBindings(activeSheetProfile, text)
+        : [];
     if (
       useCloud &&
       (cloudHtmlFreeform || cloudPresentationFreeform) &&
@@ -740,23 +781,37 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
     ) {
       try {
         useChatModeStore.getState().setLiveToolStatus("Preparing charts…");
-        const chartDataHint = [
-          spreadsheetData ? buildHtmlDataContext(spreadsheetData, 12) : "",
-          headers?.length
-            ? `Columns: [${headers.join(", ")}]. Rows: ${rows?.length ?? 0}.`
-            : "",
-          supplementalContext.slice(0, 4000),
-        ]
-          .filter(Boolean)
-          .join("\n");
-        chartPool = await runCloudArtifactChartPrep({
-          artifactRequest: text,
-          schemaId,
-          dataContext: chartDataHint,
-          signal: ctrl.signal,
-          onStatus: (status) =>
-            useChatModeStore.getState().setLiveToolStatus(status),
-        });
+        if (spreadsheetData && activeSheetProfile) {
+          chartPool = await buildFileBackedChartPool({
+            data: spreadsheetData,
+            profile: activeSheetProfile,
+            prompt: text,
+            theme: htmlThemeHint || defaultThemeForArchetype(htmlArchetype),
+          });
+        }
+        if (chartPool.length === 0) {
+          const chartDataHint = [
+            workbookProfiles.length && activeSheetProfile
+              ? buildWorkbookDataContext(workbookProfiles, activeSheetProfile, 12)
+              : spreadsheetData
+                ? buildHtmlDataContext(spreadsheetData, 12)
+                : "",
+            headers?.length
+              ? `Columns: [${headers.join(", ")}]. Rows: ${rows?.length ?? 0}.`
+              : "",
+            supplementalContext.slice(0, 4000),
+          ]
+            .filter(Boolean)
+            .join("\n");
+          chartPool = await runCloudArtifactChartPrep({
+            artifactRequest: text,
+            schemaId,
+            dataContext: chartDataHint,
+            signal: ctrl.signal,
+            onStatus: (status) =>
+              useChatModeStore.getState().setLiveToolStatus(status),
+          });
+        }
         if (chartPool.length) {
           useChatModeStore
             .getState()
@@ -884,7 +939,9 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
           : `Generate a plan for the user request: "${text}".${rowCountSuffix}`;
     const spreadsheetContext =
       schemaId === "html_synthesis" && spreadsheetData
-        ? buildHtmlDataContext(spreadsheetData)
+        ? workbookProfiles.length && activeSheetProfile
+          ? buildWorkbookDataContext(workbookProfiles, activeSheetProfile, 12)
+          : buildHtmlDataContext(spreadsheetData)
         : "";
     const dataContextBody = `${dataContext}${spreadsheetContext}${imageCatalog}${chartCatalog}`;
     const planRequestText = planRequest;
@@ -975,6 +1032,9 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
         }
         if (spreadsheetData) {
           planObj = attachSpreadsheetToPlan(planObj, spreadsheetData);
+          if (chartBindings.length) {
+            planObj = ensureChartBindingsOnPlan(planObj, chartBindings);
+          }
         }
         if (imagePool.length) {
           planObj = attachImagesToHtmlPlan(planObj, imagePool);
