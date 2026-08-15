@@ -223,7 +223,7 @@
 .glass-btn {
   background: var(--color-glass-bg);
   border: 1px solid var(--color-glass-border);
-  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease, transform 0.15s ease;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease, transform 0.15s ease, opacity 0.15s ease;
 }
 
 .glass-btn:hover:not(:disabled) {
@@ -234,6 +234,11 @@
 
 .glass-btn:active:not(:disabled) {
   transform: scale(0.98);
+}
+
+.glass-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 

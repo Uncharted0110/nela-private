@@ -183,6 +183,14 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
     endRef.current?.scrollIntoView({ behavior, block: "end" });
   }, [messages.length, streamingContent]);
 
+  // Close composer menus while a response is generating (same gate as mic).
+  useEffect(() => {
+    if (!isLoading) return;
+    setShowAttachMenu(false);
+    setShowModeMenu(false);
+    setShowToolsMenu(false);
+  }, [isLoading]);
+
   // Close attach menu on outside click
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -696,8 +704,11 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
             {showAttachButton && (
               <div className="relative" ref={attachMenuRef}>
                 <button
-                  className="glass-btn flex items-center justify-center w-10 h-10 bg-glass-bg border border-glass-border text-txt-muted cursor-pointer rounded-lg transition-colors duration-150 hover:text-txt disabled:opacity-40"
-                  onClick={() => setShowAttachMenu(!showAttachMenu)}
+                  className="glass-btn flex items-center justify-center w-10 h-10 bg-glass-bg border border-glass-border text-txt-muted cursor-pointer rounded-lg transition-colors duration-150 hover:text-txt disabled:opacity-40 disabled:cursor-not-allowed"
+                  onClick={() => {
+                    if (isLoading) return;
+                    setShowAttachMenu(!showAttachMenu);
+                  }}
                   title={attachButtonLabel}
                   aria-label={attachButtonLabel}
                   disabled={isLoading}
@@ -709,7 +720,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
                   </svg>
                 </button>
 
-                {showAttachMenu && (
+                {showAttachMenu && !isLoading && (
                   <div className="animate-attach-menu absolute bottom-full left-0 mb-2 w-[280px] rounded-xl bg-void-700/80 backdrop-blur-xl border border-glass-border shadow-[0_8px_32px_rgba(0,0,0,0.5)] p-1 z-50">
                     {renderAttachMenu()}
                   </div>
@@ -727,8 +738,11 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
             />
             <div className="relative" ref={toolsMenuRef}>
               <button
-                className="glass-btn flex items-center justify-center w-10 h-10 rounded-lg bg-glass-bg border border-glass-border text-txt-muted cursor-pointer transition-colors duration-150 hover:text-txt"
-                onClick={() => setShowToolsMenu((v) => !v)}
+                className="glass-btn flex items-center justify-center w-10 h-10 rounded-lg bg-glass-bg border border-glass-border text-txt-muted cursor-pointer transition-colors duration-150 hover:text-txt disabled:opacity-40 disabled:cursor-not-allowed"
+                onClick={() => {
+                  if (isLoading) return;
+                  setShowToolsMenu((v) => !v);
+                }}
                 title="Tools"
                 aria-label="Tools"
                 disabled={isLoading}
@@ -736,12 +750,15 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
                 <Wrench size={16} strokeWidth={1.9} />
               </button>
 
-              {showToolsMenu && renderToolsMenu()}
+              {showToolsMenu && !isLoading && renderToolsMenu()}
             </div>
             <div className="relative" ref={modeMenuRef}>
               <button
-                className="glass-btn flex items-center gap-1.5 h-10 px-2 rounded-lg bg-glass-bg border border-glass-border text-txt-muted cursor-pointer transition-colors duration-150 hover:text-txt"
-                onClick={() => setShowModeMenu((v) => !v)}
+                className="glass-btn flex items-center gap-1.5 h-10 px-2 rounded-lg bg-glass-bg border border-glass-border text-txt-muted cursor-pointer transition-colors duration-150 hover:text-txt disabled:opacity-40 disabled:cursor-not-allowed"
+                onClick={() => {
+                  if (isLoading) return;
+                  setShowModeMenu((v) => !v);
+                }}
                 title="Switch mode"
                 aria-label="Switch mode"
                 disabled={isLoading}
@@ -751,7 +768,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
                 <span className="text-[0.8rem] font-medium leading-none">{currentModeLabel}</span>
               </button>
 
-              {showModeMenu && (
+              {showModeMenu && !isLoading && (
                 <div className="animate-attach-menu absolute bottom-full right-0 mb-2 w-[180px] rounded-xl bg-void-700/90 backdrop-blur-xl border border-glass-border shadow-[0_8px_32px_rgba(0,0,0,0.5)] p-1 z-50">
                   {modeOptions.map((option) => {
                     const active = option.mode === currentMode;
@@ -975,8 +992,11 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
           {showAttachButton && (
             <div className="relative" ref={attachMenuRef}>
               <button
-                className="glass-btn flex items-center justify-center w-10 h-10 bg-glass-bg border border-glass-border text-txt-muted cursor-pointer rounded-lg transition-all duration-200 backdrop-blur-sm hover:text-neon hover:border-neon/30 hover:shadow-[0_0_8px_rgba(0,212,255,0.1)] disabled:opacity-40"
-                onClick={() => setShowAttachMenu(!showAttachMenu)}
+                className="glass-btn flex items-center justify-center w-10 h-10 bg-glass-bg border border-glass-border text-txt-muted cursor-pointer rounded-lg transition-all duration-200 backdrop-blur-sm hover:text-neon hover:border-neon/30 hover:shadow-[0_0_8px_rgba(0,212,255,0.1)] disabled:opacity-40 disabled:cursor-not-allowed"
+                onClick={() => {
+                  if (isLoading) return;
+                  setShowAttachMenu(!showAttachMenu);
+                }}
                 title={attachButtonLabel}
                 aria-label={attachButtonLabel}
                 disabled={isLoading}
@@ -988,7 +1008,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
                 </svg>
               </button>
 
-              {showAttachMenu && (
+              {showAttachMenu && !isLoading && (
                 <div className="animate-attach-menu absolute bottom-full left-0 mb-2 w-[280px] rounded-xl bg-void-700/80 backdrop-blur-xl border border-glass-border shadow-[0_8px_32px_rgba(0,0,0,0.5)] p-1 z-50">
                   {renderAttachMenu()}
                 </div>
@@ -1006,8 +1026,11 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
           />
           <div className="relative" ref={modeMenuRef}>
             <button
-              className="glass-btn flex items-center gap-1.5 h-10 px-2 rounded-lg bg-glass-bg border border-glass-border text-txt-muted cursor-pointer transition-all duration-200 hover:text-neon hover:border-neon/30 hover:shadow-[0_0_10px_rgba(0,212,255,0.12)]"
-              onClick={() => setShowModeMenu((v) => !v)}
+              className="glass-btn flex items-center gap-1.5 h-10 px-2 rounded-lg bg-glass-bg border border-glass-border text-txt-muted cursor-pointer transition-all duration-200 hover:text-neon hover:border-neon/30 hover:shadow-[0_0_10px_rgba(0,212,255,0.12)] disabled:opacity-40 disabled:cursor-not-allowed"
+              onClick={() => {
+                if (isLoading) return;
+                setShowModeMenu((v) => !v);
+              }}
               title="Switch mode"
               aria-label="Switch mode"
               disabled={isLoading}
@@ -1017,7 +1040,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
               <span className="text-[0.8rem] font-medium leading-none">{currentModeLabel}</span>
             </button>
 
-            {showModeMenu && (
+            {showModeMenu && !isLoading && (
               <div className="animate-attach-menu absolute bottom-full right-0 mb-2 w-[180px] rounded-xl bg-void-700/90 backdrop-blur-xl border border-glass-border shadow-[0_8px_32px_rgba(0,0,0,0.5)] p-1 z-50">
                 {modeOptions.map((option) => {
                   const active = option.mode === currentMode;
@@ -1043,8 +1066,11 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
           </div>
           <div className="relative" ref={toolsMenuRef}>
             <button
-              className="glass-btn flex items-center justify-center w-10 h-10 rounded-lg bg-glass-bg border border-glass-border text-txt-muted cursor-pointer transition-all duration-200 hover:text-neon hover:border-neon/30 hover:shadow-[0_0_10px_rgba(0,212,255,0.12)]"
-              onClick={() => setShowToolsMenu((v) => !v)}
+              className="glass-btn flex items-center justify-center w-10 h-10 rounded-lg bg-glass-bg border border-glass-border text-txt-muted cursor-pointer transition-all duration-200 hover:text-neon hover:border-neon/30 hover:shadow-[0_0_10px_rgba(0,212,255,0.12)] disabled:opacity-40 disabled:cursor-not-allowed"
+              onClick={() => {
+                if (isLoading) return;
+                setShowToolsMenu((v) => !v);
+              }}
               title="Tools"
               aria-label="Tools"
               disabled={isLoading}
@@ -1052,7 +1078,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
               <Wrench size={16} strokeWidth={1.9} />
             </button>
 
-            {showToolsMenu && renderToolsMenu()}
+            {showToolsMenu && !isLoading && renderToolsMenu()}
           </div>
           {isLoading ? (
             <button className="flex items-center justify-center w-10 h-10 rounded-lg bg-danger/80 backdrop-blur-sm text-white border border-danger/30 cursor-pointer transition-all duration-200 shadow-[0_0_12px_rgba(248,113,113,0.2)] hover:bg-danger hover:shadow-[0_0_20px_rgba(248,113,113,0.3)] shrink-0" onClick={onCancel} title="Stop generation" aria-label="Stop response">
