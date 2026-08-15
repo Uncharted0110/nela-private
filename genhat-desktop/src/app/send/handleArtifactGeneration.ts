@@ -171,6 +171,7 @@ export async function handleArtifactGeneration(
 
   let artifactWebSearchResult: WebSearchResult | null = null;
   let artifactGeneratedByModel: string | undefined;
+  let artifactCreditsRemaining: number | undefined;
 
   let lastArtifactStage: PipelineStageKind | null = null;
   const updateArtifactMsg = (
@@ -219,6 +220,9 @@ export async function handleArtifactGeneration(
             : {}),
           ...(artifactGeneratedByModel
             ? { generatedByModel: artifactGeneratedByModel }
+            : {}),
+          ...(typeof artifactCreditsRemaining === "number"
+            ? { creditsRemainingAfter: artifactCreditsRemaining }
             : {}),
         };
       }
@@ -1364,6 +1368,9 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
             ctx.selectedModel?.trim() ||
             useModelStore.getState().selectedModel?.trim() ||
             undefined;
+        }
+        if (typeof meta?.creditsRemaining === "number") {
+          artifactCreditsRemaining = meta.creditsRemaining;
         }
         void (async () => {
           useChatModeStore.getState().setLiveToolStatus(null);

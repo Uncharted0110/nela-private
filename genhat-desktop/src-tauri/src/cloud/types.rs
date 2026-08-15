@@ -95,6 +95,20 @@ pub enum DevicePollResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct EntitlementCredits {
+    pub balance: u32,
+    #[serde(default)]
+    pub pack_credits: u32,
+    #[serde(default)]
+    pub monthly_grant: u32,
+    #[serde(default)]
+    pub trial_credits: u32,
+    #[serde(default)]
+    pub trial_expires_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct EntitlementQuota {
     pub included_usd: f64,
     pub used_usd: f64,
@@ -107,6 +121,10 @@ pub struct EntitlementFastFree {
     pub limit: u32,
     pub used: u32,
     pub remaining: u32,
+    #[serde(default)]
+    pub window_hours: Option<u32>,
+    #[serde(default)]
+    pub resets_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -129,6 +147,8 @@ pub struct EntitlementResponse {
     pub is_premium: Option<bool>,
     #[serde(default)]
     pub paid_cloud: bool,
+    #[serde(default)]
+    pub credits: Option<EntitlementCredits>,
     pub quota: EntitlementQuota,
     #[serde(default)]
     pub fast_free: Option<EntitlementFastFree>,

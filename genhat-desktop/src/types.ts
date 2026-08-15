@@ -72,6 +72,11 @@ export interface ChatMessage {
   streamingArtifactTitle?: string;
   /** OpenRouter / local model id that produced this assistant turn. */
   generatedByModel?: string;
+  /**
+   * Spendable credit balance after this cloud turn (free-plan trial / packs).
+   * Shown next to the model hover label for free-plan accounts.
+   */
+  creditsRemainingAfter?: number;
 }
 
 export interface ChatContextMessage {
@@ -683,6 +688,8 @@ export interface EntitlementResponse {
     balance: number;
     packCredits: number;
     monthlyGrant: number;
+    trialCredits?: number;
+    trialExpiresAt?: string | null;
   };
   quota: {
     includedUsd: number;

@@ -74,6 +74,8 @@ export interface CloudNativeToolLoopResult {
   artifacts: ArtifactResult[];
   /** OpenRouter / local model id from the last generation round. */
   model?: string;
+  /** Post-request credit balance from the last cloud round. */
+  creditsRemaining?: number;
 }
 
 function toCloudMessages(messages: ChatContextMessage[]): CloudChatMessage[] {
@@ -91,7 +93,12 @@ function streamCloudRound(
   tools: CloudToolDefinition[],
   opts: CloudNativeToolLoopOptions,
   toolChoice: "auto" | "required" | { type: "function"; function: { name: string } } = "auto"
-): Promise<{ content: string; tool_calls?: CloudToolCall[]; model?: string }> {
+): Promise<{
+  content: string;
+  tool_calls?: CloudToolCall[];
+  model?: string;
+  creditsRemaining?: number;
+}> {
   return new Promise((resolve, reject) => {
     let content = "";
     let settled = false;
@@ -136,6 +143,7 @@ function streamCloudRound(
             content,
             tool_calls: meta?.tool_calls,
             model: meta?.model,
+            creditsRemaining: meta?.creditsRemaining,
           })
         );
       },
@@ -598,6 +606,7 @@ export async function runCloudNativeToolLoop(
   let thinking = "";
   let lastContent = "";
   let lastModel: string | undefined;
+  let lastCreditsRemaining: number | undefined;
 
   try {
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
@@ -623,6 +632,9 @@ export async function runCloudNativeToolLoop(
 
       lastContent = decision.content;
       if (decision.model?.trim()) lastModel = decision.model.trim();
+      if (typeof decision.creditsRemaining === "number") {
+        lastCreditsRemaining = decision.creditsRemaining;
+      }
 
       const toolCalls = decision.tool_calls ?? [];
 
@@ -636,6 +648,7 @@ export async function runCloudNativeToolLoop(
           webSearchResult,
           artifacts,
           model: lastModel,
+          creditsRemaining: lastCreditsRemaining,
         };
       }
 
@@ -693,8 +706,11 @@ export async function runCloudNativeToolLoop(
     }
 
     // Final prose turn without tools
-    const finale = await new Promise<{ content: string; model?: string }>(
-      (resolve, reject) => {
+    const finale = await new Promise<{
+      content: string;
+      model?: string;
+      creditsRemaining?: number;
+    }>((resolve, reject) => {
         let content = "";
         streamChatByMode({
           messages,
@@ -716,12 +732,19 @@ export async function runCloudNativeToolLoop(
             opts.onThinking(t);
           },
           onFinish: (meta) =>
-            resolve({ content, model: meta?.model }),
+            resolve({
+              content,
+              model: meta?.model,
+              creditsRemaining: meta?.creditsRemaining,
+            }),
           onError: reject,
         });
       }
     );
     if (finale.model?.trim()) lastModel = finale.model.trim();
+    if (typeof finale.creditsRemaining === "number") {
+      lastCreditsRemaining = finale.creditsRemaining;
+    }
 
     return {
       content: finale.content || lastContent,
@@ -729,6 +752,7 @@ export async function runCloudNativeToolLoop(
       webSearchResult,
       artifacts,
       model: lastModel,
+      creditsRemaining: lastCreditsRemaining,
     };
   } finally {
     opts.onToolStatus?.(null);

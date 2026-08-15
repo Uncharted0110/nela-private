@@ -14,7 +14,8 @@ export function isPremiumAccount(input: {
 }): boolean {
   const { profile, entitlement } = input;
 
-  if (entitlement?.paidCloud === true) return true;
+  // Premium branding is plan-based. Credit balance (trial / packs) unlocks
+  // Smart/Deep via `paidCloud` but does not make a free account "Premium".
   if (entitlement?.isPremium === true) return true;
   if (entitlement?.displayPlan === "premium") return true;
 

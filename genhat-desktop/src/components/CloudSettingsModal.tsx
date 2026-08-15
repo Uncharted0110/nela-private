@@ -172,6 +172,20 @@ const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                           <span>Credits remaining</span>
                           <strong>{entitlement.credits.balance}</strong>
                         </div>
+                        {(entitlement.credits.trialCredits ?? 0) > 0 ||
+                        entitlement.credits.trialExpiresAt ? (
+                          <div className="cloud-quota-row">
+                            <span>Free trial credits</span>
+                            <strong>
+                              {entitlement.credits.trialCredits ?? 0}
+                              {entitlement.credits.trialExpiresAt
+                                ? ` · expires ${new Date(
+                                    entitlement.credits.trialExpiresAt
+                                  ).toLocaleDateString()}`
+                                : ""}
+                            </strong>
+                          </div>
+                        ) : null}
                         {entitlement.credits.monthlyGrant > 0 && (
                           <div className="cloud-quota-row">
                             <span>Monthly grant used</span>
@@ -184,7 +198,8 @@ const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                                     Math.max(
                                       0,
                                       entitlement.credits.balance -
-                                        entitlement.credits.packCredits
+                                        entitlement.credits.packCredits -
+                                        (entitlement.credits.trialCredits ?? 0)
                                     )
                                 )
                               )}{" "}

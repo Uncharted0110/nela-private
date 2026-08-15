@@ -131,11 +131,11 @@ export const COPY = {
   errorPlan:
     "Your plan doesn't cover this yet. Open Cloud settings or upgrade on the website.",
   errorUpgradeRequired:
-    "Smart and Deep need credits. Buy a pack or upgrade from Cloud settings / the website.",
+    "Smart and Deep need credits. Your free trial may have ended — buy a pack or upgrade from Cloud settings.",
   errorCreditsEmpty:
     "You're out of credits. Buy a pack or wait for your next monthly grant.",
   errorFastQuota:
-    "You've used today's free Fast allowance. Wait for the window to reset, or buy credits for unlimited Fast.",
+    "You've used the free Fast allowance (8 / 6h). Wait for the window to reset, or buy credits for unlimited Fast and Smart/Deep.",
   errorOpenBrowser:
     "We couldn't open your browser. Open nela.ai manually, then try again.",
   errorNotSignedIn:

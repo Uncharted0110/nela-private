@@ -6,7 +6,7 @@ import SpeakButton from "./SpeakButton";
 import InlineArtifact from "./InlineArtifact";
 import ArtifactChip from "./ArtifactChip";
 import { Api } from "../api";
-import type { ChatMessage, MediaAsset } from "../types";
+import type { ChatMessage, EntitlementResponse, MediaAsset } from "../types";
 import { COPY } from "../app/copy";
 import { friendlyError } from "../app/friendlyError";
 import { SlashHighlightedText } from "./SlashHighlightedText";
@@ -16,7 +16,30 @@ import type { PipelineStageKind } from "./ProgressSlate";
 import { scrubChatArtifactProtocol } from "../app/streamArtifactParser";
 import { useChatModeStore } from "../stores/chatModeStore";
 import { useSessionStore } from "../stores/sessionStore";
+import { useCloudStore } from "../stores/cloudStore";
 import ReasoningDisclosure from "./ReasoningDisclosure";
+
+function modelHoverLabel(
+  model: string,
+  creditsRemainingAfter: number | undefined,
+  entitlement: EntitlementResponse | null
+): { text: string; title: string } {
+  const freePlan =
+    entitlement?.plan === "free" ||
+    entitlement?.displayPlan === "free" ||
+    entitlement?.isPremium === false;
+  const credits =
+    typeof creditsRemainingAfter === "number"
+      ? creditsRemainingAfter
+      : freePlan && typeof entitlement?.credits?.balance === "number"
+        ? entitlement.credits.balance
+        : null;
+  if (!freePlan || credits === null) {
+    return { text: model, title: model };
+  }
+  const title = `${model} · ${credits} credit${credits === 1 ? "" : "s"} remaining`;
+  return { text: `${model} · ${credits} left`, title };
+}
 
 function looksLikeArtifactDump(text: string): boolean {
   const scrubbed = scrubChatArtifactProtocol(text).trim();
@@ -265,11 +288,19 @@ function ChatMessageItemInner({
   onOpenPreview,
 }: ChatMessageItemProps) {
   const updateSession = useSessionStore((s) => s.updateSession);
+  const entitlement = useCloudStore((s) => s.entitlement);
   const canRetry = Boolean(retryText?.trim()) && !isLoading && Boolean(onRetry);
   const runRetry = () => {
     if (!canRetry || !onRetry) return;
     onRetry(idx);
   };
+  const modelLabel = msg.generatedByModel
+    ? modelHoverLabel(
+        msg.generatedByModel,
+        msg.creditsRemainingAfter,
+        entitlement
+      )
+    : null;
 
   return (
               <div className={`${isNew ? "animate-msg-fade" : ""} group/msg flex gap-3 mb-6 max-w-3xl mx-auto ${msg.role === "user" ? "justify-end" : ""}`}>
@@ -522,12 +553,12 @@ function ChatMessageItemInner({
                               Generated in {msg.generateTime}s {msg.firstTokenTime !== undefined && `• First token in ${msg.firstTokenTime}s`}
                             </span>
                           )}
-                          {msg.generatedByModel ? (
+                          {modelLabel ? (
                             <span
                               className="ml-auto max-w-[55%] truncate text-[0.72rem] text-txt-muted opacity-0 transition-opacity duration-150 group-hover/msg:opacity-100"
-                              title={msg.generatedByModel}
+                              title={modelLabel.title}
                             >
-                              {msg.generatedByModel}
+                              {modelLabel.text}
                             </span>
                           ) : null}
                         </div>

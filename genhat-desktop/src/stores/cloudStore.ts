@@ -80,6 +80,12 @@ export interface CloudStoreState {
 
   setPreferredMode: (mode: CloudRoutingPreference) => void;
   refreshEntitlement: () => Promise<void>;
+  /** Patch wallet fields from a cloud chat response without a full refetch. */
+  applyCreditsSnapshot: (snap: {
+    balance: number;
+    trialCredits?: number;
+    trialExpiresAt?: string | null;
+  }) => void;
   openCheckout: (plan: "starter" | "pro") => Promise<void>;
   openBillingPage: () => Promise<void>;
   openPricingPage: () => Promise<void>;
@@ -129,6 +135,38 @@ export const useCloudStore = create<CloudStoreState>((set) => ({
         error: toFriendly(err),
       });
     }
+  },
+
+  applyCreditsSnapshot: (snap) => {
+    set((state) => {
+      const prev = state.entitlement;
+      if (!prev) return state;
+      const credits = {
+        balance: Math.max(0, Math.floor(snap.balance)),
+        packCredits: prev.credits?.packCredits ?? 0,
+        monthlyGrant: prev.credits?.monthlyGrant ?? 0,
+        trialCredits:
+          typeof snap.trialCredits === "number"
+            ? Math.max(0, Math.floor(snap.trialCredits))
+            : prev.credits?.trialCredits ?? 0,
+        trialExpiresAt:
+          snap.trialExpiresAt !== undefined
+            ? snap.trialExpiresAt
+            : prev.credits?.trialExpiresAt ?? null,
+      };
+      const entitlement: EntitlementResponse = {
+        ...prev,
+        paidCloud: credits.balance > 0,
+        credits,
+        quota: {
+          ...prev.quota,
+          remainingUsd: credits.balance * (prev.quota.remainingUsd /
+            Math.max(1, prev.credits?.balance || 1)),
+        },
+      };
+      persistEntitlementDisplay(entitlement);
+      return { entitlement };
+    });
   },
 
   confirmCheckout: async () => {

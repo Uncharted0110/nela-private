@@ -19,10 +19,18 @@ import type {
   CloudToolDefinition,
 } from "../../types";
 
+type StreamFinishMeta = {
+  tool_calls?: CloudToolCall[];
+  model?: string;
+  creditsRemaining?: number;
+  trialCreditsRemaining?: number;
+  trialExpiresAt?: string | null;
+};
+
 type StreamCallbacks = {
   onChunk: (chunk: string) => void;
   onThinking: (thinking: string) => void;
-  onFinish: (meta?: { tool_calls?: CloudToolCall[]; model?: string }) => void;
+  onFinish: (meta?: StreamFinishMeta) => void;
   onError: (err: unknown) => void;
 };
 
@@ -313,9 +321,22 @@ async function runCloudStream(args: StreamArgs): Promise<void> {
         error?: string;
         tool_calls?: CloudToolCall[];
         model?: string;
+        creditsRemaining?: number;
+        trialCreditsRemaining?: number;
+        trialExpiresAt?: string | null;
       }>("cloud-chat-stream", (event) => {
         if (settled) return;
-        const { chunk, thinking, done, error, tool_calls, model } = event.payload;
+        const {
+          chunk,
+          thinking,
+          done,
+          error,
+          tool_calls,
+          model,
+          creditsRemaining,
+          trialCreditsRemaining,
+          trialExpiresAt,
+        } = event.payload;
         if (error) {
           finish(() => {
             unlisten();
@@ -337,11 +358,31 @@ async function runCloudStream(args: StreamArgs): Promise<void> {
         if (done) {
           finish(() => {
             unlisten();
-            const meta: { tool_calls?: CloudToolCall[]; model?: string } = {};
+            const meta: StreamFinishMeta = {};
             if (tool_calls?.length) meta.tool_calls = tool_calls;
             if (model?.trim()) meta.model = model.trim();
+            if (typeof creditsRemaining === "number") {
+              meta.creditsRemaining = creditsRemaining;
+            }
+            if (typeof trialCreditsRemaining === "number") {
+              meta.trialCreditsRemaining = trialCreditsRemaining;
+            }
+            if (trialExpiresAt !== undefined) {
+              meta.trialExpiresAt = trialExpiresAt;
+            }
+            if (typeof meta.creditsRemaining === "number") {
+              useCloudStore.getState().applyCreditsSnapshot({
+                balance: meta.creditsRemaining,
+                trialCredits: meta.trialCreditsRemaining,
+                trialExpiresAt: meta.trialExpiresAt,
+              });
+            }
             args.onFinish(
-              meta.tool_calls || meta.model ? meta : undefined
+              meta.tool_calls ||
+                meta.model ||
+                typeof meta.creditsRemaining === "number"
+                ? meta
+                : undefined
             );
             resolve();
           });

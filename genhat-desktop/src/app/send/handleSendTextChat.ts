@@ -220,7 +220,8 @@ export async function handleSendTextChat(
     response: string,
     thinking: string,
     web: WebSearchResult | null,
-    generatedByModel?: string | null
+    generatedByModel?: string | null,
+    creditsRemainingAfter?: number | null
   ) => {
     chunkFlusher.flushNow();
     thinkingFlusher.flushNow();
@@ -339,6 +340,9 @@ export async function handleSendTextChat(
             webSearchResult: web ?? undefined,
             ...(generatedByModel?.trim()
               ? { generatedByModel: generatedByModel.trim() }
+              : {}),
+            ...(typeof creditsRemainingAfter === "number"
+              ? { creditsRemainingAfter }
               : {}),
             generateTime: totalTime,
             firstTokenTime:
@@ -466,7 +470,8 @@ export async function handleSendTextChat(
           fullResponse || result.content,
           fullThinking || result.thinking,
           webSearchResult,
-          result.model
+          result.model,
+          result.creditsRemaining
         );
       })
       .catch((err) => {
@@ -489,7 +494,13 @@ export async function handleSendTextChat(
     onChunk,
     onThinking,
     onFinish: (meta) => {
-      void finishOk(fullResponse, fullThinking, null, meta?.model);
+      void finishOk(
+        fullResponse,
+        fullThinking,
+        null,
+        meta?.model,
+        meta?.creditsRemaining
+      );
     },
     onError: finishErr,
   });

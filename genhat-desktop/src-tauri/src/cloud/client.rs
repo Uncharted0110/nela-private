@@ -616,12 +616,29 @@ pub async fn chat_stream(
         return Err(read_error_body(resp).await);
     }
 
-    let mut stream_model: Option<String> = resp
+    let stream_model: Option<String> = resp
         .headers()
         .get("x-nela-selected-model")
         .and_then(|v| v.to_str().ok())
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
+    let stream_credits_remaining: Option<u64> = resp
+        .headers()
+        .get("x-nela-credits-remaining")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.trim().parse().ok());
+    let stream_trial_credits: Option<u64> = resp
+        .headers()
+        .get("x-nela-trial-credits-remaining")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.trim().parse().ok());
+    let stream_trial_expires: Option<String> = resp
+        .headers()
+        .get("x-nela-trial-expires-at")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let mut stream_model = stream_model;
 
     let content_type = resp
         .headers()
@@ -687,7 +704,14 @@ pub async fn chat_stream(
                 if data == "[DONE]" {
                     if !emitted_done {
                         emitted_done = true;
-                        emit_stream_done(app, &tool_acc, stream_model.as_deref());
+                        emit_stream_done(
+                            app,
+                            &tool_acc,
+                            stream_model.as_deref(),
+                            stream_credits_remaining,
+                            stream_trial_credits,
+                            stream_trial_expires.as_deref(),
+                        );
                     }
                     continue;
                 }
@@ -725,7 +749,14 @@ pub async fn chat_stream(
         }
 
         if !emitted_done {
-            emit_stream_done(app, &tool_acc, stream_model.as_deref());
+            emit_stream_done(
+                app,
+                &tool_acc,
+                stream_model.as_deref(),
+                stream_credits_remaining,
+                stream_trial_credits,
+                stream_trial_expires.as_deref(),
+            );
         }
         return Ok(());
     }
@@ -751,6 +782,19 @@ pub async fn chat_stream(
                 .and_then(|v| v.as_str())
                 .filter(|s| !s.is_empty())
         });
+    let credits_remaining = value
+        .pointer("/nela/creditsRemaining")
+        .and_then(|v| v.as_u64())
+        .or(stream_credits_remaining);
+    let trial_credits = value
+        .pointer("/nela/trialCreditsRemaining")
+        .and_then(|v| v.as_u64())
+        .or(stream_trial_credits);
+    let trial_expires = value
+        .pointer("/nela/trialExpiresAt")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .or(stream_trial_expires);
     let mut payload = serde_json::json!({ "chunk": "", "done": true });
     if let Some(calls) = tool_calls {
         payload["tool_calls"] = calls;
@@ -758,17 +802,42 @@ pub async fn chat_stream(
     if let Some(m) = model {
         payload["model"] = serde_json::json!(m);
     }
+    if let Some(c) = credits_remaining {
+        payload["creditsRemaining"] = serde_json::json!(c);
+    }
+    if let Some(c) = trial_credits {
+        payload["trialCreditsRemaining"] = serde_json::json!(c);
+    }
+    if let Some(exp) = trial_expires {
+        payload["trialExpiresAt"] = serde_json::json!(exp);
+    }
     let _ = app.emit("cloud-chat-stream", payload);
     Ok(())
 }
 
-fn emit_stream_done(app: &AppHandle, tool_acc: &ToolCallAccumulator, model: Option<&str>) {
+fn emit_stream_done(
+    app: &AppHandle,
+    tool_acc: &ToolCallAccumulator,
+    model: Option<&str>,
+    credits_remaining: Option<u64>,
+    trial_credits: Option<u64>,
+    trial_expires: Option<&str>,
+) {
     let mut payload = serde_json::json!({ "chunk": "", "done": true });
     if let Some(calls) = tool_acc.finish() {
         payload["tool_calls"] = calls;
     }
     if let Some(m) = model.filter(|s| !s.is_empty()) {
         payload["model"] = serde_json::json!(m);
+    }
+    if let Some(c) = credits_remaining {
+        payload["creditsRemaining"] = serde_json::json!(c);
+    }
+    if let Some(c) = trial_credits {
+        payload["trialCreditsRemaining"] = serde_json::json!(c);
+    }
+    if let Some(exp) = trial_expires.filter(|s| !s.is_empty()) {
+        payload["trialExpiresAt"] = serde_json::json!(exp);
     }
     let _ = app.emit("cloud-chat-stream", payload);
 }
