@@ -46,6 +46,10 @@ export interface ChatMessage {
   };
   /** Optional files attached directly to a user message (non-RAG document grounding). */
   directDocuments?: DirectDocumentAttachment[];
+  /** PDF parser annotations from a prior cloud assistant turn (on-device reuse). */
+  fileAnnotations?: FileAnnotation[];
+  /** Shown when a previously attached local file changed or disappeared. */
+  attachmentWarning?: string;
   generateTime?: number;
   firstTokenTime?: number;
   /** Optional audio output URL for assistant messages (audio mode, podcasts, etc). */
@@ -255,6 +259,71 @@ export interface RagStreamSetup {
 export interface DirectDocumentAttachment {
   path: string;
   name: string;
+  mime?: string;
+  sizeBytes?: number;
+  contentHash?: string;
+  kind?: "image" | "pdf" | "extracted_text";
+  parser?: PdfParserEngine | "local-extract";
+  destination?: "local" | "cloud";
+}
+
+export type PdfParserEngine = "cloudflare-ai" | "mistral-ocr" | "native";
+
+export type CloudChatTextPart = { type: "text"; text: string };
+export type CloudChatImageUrlPart = {
+  type: "image_url";
+  image_url: { url: string };
+};
+export type CloudChatFilePart = {
+  type: "file";
+  file: { filename: string; file_data: string };
+};
+export type CloudChatContentPart =
+  | CloudChatTextPart
+  | CloudChatImageUrlPart
+  | CloudChatFilePart;
+export type CloudChatContent = string | null | CloudChatContentPart[];
+
+export type FileAnnotationContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } };
+
+export interface FileAnnotation {
+  type: "file";
+  file: {
+    hash: string;
+    name?: string;
+    content: FileAnnotationContentPart[];
+  };
+}
+
+export interface CloudFileParserPlugin {
+  id: "file-parser";
+  pdf?: { engine?: PdfParserEngine };
+}
+
+export interface PreparedCloudAttachment {
+  path: string;
+  name: string;
+  mime: string;
+  sizeBytes: number;
+  contentHash: string;
+  kind: "image" | "pdf" | "extracted_text";
+  parser?: PdfParserEngine | "local-extract";
+  destination: "local" | "cloud";
+  dataUrl?: string;
+  extractedText?: string;
+  warning?: string;
+}
+
+export interface InspectedAttachment {
+  path: string;
+  name: string;
+  mime: string;
+  sizeBytes: number;
+  contentHash: string;
+  kind: "image" | "pdf" | "extracted_text" | "unsupported";
+  error?: string;
 }
 
 export interface DirectDocumentUsed {
@@ -363,6 +432,8 @@ export interface ChatSession {
   artifactStreamActive?: boolean;
   /** User-toggled visibility of the artifact side panel (content kept when closed). */
   artifactPanelOpen?: boolean;
+  /** 0-based slide currently visible in the preview iframe (for “this slide” chat edits). */
+  previewSlideIndex?: number | null;
   /** Live HTML/PPT body for the side panel. */
   streamingArtifactHtml?: string;
   /** Live CSV body for the side panel. */
@@ -737,10 +808,11 @@ export type CloudToolChoice =
 
 export interface CloudChatMessage {
   role: "system" | "user" | "assistant" | "tool";
-  content?: string | null;
+  content?: CloudChatContent;
   tool_calls?: CloudToolCall[];
   tool_call_id?: string;
   name?: string;
+  annotations?: FileAnnotation[];
 }
 
 export interface CloudChatRequest {
@@ -762,6 +834,7 @@ export interface CloudChatRequest {
   response_format?: { type: "json_object" | "text" };
   /** When true, ask OpenRouter to include streamed reasoning tokens. */
   includeReasoning?: boolean;
+  plugins?: CloudFileParserPlugin[];
   client?: {
     appVersion?: string;
     platform?: string;

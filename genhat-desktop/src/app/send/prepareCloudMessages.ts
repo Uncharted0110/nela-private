@@ -13,12 +13,19 @@ import {
 } from "../nelaSystemPrompt";
 import { isDiscoveryNotice } from "../contextCompaction";
 
+import type {
+  CloudChatContent,
+  CloudChatMessage,
+  CloudToolCall,
+} from "../../types";
+
 export type CloudCacheMessage = {
   role: "system" | "user" | "assistant" | "tool";
-  content?: string | null;
-  tool_calls?: unknown;
+  content?: CloudChatContent;
+  tool_calls?: CloudToolCall[];
   tool_call_id?: string;
   name?: string;
+  annotations?: CloudChatMessage["annotations"];
 };
 
 /**
@@ -42,7 +49,8 @@ export function prepareMessagesForCloudCaching<T extends CloudCacheMessage>(
       continue;
     }
     if (message.role === "system") {
-      const content = (message.content ?? "").trim();
+      const content =
+        typeof message.content === "string" ? message.content.trim() : "";
       if (content) systems.push(content);
       continue;
     }

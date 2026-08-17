@@ -420,7 +420,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
   return (
     <div className="markdown-body">
       <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkMath]}
+        remarkPlugins={[remarkGfm, [remarkMath, { singleDollarTextMath: false }]]}
         rehypePlugins={[rehypeRaw, rehypeKatex, rehypeHighlight]}
         components={components}
         urlTransform={(url) => url}

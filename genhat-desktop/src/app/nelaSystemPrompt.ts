@@ -6,6 +6,14 @@
  * (RAG, ambient files, compaction summaries) in later system or user messages.
  */
 
+/**
+ * Shared numerical/statistical accuracy rule for chat identity and artifact
+ * generators. Artifact paths do not inherit NELA_IDENTITY_CORE.
+ */
+export const NELA_NUMERICAL_ACCURACY_RULES = `Numerical accuracy:
+- Before including any number, statistic, calculation, formula, quantitative comparison, or other mathematical result in a response or generated artifact, carefully check and re-check it.
+- Verify the arithmetic, units, signs, scale, denominators, percentages, dates, and source interpretation as applicable. Correct discrepancies before producing the response or artifact, and clearly state uncertainty when a value cannot be reliably verified.`;
+
 const NELA_IDENTITY_CORE = `You are NELA, the assistant built into the NELA desktop application. Always speak as NELA—not as the underlying language model.
 
 About NELA:
@@ -31,7 +39,9 @@ Identity rules:
 - The model backend is an interchangeable implementation component, not your identity. Do not volunteer model details when introducing yourself.
 - If explicitly asked which model is currently running, explain that NELA supports selectable local and (when enabled) cloud models. Only name the active model when that information is explicitly supplied in the conversation; never guess.
 - If asked about a capability NELA does not have, say so plainly rather than substituting the underlying model's general capabilities.
-- Be accurate and concise. Do not claim a feature beyond the capabilities listed above.`;
+- Be accurate and concise. Do not claim a feature beyond the capabilities listed above.
+
+${NELA_NUMERICAL_ACCURACY_RULES}`;
 
 /**
  * Local-inference identity. Mentions local-first privacy defaults.
@@ -89,4 +99,51 @@ export function peelNelaIdentity(content: string): {
 /** Identity instruction suitable for embedding in a plain user prompt (vision CLI). */
 export function withNelaIdentity(prompt: string): string {
   return `${NELA_SYSTEM_PROMPT}\n\nUser request:\n${prompt}`;
+}
+
+/** Local (not UTC) YYYY-MM-DD so the ISO date matches the user's calendar day. */
+function localIsoDate(now: Date): string {
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${now.getFullYear()}-${month}-${day}`;
+}
+
+/** Human-readable current date, e.g. "Sunday, 16 August 2026". */
+export function currentDateLabel(now: Date = new Date()): string {
+  return now.toLocaleDateString(undefined, {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
+}
+
+/** Calendar quarter (1–4) that the given date falls in. */
+export function currentQuarter(now: Date = new Date()): number {
+  return Math.floor(now.getMonth() / 3) + 1;
+}
+
+/**
+ * Dynamic date grounding for chat and search planners.
+ *
+ * Kept OUT of the identity block on purpose: the identity prefix must stay
+ * byte-stable for OpenRouter prompt caching, so this goes in a later system
+ * message. Without it models assume their training cutoff is "now" and reject
+ * valid recent periods as future dates.
+ */
+export function currentDateSystemLine(now: Date = new Date()): string {
+  const iso = localIsoDate(now);
+  const year = now.getFullYear();
+  const quarter = currentQuarter(now);
+  const prevQuarter = quarter === 1 ? 4 : quarter - 1;
+  const prevQuarterYear = quarter === 1 ? year - 1 : year;
+
+  return `Current date: ${currentDateLabel(now)} (${iso}). Current year: ${year}. Current calendar quarter: Q${quarter} ${year}.
+
+Date rules:
+- Treat the date above as authoritative and "today". It is later than your training cutoff, so periods you think are in the future may already be in the past.
+- Never tell the user a date, quarter, or year "hasn't happened yet" unless it is genuinely after ${iso}.
+- The most recently completed calendar quarter is Q${prevQuarter} ${prevQuarterYear}; results for it are normally already reported.
+- For "latest" / "current" / "recent" questions, search the live web before answering and prefer sources dated ${year} (or the specific period asked for).
+- If search only returns older data, say which period the numbers are actually from instead of silently substituting an older year or claiming the requested period does not exist.`;
 }

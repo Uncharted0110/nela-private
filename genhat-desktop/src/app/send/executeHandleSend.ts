@@ -19,6 +19,8 @@ import { friendlyErrorFromUnknown } from "../friendlyError";
 import type { SendHandlerContext } from "./types";
 import { buildSendHandlerContext } from "./buildContext";
 import { useCloudStore } from "../../stores/cloudStore";
+import { useChatModeStore } from "../../stores/chatModeStore";
+import { willRouteToCloud } from "./cloudOrLocalStream";
 import {
   DASHBOARD_HTML_SCHEMA,
   DASHBOARD_HTML_TOOL,
@@ -78,10 +80,24 @@ export async function executeHandleSend(
     reusedUserMsg?.directDocuments && reusedUserMsg.directDocuments.length > 0
       ? reusedUserMsg.directDocuments
       : ctx.chatMode === "text" && ctx.directDocumentPaths.length > 0
-        ? ctx.directDocumentPaths.map((path) => ({
-            path,
-            name: path.split(/[/\\]/).pop() ?? "document",
-          }))
+        ? ctx.directDocumentPaths.map((path) => {
+            const meta = useChatModeStore.getState().attachmentMetaByPath[path];
+            const engine = useChatModeStore.getState().pdfEngineByPath[path];
+            return {
+              path,
+              name: meta?.name ?? path.split(/[/\\]/).pop() ?? "document",
+              mime: meta?.mime,
+              sizeBytes: meta?.sizeBytes,
+              contentHash: meta?.contentHash,
+              kind:
+                meta?.kind === "image" || meta?.kind === "pdf" || meta?.kind === "extracted_text"
+                  ? meta.kind
+                  : undefined,
+              parser: engine ?? (meta?.kind === "pdf" ? "cloudflare-ai" : undefined),
+              destination:
+                useCloudStore.getState().preferredMode === "local" ? "local" : "cloud",
+            } satisfies DirectDocumentAttachment;
+          })
         : undefined;
 
   const newMsg: ChatMessage = reusedUserMsg ?? {
@@ -100,6 +116,17 @@ export async function executeHandleSend(
       ? { title: deriveTitleFromMessage(promptText) }
       : {};
 
+  const panelWasOpen = Boolean(session.artifactPanelOpen);
+  const previewSlideIndex =
+    typeof session.previewSlideIndex === "number" && session.previewSlideIndex >= 0
+      ? session.previewSlideIndex
+      : undefined;
+  const livePreviewPath =
+    findSessionArtifactPath(session) ??
+    (session.artifactPath && session.artifactStage === "LivePreview"
+      ? session.artifactPath
+      : null);
+
   if (reusedUserMsg) {
     ctx.updateSession(sid, (prev) => ({
       loading: true,
@@ -107,9 +134,12 @@ export async function executeHandleSend(
       audioOutputs: prev.audioOutputs ?? [],
       cancelled: false,
       artifactStreamActive: false,
-      artifactPanelOpen: false,
-      artifactPath: undefined,
-      artifactStage: undefined,
+      // Keep panel open when a LivePreview is already showing — edit may need it.
+      artifactPanelOpen:
+        panelWasOpen && Boolean(livePreviewPath) ? true : false,
+      artifactPath: livePreviewPath ?? undefined,
+      artifactStage: livePreviewPath ? "LivePreview" : undefined,
+      previewSlideIndex: prev.previewSlideIndex,
       streamingArtifactHtml: undefined,
       streamingArtifactCsv: undefined,
       streamingArtifactType: undefined,
@@ -123,7 +153,11 @@ export async function executeHandleSend(
       audioOutputs: prev.audioOutputs ?? [],
       cancelled: false,
       artifactStreamActive: false,
-      artifactPanelOpen: false,
+      artifactPanelOpen:
+        panelWasOpen && Boolean(livePreviewPath) ? true : false,
+      artifactPath: livePreviewPath ?? prev.artifactPath,
+      artifactStage: livePreviewPath ? "LivePreview" : prev.artifactStage,
+      previewSlideIndex: prev.previewSlideIndex,
       streamingArtifactHtml: undefined,
       streamingArtifactCsv: undefined,
       streamingArtifactType: undefined,
@@ -153,6 +187,8 @@ export async function executeHandleSend(
     webEnabled: effectiveWebEnabled,
     ragEnabled: effectiveRagEnabled,
     forceFileSearch: slashFileSearch,
+    // Prior turns, so "convert the same into a spreadsheet" has a referent.
+    conversationMessages: session.messages,
   };
 
   // ── Slash-command routing (explicit user intent) ─────────────────────────
@@ -172,17 +208,31 @@ export async function executeHandleSend(
 
   // ── Intent Resolution (Revamp P3/P5) ──────────────────────────────────────
   if (ctx.chatMode === "text") {
-    const sessionArtifactPath = findSessionArtifactPath(session);
+    // Re-read session after the loading patch so panel/path stay accurate.
+    const sessionNow =
+      ctx.sessions.find((s) => s.id === sid) ?? session;
+    const sessionArtifactPath =
+      findSessionArtifactPath(sessionNow) ?? livePreviewPath;
     const attachedEditable = promptDocumentPaths.filter(isEditableArtifactPath);
     const editTargetPath =
       attachedEditable[0] ??
+      (panelWasOpen && sessionNow.artifactPath
+        ? sessionNow.artifactPath
+        : null) ??
       sessionArtifactPath ??
       null;
+
+    const editOptions = {
+      attachedPaths: promptDocumentPaths,
+      activeSlideIndex: previewSlideIndex,
+      keepPanelOpen: panelWasOpen || Boolean(editTargetPath),
+    };
 
     if (
       matchesArtifactEditIntent(promptText, {
         artifactPath: editTargetPath,
         attachedPaths: promptDocumentPaths,
+        panelOpen: panelWasOpen,
       })
     ) {
       await handleArtifactEdit(
@@ -191,7 +241,7 @@ export async function executeHandleSend(
         sid,
         ctx,
         ctrl,
-        { attachedPaths: promptDocumentPaths }
+        editOptions
       );
       return;
     }
@@ -246,7 +296,7 @@ export async function executeHandleSend(
           sid,
           ctx,
           ctrl,
-          { attachedPaths: promptDocumentPaths }
+          editOptions
         );
         return;
       }
@@ -261,12 +311,21 @@ export async function executeHandleSend(
       return;
     }
 
-    // Explicit Cloud mode: never wait on local llama (RAG / direct-docs / compact).
-    // Knowledge-base grounding still happens via the cloud tool loop's file_search.
-    const cloudOnly = useCloudStore.getState().preferredMode === "cloud";
+    // Explicit Cloud/Auto-with-consent: send attachments as OpenRouter multimodal
+    // parts. Local (or Auto privacy denial) keeps on-device extraction / vision.
+    const preferredMode = useCloudStore.getState().preferredMode;
+    const hasExplicitAttachments =
+      promptDocumentPaths.length > 0 || Boolean(currentVisionImagePath);
+    const routeAttachmentsToCloud =
+      hasExplicitAttachments &&
+      preferredMode !== "local" &&
+      willRouteToCloud({
+        containsFileContext: true,
+        userConfirmedCloudContext: preferredMode === "cloud",
+      });
 
     if (
-      !cloudOnly &&
+      !routeAttachmentsToCloud &&
       ctx.chatMode === "text" &&
       !effectiveRagEnabled &&
       promptDocumentPaths.length > 0
@@ -281,7 +340,7 @@ export async function executeHandleSend(
     }
 
     if (
-      !cloudOnly &&
+      !routeAttachmentsToCloud &&
       ctx.chatMode === "text" &&
       effectiveRagEnabled &&
       ctx.ragDocs.length > 0
@@ -301,8 +360,10 @@ export async function executeHandleSend(
     }
 
     if (ctx.chatMode === "vision") {
-      await handleSendVision(promptText, ctx, currentVisionImagePath);
-      return;
+      if (!routeAttachmentsToCloud) {
+        await handleSendVision(promptText, ctx, currentVisionImagePath);
+        return;
+      }
     }
 
     // Default fallback: text chat

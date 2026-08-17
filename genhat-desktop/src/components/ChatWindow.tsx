@@ -150,6 +150,8 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
   const { advanced } = useAdvancedMode();
   const preferredMode = useCloudStore((s) => s.preferredMode);
   const liveToolStatus = useChatModeStore((s) => s.liveToolStatus);
+  const attachmentMetaByPath = useChatModeStore((s) => s.attachmentMetaByPath);
+  const pdfEngineByPath = useChatModeStore((s) => s.pdfEngineByPath);
   const modeChatBorderClass =
     preferredMode !== "local" ? "mode-chat-border--cloud" : "mode-chat-border--private";
   const [inputObj, setInputObj] = useState("");
@@ -568,12 +570,20 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
   const renderDirectDocumentAttachments = () => {
     if (chatMode !== "text" || directDocumentPaths.length === 0) return null;
     const spreadsheetAttached = directDocumentPaths.some(isSpreadsheetPath);
+    const destination = preferredMode === "local" ? COPY.attachLocalDestination : COPY.attachCloudDestination;
+
+    const formatSize = (bytes?: number) => {
+      if (!bytes) return "";
+      if (bytes < 1024) return `${bytes} B`;
+      if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+      return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    };
 
     return (
       <div className="w-full mb-2">
         <div className="flex items-start gap-2 mb-1.5">
           <span className="text-[0.78rem] text-txt-muted">
-            Attached documents ({directDocumentPaths.length})
+            Attached files ({directDocumentPaths.length})
           </span>
           <button
             className="text-[0.78rem] text-txt-muted hover:text-danger"
@@ -584,19 +594,49 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
             Clear all
           </button>
         </div>
+        {preferredMode !== "local" ? (
+          <p className="mt-0 mb-1.5 text-[0.75rem] text-txt-muted">
+            {COPY.attachCloudDisclosure}
+          </p>
+        ) : null}
         <div className="flex flex-wrap gap-1.5">
           {directDocumentPaths.map((path) => {
             const name = path.split(/[/\\]/).pop() ?? "document";
+            const meta = attachmentMetaByPath[path];
             const spreadsheet = isSpreadsheetPath(path);
+            const isPdf = (meta?.kind === "pdf") || name.toLowerCase().endsWith(".pdf");
+            const scanned = pdfEngineByPath[path] === "mistral-ocr";
             return (
               <span
                 key={path}
-                className="inline-flex items-center gap-1 py-1 px-2 rounded-lg bg-void-700 border border-glass-border text-[0.78rem] text-txt-secondary max-w-55"
+                className="inline-flex items-center gap-1 py-1 px-2 rounded-lg bg-void-700 border border-glass-border text-[0.78rem] text-txt-secondary max-w-70"
                 title={path}
               >
                 <span className="truncate">{name}</span>
+                <span className="shrink-0 text-txt-muted">
+                  · {destination}
+                  {meta?.mime ? ` · ${meta.mime.split("/")[1] ?? meta.mime}` : ""}
+                  {meta?.sizeBytes ? ` · ${formatSize(meta.sizeBytes)}` : ""}
+                </span>
                 {spreadsheet ? (
                   <span className="shrink-0 text-txt-muted">· spreadsheet</span>
+                ) : null}
+                {meta?.error ? (
+                  <span className="shrink-0 text-danger">{meta.error}</span>
+                ) : null}
+                {isPdf && preferredMode !== "local" ? (
+                  <button
+                    className={`shrink-0 text-[0.7rem] ${scanned ? "text-txt" : "text-txt-muted"}`}
+                    onClick={() =>
+                      useChatModeStore.getState().setPdfEngineForPath(
+                        path,
+                        scanned ? "cloudflare-ai" : "mistral-ocr"
+                      )
+                    }
+                    title={COPY.attachScannedPdf}
+                  >
+                    {scanned ? "OCR on" : "OCR"}
+                  </button>
                 ) : null}
                 <button
                   className="w-4 h-4 inline-flex items-center justify-center rounded text-txt-muted hover:text-danger"
@@ -956,6 +996,15 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
 
       {/* ── Input Area ── */}
       <div className="px-6 py-3 shrink-0 border-t border-glass-border bg-void-900">
+        {chatMode === "text" &&
+        session?.artifactPath &&
+        session?.artifactStage === "LivePreview" ? (
+          <p className="max-w-3xl mx-auto mb-2 text-[0.72rem] text-txt-muted">
+            Edits apply to the open artifact
+            {session.artifactPanelOpen ? "" : " (panel closed — still editable from here)"}
+            . Use the pencil for advanced element select.
+          </p>
+        ) : null}
         {/* RAG doc indicators */}
         {showRagControls && (
           <div className="flex items-center gap-2 mb-2 max-w-3xl mx-auto">

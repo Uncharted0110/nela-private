@@ -2,6 +2,8 @@
  * Presentation prompts — local JSON+GBNF; cloud streams freeform HTML.
  */
 
+import { NELA_NUMERICAL_ACCURACY_RULES } from "./nelaSystemPrompt";
+
 /** Local / constrained schema (used with GBNF on device). */
 export const PRESENTATION_SCHEMA_STATIC = `You generate ONLY a JSON presentation plan. No markdown, no code fences, no commentary.
 
@@ -26,7 +28,9 @@ Content rules:
 - When statistics exist, include at least one STAT slide with real figures.
 - Every bullet must be specifically about the user's topic. No vague fluff ("transformative potential", "continuous innovation") unless tied to a fact.
 - Use ≥4 different layouts. Avoid Q&A / References / Final Thoughts unless asked.
-- Theme must match the topic.`;
+- Theme must match the topic.
+
+${NELA_NUMERICAL_ACCURACY_RULES}`;
 
 /**
  * Cloud structured JSON for free/fast models — reliable content, desktop renders HTML.
@@ -43,7 +47,9 @@ Content rules:
 - First slide TITLE; later slides use varied layouts. Prefer 6–10 slides unless the user asked for a count.
 - When statistics exist, include at least one STAT slide. When AVAILABLE IMAGES exist, use IMAGE_LEFT with image_index.
 - Theme should fit the tone (somber history → midnight/rose; business → corporate).
-- Set output_name to a short filename-friendly title.`;
+- Set output_name to a short filename-friendly title.
+
+${NELA_NUMERICAL_ACCURACY_RULES}`;
 
 /**
  * Cloud freeform HTML for capable models (Smart/Deep on paid tiers).
@@ -71,7 +77,9 @@ CRITICAL CONTENT RULES:
 - When AVAILABLE IMAGES are listed, embed with <img src="nela-img:0"> on relevant slides (hero / IMAGE_LEFT style layouts). Never invent image URLs.
 - Stay on the USER'S TOPIC. Ignore off-topic web results (worksheets, crafts, product listings).
 - Set <title> to a short accurate deck title.
-- No markdown fences around the HTML.`;
+- No markdown fences around the HTML.
+
+${NELA_NUMERICAL_ACCURACY_RULES}`;
 
 export type PresentationSystemParts = {
   cacheable: string;

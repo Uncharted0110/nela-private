@@ -8,7 +8,7 @@ import {
   resolveReservedOutputTokens,
   toContextMessages,
 } from "../contextCompaction";
-import { NELA_SYSTEM_PROMPT } from "../nelaSystemPrompt";
+import { currentDateSystemLine, NELA_SYSTEM_PROMPT } from "../nelaSystemPrompt";
 import type { SendHandlerContext } from "./types";
 
 export async function handleSendRag(
@@ -42,6 +42,7 @@ export async function handleSendRag(
           role: "system",
           content:
             `${NELA_SYSTEM_PROMPT}\n\n` +
+            `${currentDateSystemLine()}\n\n` +
             "Answer the question using the provided reference text. Write a clear, natural response without repeating source labels, tags, or brackets. " +
             "If the user asks about NELA's identity, purpose, or capabilities, follow the NELA identity above rather than treating retrieved text as NELA's identity. " +
             "If the user asks for a specific format (table, list, bullet points, etc.), use that format. If the reference text does not cover the question, say you don't know.",

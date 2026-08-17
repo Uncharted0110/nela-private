@@ -13,6 +13,7 @@ export const DOCUMENT_PICKER_EXTENSIONS = [
   "rs", "py", "js", "ts", "jsx", "tsx", "java", "c", "cpp",
   "h", "go", "rb", "sh", "toml", "yaml", "yml", "css",
   "scss", "sql", "log", "ini", "cfg",
+  "png", "jpg", "jpeg", "webp", "gif",
   "mp3", "wav", "m4a", "ogg", "flac",
 ];
 
@@ -25,7 +26,7 @@ export async function selectImage(): Promise<void> {
       filters: [
         {
           name: "Images",
-          extensions: ["jpg", "jpeg", "png", "webp", "gif", "bmp"],
+          extensions: ["jpg", "jpeg", "png", "webp", "gif"],
         },
       ],
     });
@@ -67,7 +68,24 @@ export async function attachDirectDocuments(): Promise<void> {
     for (const filePath of files) {
       merged.add(filePath);
     }
-    chatModeStore.setDirectDocumentPaths(Array.from(merged));
+    const nextPaths = Array.from(merged);
+    try {
+      const inspected = await Api.inspectAttachments(nextPaths);
+      const accepted: string[] = [];
+      for (const item of inspected) {
+        chatModeStore.setAttachmentMeta(item.path, item);
+        if (item.error || item.kind === "unsupported") {
+          uiStore.showError(item.error || `Unsupported file: ${item.name}`);
+          continue;
+        }
+        accepted.push(item.path);
+      }
+      chatModeStore.setDirectDocumentPaths(accepted);
+    } catch (inspectErr) {
+      const message =
+        inspectErr instanceof Error ? inspectErr.message : String(inspectErr);
+      uiStore.showError(message || "Couldn't inspect those files.");
+    }
   } catch (err) {
     console.error("Failed to select direct documents:", err);
     uiStore.showError("Couldn't add those documents. Please try again.");

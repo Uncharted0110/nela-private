@@ -389,6 +389,8 @@ fn main() {
             app_lib::commands::rag::query_rag_stream,
             app_lib::commands::rag::query_rag_with_raptor_stream,
             app_lib::commands::rag::prepare_direct_document_prompt,
+            app_lib::commands::attachments::inspect_attachments,
+            app_lib::commands::attachments::prepare_cloud_attachments,
             // Structural knowledge-graph engine
             app_lib::commands::doc_graph::start_indexing_directory,
             app_lib::commands::doc_graph::query_knowledge_base,

@@ -17,6 +17,8 @@ export type ArtifactEditOptions = {
   onStatus?: (message: string, kind: "progress" | "done" | "error") => void;
   /** 0-based slide currently visible in the preview iframe ("this slide"). */
   activeSlideIndex?: number;
+  /** Keep the side panel open for chat-bar edits of a LivePreview artifact. */
+  keepPanelOpen?: boolean;
 };
 
 export async function handleArtifactEdit(
@@ -81,12 +83,13 @@ export async function handleArtifactEdit(
   }
 
   const previewMode = !!options?.previewMode;
+  const keepPanelOpen = previewMode || !!options?.keepPanelOpen;
   const fileLabel = artifactPath.split(/[/\\]/).pop() ?? "artifact";
 
   ctx.updateSession(sid, (prev) => ({
     loading: true,
     artifactStage: "CrunchingMetrics",
-    ...(previewMode ? { artifactPanelOpen: true } : {}),
+    ...(keepPanelOpen ? { artifactPanelOpen: true } : {}),
     messages: previewMode
       ? prev.messages
       : [
@@ -135,7 +138,7 @@ export async function handleArtifactEdit(
       return {
         artifactStage: sessionStage,
         ...(path !== null ? { artifactPath: path } : {}),
-        ...(previewMode ? { artifactPanelOpen: true } : {}),
+        ...(keepPanelOpen ? { artifactPanelOpen: true } : {}),
         ...(previewMode ? {} : { messages: updated }),
         ...(sessionStage === "LivePreview" || stage === "Error"
           ? { loading: false }
@@ -143,6 +146,50 @@ export async function handleArtifactEdit(
       };
     });
   };
+
+  // Missing facts → sparse ask_followup before any invent/apply.
+  let effectiveText = text;
+  let attachedPaths = [...(options?.attachedPaths ?? [])];
+  try {
+    const { maybeAskFollowUpForArtifactEdit } = await import("./askFollowUp");
+    const follow = await maybeAskFollowUpForArtifactEdit({
+      prompt: text,
+      attachedPaths,
+      signal: ctrl.signal,
+      onStatus: (msg) => options?.onStatus?.(msg, "progress"),
+    });
+    if (follow.status === "cancelled") {
+      updateEditMsg(
+        "LivePreview",
+        artifactPath,
+        "Edit cancelled — no changes applied."
+      );
+      return;
+    }
+    if (follow.status === "answered") {
+      if (follow.augmentedPrompt) effectiveText = follow.augmentedPrompt;
+      if (follow.attachedPaths.length) {
+        attachedPaths = [
+          ...attachedPaths,
+          ...follow.attachedPaths.filter((p) => !attachedPaths.includes(p)),
+        ];
+      }
+      options?.onStatus?.("Got your answers — continuing edit…", "progress");
+    }
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") throw err;
+    console.warn("ask_followup precheck failed:", err);
+  }
+
+  // Attachments may inform image/data edits even when the planner only sees text.
+  if (attachedPaths.length > 0 && attachedPaths !== options?.attachedPaths) {
+    const note = attachedPaths
+      .map((p) => p.split(/[/\\]/).pop() ?? p)
+      .join(", ");
+    if (!effectiveText.includes(note)) {
+      effectiveText = `${effectiveText}\n\n[User attached files for this edit: ${attachedPaths.join(", ")}]`;
+    }
+  }
 
   const generationOptions = ctx.getChatGenerationOptions(ctx.selectedModel);
 
@@ -166,7 +213,7 @@ export async function handleArtifactEdit(
         "./runPresentationEditPipeline"
       );
       const handled = await runPresentationEditPipeline(
-        text,
+        effectiveText,
         artifactPath,
         sid,
         ctx,
@@ -180,7 +227,7 @@ export async function handleArtifactEdit(
       // Last resort: full deck replan.
       const { runPresentationDeckEdit } = await import("./runPresentationDeckEdit");
       await runPresentationDeckEdit(
-        text,
+        effectiveText,
         artifactPath,
         sid,
         ctx,
@@ -200,7 +247,7 @@ export async function handleArtifactEdit(
           "./runPresentationEditPipeline"
         );
         const handled = await runPresentationEditPipeline(
-          text,
+          effectiveText,
           artifactPath,
           sid,
           ctx,
@@ -212,12 +259,12 @@ export async function handleArtifactEdit(
         if (handled) return;
       }
       const { runDeterministicThemeEdit } = await import("./runDeterministicThemeEdit");
-      if (await runDeterministicThemeEdit(text, artifactPath, sid, ctx, updateEditMsg)) {
+      if (await runDeterministicThemeEdit(effectiveText, artifactPath, sid, ctx, updateEditMsg)) {
         return;
       }
       const { runHtmlArtifactPatch } = await import("./runHtmlArtifactPatch");
       await runHtmlArtifactPatch(
-        text,
+        effectiveText,
         artifactPath,
         sid,
         ctx,
@@ -231,7 +278,7 @@ export async function handleArtifactEdit(
     if (effectiveEditKind === "spreadsheet") {
       const { runSpreadsheetArtifactEdit } = await import("./runSpreadsheetArtifactEdit");
       await runSpreadsheetArtifactEdit(
-        text,
+        effectiveText,
         artifactPath,
         sid,
         ctx,
@@ -248,7 +295,7 @@ export async function handleArtifactEdit(
         "./runPresentationEditPipeline"
       );
       const handled = await runPresentationEditPipeline(
-        text,
+        effectiveText,
         artifactPath,
         sid,
         ctx,
@@ -262,7 +309,7 @@ export async function handleArtifactEdit(
 
     const { runPresentationArtifactEdit } = await import("./runPresentationArtifactEdit");
     await runPresentationArtifactEdit(
-      text,
+      effectiveText,
       artifactPath,
       sid,
       ctx,

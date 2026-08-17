@@ -14,6 +14,7 @@ use crate::cloud::types::{
 use futures_util::StreamExt;
 use reqwest::StatusCode;
 use serde_json::Value;
+use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
@@ -54,6 +55,36 @@ fn is_transport_error(err: &reqwest::Error) -> bool {
 
 fn friendly_transport_error() -> String {
     "We couldn't reach NELA Cloud. Check your internet connection and try again.".to_string()
+}
+
+fn redact_cloud_log(body: &str) -> String {
+    let mut out = String::with_capacity(body.len().min(4_096));
+    let bytes = body.as_bytes();
+    let marker = b"base64,";
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i..].starts_with(marker) {
+            out.push_str("base64,[redacted]");
+            i += marker.len();
+            while i < bytes.len() {
+                let c = bytes[i];
+                if c.is_ascii_alphanumeric() || c == b'+' || c == b'/' || c == b'=' || c.is_ascii_whitespace()
+                {
+                    i += 1;
+                    continue;
+                }
+                break;
+            }
+            continue;
+        }
+        out.push(bytes[i] as char);
+        i += 1;
+    }
+    if out.len() > 2_000 {
+        out.truncate(2_000);
+        out.push('…');
+    }
+    out
 }
 
 fn friendly_http_error(status: StatusCode) -> String {
@@ -152,7 +183,10 @@ fn friendly_api_body_message(body: &str, status: StatusCode) -> String {
 async fn read_error_body(resp: reqwest::Response) -> String {
     let status = resp.status();
     let body = resp.text().await.unwrap_or_default();
-    log::warn!("Cloud API error ({status}): {body}");
+    log::warn!(
+        "Cloud API error ({status}): {}",
+        redact_cloud_log(&body)
+    );
     friendly_api_body_message(&body, status)
 }
 
@@ -652,6 +686,7 @@ pub async fn chat_stream(
         let mut buffer = String::new();
         let mut tool_acc = ToolCallAccumulator::default();
         let mut emitted_done = false;
+        let mut collected_annotations: Vec<Value> = Vec::new();
         // Abort if the upstream sends nothing for this long (half-open hangs).
         const IDLE_SECS: u64 = 60;
 
@@ -711,6 +746,7 @@ pub async fn chat_stream(
                             stream_credits_remaining,
                             stream_trial_credits,
                             stream_trial_expires.as_deref(),
+                            &dedupe_file_annotations(&collected_annotations),
                         );
                     }
                     continue;
@@ -744,6 +780,7 @@ pub async fn chat_stream(
                         }
                     }
                     tool_acc.ingest_delta(&value);
+                    collected_annotations.extend(extract_stream_annotations(&value));
                 }
             }
         }
@@ -756,6 +793,7 @@ pub async fn chat_stream(
                 stream_credits_remaining,
                 stream_trial_credits,
                 stream_trial_expires.as_deref(),
+                &dedupe_file_annotations(&collected_annotations),
             );
         }
         return Ok(());
@@ -811,6 +849,10 @@ pub async fn chat_stream(
     if let Some(exp) = trial_expires {
         payload["trialExpiresAt"] = serde_json::json!(exp);
     }
+    let anns = dedupe_file_annotations(&extract_stream_annotations(&value));
+    if !anns.is_empty() {
+        payload["annotations"] = serde_json::json!(anns);
+    }
     let _ = app.emit("cloud-chat-stream", payload);
     Ok(())
 }
@@ -822,6 +864,7 @@ fn emit_stream_done(
     credits_remaining: Option<u64>,
     trial_credits: Option<u64>,
     trial_expires: Option<&str>,
+    annotations: &[Value],
 ) {
     let mut payload = serde_json::json!({ "chunk": "", "done": true });
     if let Some(calls) = tool_acc.finish() {
@@ -838,6 +881,9 @@ fn emit_stream_done(
     }
     if let Some(exp) = trial_expires.filter(|s| !s.is_empty()) {
         payload["trialExpiresAt"] = serde_json::json!(exp);
+    }
+    if !annotations.is_empty() {
+        payload["annotations"] = serde_json::json!(annotations);
     }
     let _ = app.emit("cloud-chat-stream", payload);
 }
@@ -1000,4 +1046,45 @@ fn content_to_plain(content: &Value) -> Option<String> {
     } else {
         Some(out)
     }
+}
+
+fn extract_stream_annotations(value: &Value) -> Vec<Value> {
+    let mut out = Vec::new();
+    for pointer in [
+        "/choices/0/delta/annotations",
+        "/choices/0/message/annotations",
+        "/annotations",
+    ] {
+        if let Some(arr) = value.pointer(pointer).and_then(|v| v.as_array()) {
+            for item in arr {
+                if item.get("type").and_then(|v| v.as_str()) == Some("file")
+                    || item.get("file").is_some()
+                {
+                    out.push(item.clone());
+                }
+            }
+        }
+    }
+    out
+}
+
+fn annotation_file_hash(value: &Value) -> Option<String> {
+    value
+        .pointer("/file/hash")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+}
+
+fn dedupe_file_annotations(items: &[Value]) -> Vec<Value> {
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    for item in items {
+        if let Some(hash) = annotation_file_hash(item) {
+            if !seen.insert(hash) {
+                continue;
+            }
+        }
+        out.push(item.clone());
+    }
+    out
 }

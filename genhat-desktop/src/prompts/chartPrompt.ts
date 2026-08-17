@@ -53,6 +53,7 @@ Rules:
 - Include a readable legend when there are multiple series; keep legend text short.
 - Use an accessible color palette with sufficient contrast (avoid low-contrast yellow-on-white / gray-on-gray). Prefer a clear categorical palette such as ["#2563eb","#059669","#d97706","#dc2626","#7c3aed","#0891b2","#ca8a04"].
 - Prefer static data already present in the conversation — do not invent live endpoints.
+- Recheck every numeric series, axis scale, percentage, and total before emitting the chart JSON. Do not invent or mis-scale figures.
 - You may briefly explain the chart in prose BEFORE or AFTER the JSON block; do not wrap the JSON in a Sources list.
 - Prefer \`\`\`json fences (not \`\`\`echarts) so the block stays valid JSON.`;
 

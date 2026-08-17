@@ -2,7 +2,9 @@ import { create } from "zustand";
 import type { 
   ChatMode, 
   IngestionStatus, 
-  MindMapGraph 
+  InspectedAttachment,
+  MindMapGraph,
+  PdfParserEngine,
 } from "../types";
 
 // Define MindmapOverlayState type
@@ -45,6 +47,8 @@ interface ChatModeState {
   imagePath: string | null;
   imagePreview: string | null;
   directDocumentPaths: string[];
+  attachmentMetaByPath: Record<string, InspectedAttachment>;
+  pdfEngineByPath: Record<string, PdfParserEngine>;
   mindmapsBySession: Record<string, MindMapGraph[]>;
   activeMindmapOverlay: MindmapOverlayState | null;
   generalElapsedTime: number;
@@ -68,6 +72,8 @@ interface ChatModeActions {
   setImagePath: (path: string | null) => void;
   setImagePreview: (preview: string | null) => void;
   setDirectDocumentPaths: (paths: string[]) => void;
+  setAttachmentMeta: (path: string, meta: InspectedAttachment | null) => void;
+  setPdfEngineForPath: (path: string, engine: PdfParserEngine) => void;
   setMindmapsBySession: (mindmaps: Record<string, MindMapGraph[]> | ((prev: Record<string, MindMapGraph[]>) => Record<string, MindMapGraph[]>)) => void;
   setActiveMindmapOverlay: (overlay: MindmapOverlayState | null) => void;
   setGeneralElapsedTime: (time: number) => void;
@@ -98,6 +104,8 @@ export const useChatModeStore = create<ChatModeState & ChatModeActions>((set) =>
   imagePath: null,
   imagePreview: null,
   directDocumentPaths: [],
+  attachmentMetaByPath: {},
+  pdfEngineByPath: {},
   mindmapsBySession: {},
   activeMindmapOverlay: null,
   generalElapsedTime: 0,
@@ -134,6 +142,19 @@ export const useChatModeStore = create<ChatModeState & ChatModeActions>((set) =>
   setImagePreview: (imagePreview) => set({ imagePreview }),
   
   setDirectDocumentPaths: (directDocumentPaths) => set({ directDocumentPaths }),
+
+  setAttachmentMeta: (path, meta) =>
+    set((state) => {
+      const next = { ...state.attachmentMetaByPath };
+      if (meta) next[path] = meta;
+      else delete next[path];
+      return { attachmentMetaByPath: next };
+    }),
+
+  setPdfEngineForPath: (path, engine) =>
+    set((state) => ({
+      pdfEngineByPath: { ...state.pdfEngineByPath, [path]: engine },
+    })),
   
   setMindmapsBySession: (mindmaps) =>
     set((state) => ({
@@ -156,12 +177,25 @@ export const useChatModeStore = create<ChatModeState & ChatModeActions>((set) =>
   
   clearImage: () => set({ imagePath: null, imagePreview: null }),
   
-  clearDirectDocuments: () => set({ directDocumentPaths: [] }),
+  clearDirectDocuments: () =>
+    set({
+      directDocumentPaths: [],
+      attachmentMetaByPath: {},
+      pdfEngineByPath: {},
+    }),
   
   removeDirectDocument: (path) =>
-    set((state) => ({
-      directDocumentPaths: state.directDocumentPaths.filter(p => p !== path)
-    })),
+    set((state) => {
+      const attachmentMetaByPath = { ...state.attachmentMetaByPath };
+      const pdfEngineByPath = { ...state.pdfEngineByPath };
+      delete attachmentMetaByPath[path];
+      delete pdfEngineByPath[path];
+      return {
+        directDocumentPaths: state.directDocumentPaths.filter((p) => p !== path),
+        attachmentMetaByPath,
+        pdfEngineByPath,
+      };
+    }),
   
   pruneMindmapsForSessions: (validIds) =>
     set((state) => {

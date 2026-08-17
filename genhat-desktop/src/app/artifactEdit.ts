@@ -46,6 +46,13 @@ const STRUCTURAL_ARTIFACT_EDIT =
 const STYLE_ARTIFACT_EDIT =
   /\b(change|update|set|make|switch|use|apply|fix)\b[\s\S]{0,50}\b(font|fonts|typeface|typography|colou?rs?|accent|theme|background|palette|style|styling|contrast)\b|\b(darker|lighter|bluer|greener|more\s+minimal|more\s+corporate)\b|\b(font\s+to|colou?r\s+to|theme\s+to)\b|\b(text|font)s?\s+colou?rs?\b|\b(not visible|hard to read|unreadable)\b/i;
 
+/**
+ * Concrete change language for an open LivePreview artifact (prompt-bar primary path).
+ * Covers reorder, color-coding, image swaps, and data fixes without "this deck".
+ */
+const CONCRETE_ARTIFACT_CHANGE =
+  /\b(color[\s-]?code|colour[\s-]?code|highlight|conditional\s+format)\b|\b(reorder|rearrange|swap|move)\b[\s\S]{0,40}\b(slides?|rows?|columns?|sheets?)\b|\b(slides?|rows?|columns?)\b[\s\S]{0,40}\b(reorder|rearrange|swap|move|after|before)\b|\b(add|replace|insert|put|use)\b[\s\S]{0,60}\b(image|photo|picture|pic|logo|screenshot)\b|\b(on\s+slide\s+\d+|slide\s+\d+)\b|\b(fix|correct|amend|update|change|set|make)\b[\s\S]{0,80}\b(to|as|=|:)\s*[\d$€£¥%]/i;
+
 /** Explicit full-deck rewrite — fall back to regenerating the whole plan. */
 const FULL_DECK_REWRITE =
   /\b(rewrite|regenerate|redo|restructure|overhaul|from\s+scratch|replace\s+all|rebuild)\b[\s\S]{0,40}\b(deck|presentation|slides?|ppt|pptx)\b|\b(rewrite|regenerate|redo|rebuild)\s+(the\s+)?(entire|whole|full)\b/i;
@@ -107,6 +114,8 @@ export function matchesArtifactEditIntent(
   options: {
     artifactPath?: string | null;
     attachedPaths?: string[];
+    /** Side panel currently showing a LivePreview artifact. */
+    panelOpen?: boolean;
   }
 ): boolean {
   const trimmed = prompt.trim();
@@ -122,34 +131,89 @@ export function matchesArtifactEditIntent(
     options.artifactPath && isEditableArtifactPath(options.artifactPath)
   );
   const hasEditableTarget = hasSessionArtifact || hasAttachedEditable;
+  /** Option B: panel open or LivePreview/attached path counts as active target. */
+  const hasActiveTarget =
+    hasEditableTarget ||
+    (Boolean(options.panelOpen) && hasSessionArtifact);
 
   // Creating a new workbook/deck/page must not fall into edit routing.
   // Example failure: "create a new excel sheet… Add links… In the sheet have…"
   // matched EDIT_VERBS ("Add") + EDIT_FILE_HINT ("the sheet") with no target.
-  if (STRONG_CREATE_ONLY.test(trimmed) || CREATE_ARTIFACT_REQUEST.test(trimmed)) {
+  // Exception: "make the fonts darker" matches STRONG_CREATE's bare "make" but is a style edit.
+  const styleOrConcrete =
+    STYLE_ARTIFACT_EDIT.test(trimmed) ||
+    CONCRETE_ARTIFACT_CHANGE.test(trimmed) ||
+    STRUCTURAL_ARTIFACT_EDIT.test(trimmed);
+  if (
+    (STRONG_CREATE_ONLY.test(trimmed) || CREATE_ARTIFACT_REQUEST.test(trimmed)) &&
+    !(hasEditableTarget && styleOrConcrete)
+  ) {
     const explicitEditExisting =
       /\b(edit|modify|update|revise|fix|patch)\b/i.test(trimmed) &&
       (hasEditableTarget || EDIT_FILE_HINT.test(trimmed));
     if (!explicitEditExisting) return false;
   }
 
-  if (!EDIT_VERBS.test(trimmed)) return false;
+  const looksLikeChange =
+    EDIT_VERBS.test(trimmed) || styleOrConcrete;
+
+  if (!looksLikeChange) return false;
 
   if (!hasEditableTarget && !EDIT_FILE_HINT.test(trimmed)) return false;
 
-  // Open session artifact alone is not enough — require an explicit "this deck"
-  // style hint, an attached file, a structural edit, or a style tweak.
-  if (hasSessionArtifact && !hasAttachedEditable) {
-    if (
-      !EDIT_FILE_HINT.test(trimmed) &&
-      !STRUCTURAL_ARTIFACT_EDIT.test(trimmed) &&
-      !STYLE_ARTIFACT_EDIT.test(trimmed)
-    ) {
-      return false;
-    }
+  // With an active LivePreview / panel / attach target, edit-ish language is enough.
+  if (hasActiveTarget) {
+    return true;
+  }
+
+  // No session target — require an explicit "this deck" style hint plus create guard.
+  if (
+    !EDIT_FILE_HINT.test(trimmed) &&
+    !STRUCTURAL_ARTIFACT_EDIT.test(trimmed) &&
+    !STYLE_ARTIFACT_EDIT.test(trimmed) &&
+    !CONCRETE_ARTIFACT_CHANGE.test(trimmed)
+  ) {
+    return false;
   }
 
   return true;
+}
+
+/** True when the user asks to correct/replace facts but supplies no new values. */
+export function isDataCorrectionWithoutValues(prompt: string): boolean {
+  const trimmed = prompt.trim();
+  if (!trimmed) return false;
+  const correctionIntent =
+    /\b(fix|correct|amend|update|change|set|make|replace)\b[\s\S]{0,100}\b(number|value|figure|metric|revenue|cost|price|amount|data|cell|total|percent|%|q[1-4]|fy\d{2,4})\b/i.test(
+      trimmed
+    ) ||
+    /\b(fix|correct|amend|update|change|set|make)\b[\s\S]{0,60}\b(to|as)\b/i.test(
+      trimmed
+    );
+  if (!correctionIntent) return false;
+  // Has an explicit replacement value (digits / currency / percent).
+  if (/\b(to|as|=|:)\s*[\d$€£¥%]/.test(trimmed)) return false;
+  if (/\d/.test(trimmed) && /\b(to|as|=)\b/i.test(trimmed)) return false;
+  return true;
+}
+
+/** True when the user wants an image but did not attach/path/url one. */
+export function isImageEditWithoutSource(
+  prompt: string,
+  attachedPaths?: string[]
+): boolean {
+  const trimmed = prompt.trim();
+  if (!trimmed) return false;
+  const wantsImage =
+    /\b(add|replace|insert|put|use|attach|upload)\b[\s\S]{0,60}\b(image|photo|picture|pic|logo|screenshot)\b|\b(image|photo|picture|pic)\b[\s\S]{0,40}\b(add|replace|insert|on\s+slide)\b/i.test(
+      trimmed
+    );
+  if (!wantsImage) return false;
+  if (/\b(https?:\/\/|nela-img:|file:\/\/)/i.test(trimmed)) return false;
+  const hasImageAttach = (attachedPaths ?? []).some((p) =>
+    /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(p)
+  );
+  return !hasImageAttach;
 }
 
 /** True when the user wants a full deck rewrite (not a surgical op list). */

@@ -26,7 +26,12 @@ export const COPY = {
   addFolderTitle: "Add a folder",
   addFolderHint: "Add every supported file in a folder.",
   uploadImageTitle: "Upload an image",
-  uploadImageHint: "JPG, PNG, WEBP, GIF, or BMP.",
+  uploadImageHint: "JPG, PNG, WEBP, or GIF.",
+  attachCloudDisclosure:
+    "Files will be sent to NELA Cloud/OpenRouter for this conversation.",
+  attachLocalDestination: "Local",
+  attachCloudDestination: "Cloud",
+  attachScannedPdf: "Scanned PDF (OCR)",
 
   // Knowledge base (was: Knowledge Base / chunks / phaseN / ingesting)
   libraryTitle: "Document Library",

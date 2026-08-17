@@ -8,6 +8,9 @@ import type {
   RagResult,
   RagStreamSetup,
   DirectDocumentPromptSetup,
+  InspectedAttachment,
+  PreparedCloudAttachment,
+  PdfParserEngine,
   MediaAsset,
   PodcastRequest,
   PodcastResult,
@@ -595,6 +598,21 @@ export const Api = {
       filePaths,
       maxCharsPerDocument: options?.maxCharsPerDocument ?? null,
       maxTotalChars: options?.maxTotalChars ?? null,
+    });
+  },
+
+  async inspectAttachments(paths: string[]): Promise<InspectedAttachment[]> {
+    return invoke<InspectedAttachment[]>("inspect_attachments", { paths });
+  },
+
+  async prepareCloudAttachments(
+    files: Array<{ path: string; pdfEngine?: PdfParserEngine | null }>
+  ): Promise<PreparedCloudAttachment[]> {
+    return invoke<PreparedCloudAttachment[]>("prepare_cloud_attachments", {
+      files: files.map((file) => ({
+        path: file.path,
+        pdfEngine: file.pdfEngine ?? null,
+      })),
     });
   },
 

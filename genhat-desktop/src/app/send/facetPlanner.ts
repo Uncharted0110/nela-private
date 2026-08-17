@@ -17,6 +17,7 @@ import {
   formatConversationForSearchContext,
   resolveFollowUpSearchQuery,
 } from "./followUpSearchQuery";
+import { currentDateSystemLine } from "../nelaSystemPrompt";
 import { mergeWebSearchResults } from "./webSearchToolLoop";
 import type { GenerationOptions } from "./types";
 
@@ -151,7 +152,8 @@ Rules:
   - market/company research -> overview, recent news, competitors, financials
 - Treat short follow-ups as continuing the prior topic (e.g. after a Spain itinerary, "possible flights" → facets/queries about flights for that Spain trip).
 - Use the conversation for context (destination, dates, constraints already mentioned).
-- Queries must be self-contained (include the place/product/topic name from prior turns when the latest message omits them).`;
+- Queries must be self-contained (include the place/product/topic name from prior turns when the latest message omits them).
+- For time-sensitive facets, spell the period out in the query (e.g. "Q3 2026 earnings", "August 2026") using the current date below — never fall back to an older year.`;
 
 function recentConversationSnippet(
   messages: ChatContextMessage[],
@@ -214,7 +216,7 @@ async function planFacets(opts: FacetResearchOptions): Promise<FacetPlan> {
   });
 
   const planMessages: ChatContextMessage[] = [
-    { role: "system", content: PLANNER_SYSTEM },
+    { role: "system", content: `${PLANNER_SYSTEM}\n\n${currentDateSystemLine()}` },
     {
       role: "user",
       content:

@@ -9,7 +9,11 @@ import {
   resolveReservedOutputTokens,
   toContextMessages,
 } from "../contextCompaction";
-import { NELA_CLOUD_SYSTEM_PROMPT, NELA_SYSTEM_PROMPT } from "../nelaSystemPrompt";
+import {
+  currentDateSystemLine,
+  NELA_CLOUD_SYSTEM_PROMPT,
+  NELA_SYSTEM_PROMPT,
+} from "../nelaSystemPrompt";
 import { CHART_SYSTEM_INSTRUCTION } from "../../prompts/chartPrompt";
 import { NELA_AUTO_ARTIFACT_CRITERIA } from "../autoArtifactPrompt";
 import { canAutoStreamArtifacts } from "../cloudPresentationMode";
@@ -21,11 +25,20 @@ import { StreamArtifactParser, scrubChatArtifactProtocol, stripPartialArtifactTa
 import { saveStreamedArtifact } from "../streamArtifactSave";
 import { ArtifactChartPool } from "../artifactChartPool";
 import { useCloudStore } from "../../stores/cloudStore";
-import { streamChatByMode } from "./cloudOrLocalStream";
+import { streamChatByMode, willRouteToCloud } from "./cloudOrLocalStream";
 import type { SendHandlerContext } from "./types";
 import { runCloudAwareToolLoop } from "./cloudNativeToolLoop";
 import { useChatModeStore } from "../../stores/chatModeStore";
 import { useArtifactStreamStore } from "../../stores/artifactStreamStore";
+import {
+  DIRECT_ATTACHMENT_SYSTEM,
+  fileSearchEnabledForTurn,
+  hasExplicitAttachments,
+  overlayCloudAttachments,
+  pluginForPrepared,
+  prepareMessageAttachments,
+} from "./directAttachments";
+import type { CloudChatMessage, CloudFileParserPlugin, FileAnnotation } from "../../types";
 
 export async function handleSendTextChat(
   text: string,
@@ -42,7 +55,14 @@ export async function handleSendTextChat(
   // ── Local file search (Doc Graph) as an LLM tool, like web_search ────────
   // When "Search my files" / /files is on, the model calls `file_search`
   // inside the tool loop — do not pre-inject ambient KB context here.
-  const fileSearchEnabled = ctx.fileIndexerEnabled || slashFileSearch;
+  const explicitAttachments =
+    hasExplicitAttachments(newMsg) ||
+    session.messages.some((m) => hasExplicitAttachments(m));
+  const fileSearchEnabled = fileSearchEnabledForTurn({
+    fileIndexerEnabled: ctx.fileIndexerEnabled,
+    slashFileSearch,
+    explicitAttachments,
+  });
 
   ctx.setGeneralGenerating(true);
   ctx.setGeneralElapsedTime(0);
@@ -73,13 +93,18 @@ export async function handleSendTextChat(
       ? NELA_CLOUD_SYSTEM_PROMPT
       : NELA_SYSTEM_PROMPT;
   const autoArtifacts = canAutoStreamArtifacts();
+  // Date line lives after the identity block so the cached cloud prefix stays byte-stable.
+  const dateLine = currentDateSystemLine();
   let apiMessages = [
     {
       role: "system" as const,
       content: autoArtifacts
-        ? `${identityPrompt}\n\n${NELA_AUTO_ARTIFACT_CRITERIA}\n\n${CHART_SYSTEM_INSTRUCTION}`
-        : `${identityPrompt}\n\n${CHART_SYSTEM_INSTRUCTION}`,
+        ? `${identityPrompt}\n\n${dateLine}\n\n${NELA_AUTO_ARTIFACT_CRITERIA}\n\n${CHART_SYSTEM_INSTRUCTION}`
+        : `${identityPrompt}\n\n${dateLine}\n\n${CHART_SYSTEM_INSTRUCTION}`,
     },
+    ...(explicitAttachments
+      ? [{ role: "system" as const, content: DIRECT_ATTACHMENT_SYSTEM }]
+      : []),
     ...toContextMessages(fullSessionMessages),
   ];
 
@@ -123,6 +148,38 @@ export async function handleSendTextChat(
   // UI-only discovery notice. This prevents llama-server's strict chat template
   // from rejecting the request with "System message must be at the beginning".
   apiMessages = normalizeMessagesForLlm(apiMessages);
+
+  let sendMessages: CloudChatMessage[] = apiMessages.map((m) => ({
+    role: m.role,
+    content: m.content,
+  }));
+  let cloudPlugins: CloudFileParserPlugin[] | undefined;
+  const cloudConfirmed =
+    preferredMode === "cloud" || Boolean(fileSearchEnabled);
+  if (
+    explicitAttachments &&
+    willRouteToCloud({
+      containsFileContext: true,
+      userConfirmedCloudContext: cloudConfirmed,
+    })
+  ) {
+    const { preparedByPath, warningsByPath } = await prepareMessageAttachments(
+      fullSessionMessages
+    );
+    sendMessages = overlayCloudAttachments({
+      apiMessages,
+      sessionMessages: fullSessionMessages,
+      preparedByPath,
+      warningsByPath,
+    });
+    const plugin = pluginForPrepared([...preparedByPath.values()]);
+    const sendingPdf = sendMessages.some(
+      (message) =>
+        Array.isArray(message.content) &&
+        message.content.some((part) => part.type === "file")
+    );
+    if (plugin && sendingPdf) cloudPlugins = [plugin];
+  }
 
   const chunkFlusher = createStreamChunkFlusher((batched) => {
     ctx.updateSession(sid, (prev) => ({
@@ -221,7 +278,8 @@ export async function handleSendTextChat(
     thinking: string,
     web: WebSearchResult | null,
     generatedByModel?: string | null,
-    creditsRemainingAfter?: number | null
+    creditsRemainingAfter?: number | null,
+    fileAnnotations?: FileAnnotation[] | null
   ) => {
     chunkFlusher.flushNow();
     thinkingFlusher.flushNow();
@@ -344,6 +402,9 @@ export async function handleSendTextChat(
             ...(typeof creditsRemainingAfter === "number"
               ? { creditsRemainingAfter }
               : {}),
+            ...(fileAnnotations && fileAnnotations.length > 0
+              ? { fileAnnotations }
+              : {}),
             generateTime: totalTime,
             firstTokenTime:
               timeToFirstToken !== null ? timeToFirstToken : undefined,
@@ -428,17 +489,17 @@ export async function handleSendTextChat(
       useChatModeStore.getState().setLiveToolStatus("Ready to search your files…");
     }
     runCloudAwareToolLoop({
-      messages: apiMessages,
+      messages: sendMessages,
       webDepth: "full",
       webEnabled: effectiveWebEnabled,
       fileSearchEnabled,
       includeMcpTools: !autoArtifacts,
       chartEnabled: true,
       chartPool,
-      containsFileContext: false,
-      // "Search my files" / /files is explicit consent to ground on local hits.
-      userConfirmedCloudContext: Boolean(fileSearchEnabled),
-      contextSource: undefined,
+      containsFileContext: explicitAttachments,
+      userConfirmedCloudContext: cloudConfirmed,
+      contextSource: explicitAttachments ? "direct_attachment" : undefined,
+      plugins: cloudPlugins,
       modelId: ctx.selectedModel || undefined,
       signal: ctrl.signal,
       disableThinking: !ctx.thinkingEnabled,
@@ -471,7 +532,8 @@ export async function handleSendTextChat(
           fullThinking || result.thinking,
           webSearchResult,
           result.model,
-          result.creditsRemaining
+          result.creditsRemaining,
+          result.fileAnnotations
         );
       })
       .catch((err) => {
@@ -482,11 +544,16 @@ export async function handleSendTextChat(
   }
 
   streamChatByMode({
-    messages: apiMessages,
-    intent: "quick_chat",
-    containsFileContext: false,
-    userConfirmedCloudContext: false,
-    contextSource: undefined,
+    messages: sendMessages,
+    intent: explicitAttachments && sendMessages.some((m) =>
+      Array.isArray(m.content) && m.content.some((part) => part.type === "image_url")
+    )
+      ? "vision"
+      : "quick_chat",
+    containsFileContext: explicitAttachments,
+    userConfirmedCloudContext: cloudConfirmed,
+    contextSource: explicitAttachments ? "direct_attachment" : undefined,
+    plugins: cloudPlugins,
     modelId: ctx.selectedModel || undefined,
     signal: ctrl.signal,
     disableThinking: !ctx.thinkingEnabled,
@@ -499,7 +566,8 @@ export async function handleSendTextChat(
         fullThinking,
         null,
         meta?.model,
-        meta?.creditsRemaining
+        meta?.creditsRemaining,
+        meta?.annotations
       );
     },
     onError: finishErr,

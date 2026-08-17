@@ -4,6 +4,7 @@
  */
 
 import type { ChatContextMessage } from "../../types";
+import { currentDateSystemLine } from "../nelaSystemPrompt";
 import { extractWebSearchQuery } from "../webSearchQuery";
 import { streamChatByMode } from "./cloudOrLocalStream";
 
@@ -153,6 +154,8 @@ export async function resolveFollowUpSearchQuery(
       content:
         "You rewrite follow-up chat messages into ONE self-contained web search query.\n" +
         "Include the place, product, trip, dates, or topic from the conversation so the query stands alone.\n" +
+        `${currentDateSystemLine()}\n` +
+        "If the request is time-sensitive, keep the explicit period (quarter, month, year) in the query and never downgrade it to an earlier year.\n" +
         'Example: prior talk about a 1-week Spain itinerary + user says "possible flights" → "flights to Spain for 1 week trip".\n' +
         "Reply with ONLY the search query text (or JSON {\"query\":\"...\"}). No explanations.",
     },

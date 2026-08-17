@@ -30,6 +30,18 @@ export const WEB_SEARCH_TOOL: CloudToolDefinition = {
             "standard = multi-facet research (several searches); " +
             "deep = exhaustive multi-facet research (slowest)",
         },
+        time_range: {
+          type: "string",
+          enum: ["day", "week", "month", "year"],
+          description:
+            "Optional recency filter. Use it for time-sensitive questions (latest earnings, news, prices) so results are not stale older-year pages. " +
+            "Omit for timeless or historical questions.",
+        },
+        site: {
+          type: "string",
+          description:
+            "Optional domain to restrict the search to (e.g. sec.gov, investor.jpmorganchase.com) when you need a primary source",
+        },
       },
       required: ["query", "depth"],
     },
@@ -260,6 +272,53 @@ export const RENDER_CHART_TOOL: CloudToolDefinition = {
   },
 };
 
+/** Sparse clarification popup — at most once per turn; host enforces limits. */
+export const ASK_FOLLOWUP_TOOL: CloudToolDefinition = {
+  type: "function",
+  function: {
+    name: "ask_followup",
+    description:
+      "Ask the user a short clarifying question in a popup when required facts are missing " +
+      "(corrected numbers, which file to attach, ambiguous target). Use RARELY — at most once per turn, " +
+      "max 3 questions. Never for chit-chat or style preferences you can apply safely. " +
+      "Prefer one combined question. Do not invent missing data.",
+    parameters: {
+      type: "object",
+      properties: {
+        reason: {
+          type: "string",
+          description: "Short modal title explaining why you need input",
+        },
+        questions: {
+          type: "array",
+          description: "1–3 questions (prefer one)",
+          items: {
+            type: "object",
+            properties: {
+              id: { type: "string" },
+              prompt: { type: "string" },
+              input_type: {
+                type: "string",
+                description: "text | textarea | choice",
+              },
+              choices: {
+                type: "array",
+                items: { type: "string" },
+              },
+            },
+            required: ["prompt"],
+          },
+        },
+        allow_attachments: {
+          type: "boolean",
+          description: "Let the user attach or paste files with their answers",
+        },
+      },
+      required: ["reason", "questions"],
+    },
+  },
+};
+
 export const MCP_CLOUD_TOOLS: CloudToolDefinition[] = [
   MCP_SPREADSHEET_TOOL,
   MCP_PRESENTATION_TOOL,
@@ -272,12 +331,15 @@ export function buildCloudChatTools(options?: {
   mcpEnabled?: boolean;
   /** Host-rendered charts for HTML/PPT (default false). */
   chartEnabled?: boolean;
+  /** Sparse user clarification popup (default true for chat tool loops). */
+  askFollowUpEnabled?: boolean;
 }): CloudToolDefinition[] {
   const tools: CloudToolDefinition[] = [];
   if (options?.webEnabled) tools.push(WEB_SEARCH_TOOL, WEB_EXTRACT_TOOL);
   if (options?.fileSearchEnabled) tools.push(SEARCH_KNOWLEDGE_BASE_TOOL);
   if (options?.chartEnabled) tools.push(RENDER_CHART_TOOL);
   if (options?.mcpEnabled) tools.push(...MCP_CLOUD_TOOLS);
+  if (options?.askFollowUpEnabled !== false) tools.push(ASK_FOLLOWUP_TOOL);
   return tools;
 }
 

@@ -70,13 +70,85 @@ export async function runPresentationEditPipeline(
   }
 
   if (isUnderspecifiedTitleChange(normalized.text)) {
-    ctx.updateSession(sid, { loading: false });
-    updateEditMsg(
-      "LivePreview",
-      artifactPath,
-      "What should the new title be? Try: **change the title to Barcelona Travel Guide**"
+    updateEditMsg("CrunchingMetrics", null, "Waiting for your answers…");
+    const { executeAskFollowUp, formatFollowUpIntoPrompt } = await import(
+      "./askFollowUp"
     );
-    return true;
+    const follow = await executeAskFollowUp(
+      {
+        reason: "What should the new title be?",
+        questions: [
+          {
+            id: "new_title",
+            prompt: "Enter the new presentation title",
+            input_type: "text",
+          },
+        ],
+        allow_attachments: false,
+      },
+      {
+        signal: ctrl.signal,
+        onStatus: (msg) => {
+          if (msg) updateEditMsg("CrunchingMetrics", null, msg);
+        },
+      }
+    );
+    if (follow.status !== "answered") {
+      ctx.updateSession(sid, { loading: false });
+      updateEditMsg(
+        "LivePreview",
+        artifactPath,
+        "Edit cancelled — no title change applied."
+      );
+      return true;
+    }
+    const title =
+      follow.answers.new_title?.trim() ||
+      follow.freeformNote?.trim() ||
+      "";
+    if (!title) {
+      ctx.updateSession(sid, { loading: false });
+      updateEditMsg(
+        "LivePreview",
+        artifactPath,
+        "No title provided — no changes applied."
+      );
+      return true;
+    }
+    const continued = formatFollowUpIntoPrompt(
+      `change the title of the presentation to ${title}`,
+      follow
+    );
+    // Fall through to planner with a fully specified prompt.
+    const { runPresentationEditPlanner } = await import("./presentationEditPlanner");
+    const plannedCommands = await runPresentationEditPlanner({
+      text: continued,
+      artifactPath,
+      ctx,
+      ctrl,
+      generationOptions,
+      updateEditMsg,
+      activeSlideIndex: options?.activeSlideIndex,
+    });
+    if (plannedCommands?.length) {
+      const handled = await applyPresentationEditCommands({
+        commands: plannedCommands,
+        artifactPath,
+        sid,
+        ctx,
+        updateEditMsg,
+      });
+      if (handled) return true;
+    }
+    const parsed = parseEditCommands(continued);
+    if (parsed.commands.length === 0) return false;
+    return applyPresentationEditCommands({
+      commands: parsed.commands,
+      artifactPath,
+      sid,
+      ctx,
+      updateEditMsg,
+    });
   }
 
   // The planner runs for EVERY request: it picks the ops (and therefore which

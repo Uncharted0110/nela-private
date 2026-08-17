@@ -106,7 +106,8 @@ import {
   inferPresentationTheme,
 } from "./presentationTheme";
 import { repairNestedKeys } from "./repairNestedKeys";
-import type { WebSearchResult } from "../../types";
+import { resolveArtifactConversationSource } from "./conversationArtifactContext";
+import type { ChatMessage, WebSearchResult } from "../../types";
 import type { SendHandlerContext } from "./types";
 
 export async function handleArtifactGeneration(
@@ -120,6 +121,8 @@ export async function handleArtifactGeneration(
     webEnabled?: boolean;
     ragEnabled?: boolean;
     forceFileSearch?: boolean;
+    /** Prior chat turns, used to ground referential requests ("the same"). */
+    conversationMessages?: ChatMessage[];
   }
 ): Promise<void> {
   const preferredModeEarly = useCloudStore.getState().preferredMode;
@@ -263,6 +266,13 @@ export async function handleArtifactGeneration(
     const wantsAmbientFileSearch = shouldRunAmbientFileSearch(text, {
       forceFileSearch: options?.forceFileSearch,
     });
+
+    // Candidate recent-chat source. The artifact planner decides whether the
+    // current request depends on it; no keyword classifier or extra LLM call.
+    const conversationSource = resolveArtifactConversationSource(
+      text,
+      options?.conversationMessages
+    );
 
     const mergeArtifactCitations = (next: WebSearchResult | null) => {
       if (!next?.results?.length) return;
@@ -489,6 +499,9 @@ export async function handleArtifactGeneration(
               schemaId,
               webDepth: fetchContent ? "full" : "snippets",
               fileSearchEnabled,
+              ...(conversationSource
+                ? { priorContent: conversationSource.sourceAnswer }
+                : {}),
               signal: ctrl.signal,
               onStatus: (status) =>
                 useChatModeStore.getState().setLiveToolStatus(status),
@@ -654,6 +667,10 @@ export async function handleArtifactGeneration(
     const imageCatalog = formatImageCatalogForPrompt(imagePool);
 
     let dataContext = supplementalContext;
+    // Candidate chat context leads the block so it survives context trimming.
+    if (conversationSource) {
+      dataContext = `${conversationSource.block}${dataContext}`;
+    }
     const hasSourceDocument =
       !!ambientFileContent &&
       !ambientFileContent.includes("(Content could not be extracted");
@@ -665,6 +682,7 @@ export async function handleArtifactGeneration(
         headers: hasSourceData ? headers : undefined,
         rows: hasSourceData ? rows : undefined,
         ambientContent: !hasSourceData ? ambientFileContent : undefined,
+        hasConversationSource: Boolean(conversationSource),
       });
     } else if (headers && headers.length > 0) {
       if (workbookProfiles.length && activeSheetProfile) {
@@ -948,7 +966,9 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
           : buildHtmlDataContext(spreadsheetData)
         : "";
     const dataContextBody = `${dataContext}${spreadsheetContext}${imageCatalog}${chartCatalog}`;
-    const planRequestText = planRequest;
+    const planRequestText = conversationSource
+      ? `${planRequest} Decide whether the RECENT CHAT CONTEXT above is relevant to this request. If relevant, build from it and keep its exact figures, labels, and time period; otherwise ignore it completely.`
+      : planRequest;
 
     // Presentations need far more output room than a single artifact plan: budget
     // roughly per-slide so larger decks aren't truncated mid-array.

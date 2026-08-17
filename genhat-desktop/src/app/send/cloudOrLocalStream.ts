@@ -12,11 +12,13 @@ import {
 import type {
   CloudChatMessage,
   CloudChatRequest,
+  CloudFileParserPlugin,
   CloudIntent,
   CloudQualityMode,
   CloudToolCall,
   CloudToolChoice,
   CloudToolDefinition,
+  FileAnnotation,
 } from "../../types";
 
 type StreamFinishMeta = {
@@ -25,6 +27,7 @@ type StreamFinishMeta = {
   creditsRemaining?: number;
   trialCreditsRemaining?: number;
   trialExpiresAt?: string | null;
+  annotations?: FileAnnotation[];
 };
 
 type StreamCallbacks = {
@@ -35,19 +38,14 @@ type StreamCallbacks = {
 };
 
 type StreamArgs = {
-  messages: Array<{
-    role: "system" | "user" | "assistant" | "tool";
-    content?: string | null;
-    tool_calls?: CloudToolCall[];
-    tool_call_id?: string;
-    name?: string;
-  }>;
+  messages: CloudChatMessage[];
   intent?: CloudIntent;
   mode?: CloudQualityMode;
   containsFileContext: boolean;
   /** When true, file-derived context may be sent to cloud. Default false. */
   userConfirmedCloudContext?: boolean;
   contextSource?: string;
+  plugins?: CloudFileParserPlugin[];
   modelId?: string | null;
   signal?: AbortSignal;
   disableThinking?: boolean;
@@ -179,7 +177,15 @@ function runLocalStream(args: StreamArgs): void {
     )
     .map((m) => ({
       role: m.role as "system" | "user" | "assistant",
-      content: m.content ?? "",
+      content:
+        typeof m.content === "string"
+          ? m.content
+          : Array.isArray(m.content)
+            ? m.content
+                .filter((part): part is { type: "text"; text: string } => part.type === "text")
+                .map((part) => part.text)
+                .join("\n")
+            : m.content ?? "",
     }));
   const localModel =
     args.modelId?.trim() ||
@@ -234,6 +240,7 @@ async function runCloudStream(args: StreamArgs): Promise<void> {
     tool_calls: m.tool_calls,
     tool_call_id: m.tool_call_id,
     name: m.name,
+    annotations: m.annotations,
   }));
 
   const sessionId =
@@ -267,6 +274,7 @@ async function runCloudStream(args: StreamArgs): Promise<void> {
     tool_choice: args.tool_choice,
     response_format: args.response_format,
     includeReasoning: args.disableThinking !== true,
+    plugins: args.plugins,
     client: {
       platform: "desktop",
       sessionId: stickySessionId,
@@ -324,6 +332,7 @@ async function runCloudStream(args: StreamArgs): Promise<void> {
         creditsRemaining?: number;
         trialCreditsRemaining?: number;
         trialExpiresAt?: string | null;
+        annotations?: FileAnnotation[];
       }>("cloud-chat-stream", (event) => {
         if (settled) return;
         const {
@@ -336,6 +345,7 @@ async function runCloudStream(args: StreamArgs): Promise<void> {
           creditsRemaining,
           trialCreditsRemaining,
           trialExpiresAt,
+          annotations,
         } = event.payload;
         if (error) {
           finish(() => {
@@ -370,6 +380,7 @@ async function runCloudStream(args: StreamArgs): Promise<void> {
             if (trialExpiresAt !== undefined) {
               meta.trialExpiresAt = trialExpiresAt;
             }
+            if (annotations?.length) meta.annotations = annotations;
             if (typeof meta.creditsRemaining === "number") {
               useCloudStore.getState().applyCreditsSnapshot({
                 balance: meta.creditsRemaining,
@@ -380,7 +391,8 @@ async function runCloudStream(args: StreamArgs): Promise<void> {
             args.onFinish(
               meta.tool_calls ||
                 meta.model ||
-                typeof meta.creditsRemaining === "number"
+                typeof meta.creditsRemaining === "number" ||
+                meta.annotations
                 ? meta
                 : undefined
             );

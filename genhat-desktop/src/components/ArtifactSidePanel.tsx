@@ -496,6 +496,14 @@ export default function ArtifactSidePanel({
           }
           return next;
         });
+        void import("../stores/sessionStore").then(({ useSessionStore }) => {
+          const sid = useSessionStore.getState().activeSessionId;
+          if (sid) {
+            useSessionStore.getState().updateSession(sid, {
+              previewSlideIndex: next,
+            });
+          }
+        });
         return;
       }
 
@@ -1029,8 +1037,8 @@ export default function ArtifactSidePanel({
                       setEditOpen(false);
                     })();
                   }}
-                  title="Edit this artifact in the preview"
-                  aria-label="Edit this artifact"
+                  title="Advanced edit (select elements)"
+                  aria-label="Advanced edit (select elements)"
                 >
                   <Pencil
                     size={20}

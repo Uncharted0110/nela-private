@@ -394,9 +394,11 @@ fn matches_artifact_edit_trigger(prompt: &str) -> bool {
         }
     }
 
-    // Session artifact alone is not enough — require an explicit target hint or
-    // a clear structural edit (add/remove slide, change theme, …).
-    references_existing || structural
+    // With artifact_path present (caller), any clear edit verb is enough —
+    // prompt-bar is the primary edit path. Prefer structural/reference matches
+    // in logs via short-circuit order.
+    let _ = (references_existing, structural);
+    true
 }
 
 fn is_information_seeking_prompt(lower: &str) -> bool {

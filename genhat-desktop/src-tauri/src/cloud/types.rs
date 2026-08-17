@@ -7,7 +7,9 @@ use serde_json::Value;
 #[serde(rename_all = "lowercase")]
 pub enum CloudPlan {
     Free,
+    #[serde(alias = "premium_small", alias = "premium_medium")]
     Starter,
+    #[serde(alias = "premium_large")]
     Pro,
 }
 
@@ -71,9 +73,15 @@ pub struct DeviceStartResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DevicePollPendingStatus {
+    Pending,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DevicePollPendingResponse {
-    pub status: String,
+    pub status: DevicePollPendingStatus,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -223,16 +231,75 @@ pub struct CloudToolCall {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CloudImageUrl {
+    pub url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CloudFilePayload {
+    pub filename: String,
+    pub file_data: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum CloudChatContentPart {
+    #[serde(rename = "text")]
+    Text { text: String },
+    #[serde(rename = "image_url")]
+    ImageUrl { image_url: CloudImageUrl },
+    #[serde(rename = "file")]
+    File { file: CloudFilePayload },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum CloudChatContent {
+    Text(String),
+    Parts(Vec<CloudChatContentPart>),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CloudFileAnnotationFile {
+    pub hash: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    pub content: Vec<Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CloudFileAnnotation {
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub file: CloudFileAnnotationFile,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CloudPdfParserOptions {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub engine: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CloudFileParserPlugin {
+    pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pdf: Option<CloudPdfParserOptions>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CloudChatMessage {
     pub role: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub content: Option<String>,
+    pub content: Option<CloudChatContent>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<CloudToolCall>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub annotations: Option<Vec<CloudFileAnnotation>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -311,6 +378,8 @@ pub struct CloudChatRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub include_reasoning: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub plugins: Option<Vec<CloudFileParserPlugin>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub client: Option<CloudChatClientMeta>,
 }
 
@@ -344,4 +413,70 @@ pub struct RefreshRequest {
 #[serde(rename_all = "camelCase")]
 pub struct LogoutRequest {
     pub refresh_token: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CloudPlan, DevicePollResponse};
+
+    #[test]
+    fn approved_device_poll_accepts_legacy_premium_plan() {
+        let json = r#"{
+            "status": "approved",
+            "accessToken": "access",
+            "refreshToken": "refresh",
+            "expiresIn": 900,
+            "profile": {
+                "id": "user-1",
+                "name": "Test User",
+                "email": "test@example.com",
+                "avatarUrl": null,
+                "authProvider": "google",
+                "plan": "premium_medium",
+                "displayPlan": "premium",
+                "isPremium": true,
+                "entitlementStatus": "active",
+                "updatedAt": "2026-08-17T00:00:00.000Z",
+                "occupation": null,
+                "field": null,
+                "onboardingCompleted": true
+            }
+        }"#;
+
+        let response: DevicePollResponse =
+            serde_json::from_str(json).expect("approved response should deserialize");
+        match response {
+            DevicePollResponse::Approved(approved) => {
+                assert_eq!(approved.profile.plan, CloudPlan::Starter);
+            }
+            DevicePollResponse::Pending(_) => panic!("approved response became pending"),
+        }
+    }
+
+    #[test]
+    fn malformed_approved_poll_cannot_fall_back_to_pending() {
+        let json = r#"{"status":"approved","profile":{"plan":"unknown"}}"#;
+        assert!(serde_json::from_str::<DevicePollResponse>(json).is_err());
+    }
+
+    #[test]
+    fn cloud_chat_content_accepts_string_or_parts() {
+        let string_msg: super::CloudChatMessage = serde_json::from_str(
+            r#"{"role":"user","content":"hello"}"#,
+        )
+        .unwrap();
+        match string_msg.content {
+            Some(super::CloudChatContent::Text(text)) => assert_eq!(text, "hello"),
+            other => panic!("expected text, got {other:?}"),
+        }
+
+        let parts_msg: super::CloudChatMessage = serde_json::from_str(
+            r#"{"role":"user","content":[{"type":"text","text":"see"},{"type":"image_url","image_url":{"url":"data:image/png;base64,aa"}}]}"#,
+        )
+        .unwrap();
+        match parts_msg.content {
+            Some(super::CloudChatContent::Parts(parts)) => assert_eq!(parts.len(), 2),
+            other => panic!("expected parts, got {other:?}"),
+        }
+    }
 }

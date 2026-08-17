@@ -14,6 +14,7 @@ import type {
   WebSearchResult,
   ExtractedWebTable,
 } from "../../types";
+import { currentDateSystemLine } from "../nelaSystemPrompt";
 import { extractWebSearchQuery } from "../webSearchQuery";
 import { groundWebSearchQuery } from "./followUpSearchQuery";
 import { normalizeWebToolDepth, runWebSearchWithDepth } from "./webSearchDepth";
@@ -33,6 +34,7 @@ Reply with ONLY this JSON (no markdown):
 {"tool":"web_search","query":"concise keyword query","depth":"snippet|full|standard|deep"}
 depth meanings: snippet = quick facts; full = richer page content; standard = multi-facet research; deep = exhaustive multi-facet research.
 Optional after web_search: {"tool":"web_extract","urls":["https://..."],"query":"what you need"}
+Include the explicit period (quarter/month/year) in the query for time-sensitive questions.
 Cite web results with inline [n] markers only (no raw URLs).`;
 
 export const FILE_SEARCH_TOOL_SYSTEM = `You have a search_knowledge_base tool for the user's local indexed document graph (hybrid BM25 + dense vector embeddings + structural expansion).
@@ -95,7 +97,7 @@ function buildHostToolSystem(opts: {
   fileSearchEnabled: boolean;
 }): string {
   const parts: string[] = [];
-  if (opts.webEnabled) parts.push(WEB_SEARCH_TOOL_SYSTEM);
+  if (opts.webEnabled) parts.push(WEB_SEARCH_TOOL_SYSTEM, currentDateSystemLine());
   if (opts.fileSearchEnabled) parts.push(FILE_SEARCH_TOOL_SYSTEM);
   return parts.join("\n\n");
 }

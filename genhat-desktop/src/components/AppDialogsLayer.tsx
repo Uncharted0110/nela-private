@@ -21,6 +21,7 @@ import OnboardingModal from "./OnboardingModal";
 import CloudSettingsModal from "./CloudSettingsModal";
 import PremiumUpgradeModal from "./PremiumUpgradeModal";
 import RagSourcePickerModal from "./RagSourcePickerModal";
+import FollowUpModal from "./FollowUpModal";
 import DocGraphIndexModal from "./DocGraphIndexModal";
 import DocGraphQueryModal from "./DocGraphQueryModal";
 interface AppDialogsLayerProps {
@@ -136,6 +137,7 @@ export default function AppDialogsLayer({
       <PremiumUpgradeModal />
 
       <RagSourcePickerModal />
+      <FollowUpModal />
     </>
   );
 }

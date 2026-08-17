@@ -8,8 +8,10 @@ import { Api } from "../../api";
 import type {
   ChatContextMessage,
   CloudChatMessage,
+  CloudFileParserPlugin,
   CloudToolCall,
   CloudToolDefinition,
+  FileAnnotation,
   WebSearchResult,
   ArtifactResult,
 } from "../../types";
@@ -19,7 +21,7 @@ import {
   willRouteToCloud,
 } from "./cloudOrLocalStream";
 import { buildCloudChatTools } from "./cloudTools";
-import { groundWebSearchQuery, resolveFollowUpSearchQuery } from "./followUpSearchQuery";
+import { groundWebSearchQuery } from "./followUpSearchQuery";
 import { mergeWebSearchResults, runWebSearchToolLoop } from "./webSearchToolLoop";
 import { normalizeWebToolDepth, runWebSearchWithDepth } from "./webSearchDepth";
 import { knowledgeBaseToSearchResult, fileUrlToPath, isLocalFileHitUrl } from "./fileSearchCitations";
@@ -36,17 +38,21 @@ import {
   type ChartPoolEntry,
 } from "../artifactChartPool";
 import { normalizeSpreadsheetPlan } from "../spreadsheetPlan";
+import { currentQuarter } from "../nelaSystemPrompt";
+import type { AskFollowUpArgs } from "./askFollowUp";
+import { beginAskFollowUpTurn } from "../../stores/followUpStore";
 
 const MAX_TOOL_ROUNDS = MAX_WEB_SEARCH_TOOL_ROUNDS;
 const MAX_CHART_PREP_ROUNDS = 6;
 
 export interface CloudNativeToolLoopOptions {
-  messages: ChatContextMessage[];
+  messages: CloudChatMessage[] | ChatContextMessage[];
   webDepth: "snippets" | "full";
   /** When false, omit web_search / web_extract (file-search-only turns). Default true. */
   webEnabled?: boolean;
   /** Expose local Doc Graph `file_search` tool (Search my files / /files). */
   fileSearchEnabled?: boolean;
+  plugins?: CloudFileParserPlugin[];
   /** Include MCP spreadsheet/presentation/html tools alongside web_search. */
   includeMcpTools?: boolean;
   /** Expose host render_chart tool (HTML/PPT dashboards). */
@@ -65,7 +71,9 @@ export interface CloudNativeToolLoopOptions {
   /** Fired when a desktop-hosted tool starts/finishes (e.g. web search UI). */
   onToolStatus?: (status: string | null) => void;
   onArtifact?: (artifact: ArtifactResult) => void;
-}
+  /** Stable id so ask_followup is limited to once per user turn. */
+  askFollowUpTurnId?: string;
+};
 
 export interface CloudNativeToolLoopResult {
   content: string;
@@ -76,15 +84,44 @@ export interface CloudNativeToolLoopResult {
   model?: string;
   /** Post-request credit balance from the last cloud round. */
   creditsRemaining?: number;
+  fileAnnotations?: FileAnnotation[];
 }
 
-function toCloudMessages(messages: ChatContextMessage[]): CloudChatMessage[] {
+function flattenMessageContent(content: CloudChatMessage["content"]): string {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .filter((part): part is { type: "text"; text: string } => part.type === "text")
+      .map((part) => part.text)
+      .join("\n");
+  }
+  return content ?? "";
+}
+
+function toTextMessages(
+  messages: Array<ChatContextMessage | CloudChatMessage>
+): ChatContextMessage[] {
+  return messages
+    .filter(
+      (m): m is ChatContextMessage | CloudChatMessage =>
+        m.role === "system" || m.role === "user" || m.role === "assistant"
+    )
+    .map((m) => ({
+      role: m.role as ChatContextMessage["role"],
+      content: flattenMessageContent(m.content),
+    }));
+}
+
+function toCloudMessages(
+  messages: Array<ChatContextMessage | CloudChatMessage>
+): CloudChatMessage[] {
   return messages.map((m) => ({
     role: m.role as CloudChatMessage["role"],
     content: m.content,
-    name: (m as { name?: string }).name,
-    tool_call_id: (m as { tool_call_id?: string }).tool_call_id,
-    tool_calls: (m as { tool_calls?: CloudToolCall[] }).tool_calls,
+    name: (m as CloudChatMessage).name,
+    tool_call_id: (m as CloudChatMessage).tool_call_id,
+    tool_calls: (m as CloudChatMessage).tool_calls,
+    annotations: (m as CloudChatMessage).annotations,
   }));
 }
 
@@ -98,6 +135,7 @@ function streamCloudRound(
   tool_calls?: CloudToolCall[];
   model?: string;
   creditsRemaining?: number;
+  annotations?: FileAnnotation[];
 }> {
   return new Promise((resolve, reject) => {
     let content = "";
@@ -125,6 +163,7 @@ function streamCloudRound(
       containsFileContext: opts.containsFileContext ?? false,
       userConfirmedCloudContext: opts.userConfirmedCloudContext,
       contextSource: opts.contextSource,
+      plugins: opts.plugins,
       modelId: opts.modelId,
       signal: opts.signal,
       disableThinking: opts.disableThinking,
@@ -144,6 +183,7 @@ function streamCloudRound(
             tool_calls: meta?.tool_calls,
             model: meta?.model,
             creditsRemaining: meta?.creditsRemaining,
+            annotations: meta?.annotations,
           })
         );
       },
@@ -179,7 +219,7 @@ async function executeToolCall(
     }
     try {
       query = await groundWebSearchQuery(query, {
-        messages: opts.messages,
+        messages: toTextMessages(opts.messages),
         userText: query,
         modelId: opts.modelId,
         signal: opts.signal,
@@ -206,7 +246,7 @@ async function executeToolCall(
       const result = await runWebSearchWithDepth({
         query,
         depth,
-        messages: opts.messages,
+        messages: toTextMessages(opts.messages),
         modelId: opts.modelId,
         signal: opts.signal,
         containsFileContext: opts.containsFileContext,
@@ -472,6 +512,28 @@ async function executeToolCall(
     };
   }
 
+  if (name === "ask_followup") {
+    const { executeAskFollowUp } = await import("./askFollowUp");
+    const result = await executeAskFollowUp(
+      {
+        reason: typeof args.reason === "string" ? args.reason : undefined,
+        questions: Array.isArray(args.questions)
+          ? (args.questions as AskFollowUpArgs["questions"])
+          : undefined,
+        allow_attachments: Boolean(args.allow_attachments),
+      },
+      {
+        turnId: opts.askFollowUpTurnId,
+        signal: opts.signal,
+        onStatus: opts.onToolStatus,
+      }
+    );
+    return {
+      content: JSON.stringify(result),
+      webSearchResult,
+    };
+  }
+
   return {
     content: `Unknown tool: ${name}`,
     webSearchResult,
@@ -501,7 +563,7 @@ export async function runCloudAwareToolLoop(
       opts.onChunk(chunk);
     };
     const local = await runWebSearchToolLoop({
-      messages: opts.messages,
+      messages: toTextMessages(opts.messages),
       webDepth: opts.webDepth,
       webEnabled: opts.webEnabled !== false,
       fileSearchEnabled: Boolean(opts.fileSearchEnabled),
@@ -547,29 +609,40 @@ export async function runCloudAwareToolLoop(
 export async function runCloudNativeToolLoop(
   opts: CloudNativeToolLoopOptions
 ): Promise<CloudNativeToolLoopResult> {
-  const webEnabled = opts.webEnabled !== false;
-  const fileSearchEnabled = Boolean(opts.fileSearchEnabled);
+  const turnId = opts.askFollowUpTurnId ?? `cloud-tools-${Date.now()}`;
+  beginAskFollowUpTurn(turnId);
+  const loopOpts: CloudNativeToolLoopOptions = {
+    ...opts,
+    askFollowUpTurnId: turnId,
+  };
+
+  const webEnabled = loopOpts.webEnabled !== false;
+  const fileSearchEnabled = Boolean(loopOpts.fileSearchEnabled);
   const tools = buildCloudChatTools({
     webEnabled,
     fileSearchEnabled,
-    mcpEnabled: opts.includeMcpTools !== false,
-    chartEnabled: Boolean(opts.chartEnabled),
+    mcpEnabled: loopOpts.includeMcpTools !== false,
+    chartEnabled: Boolean(loopOpts.chartEnabled),
+    askFollowUpEnabled: true,
   });
 
-  let messages = toCloudMessages(opts.messages);
+  let messages = toCloudMessages(loopOpts.messages);
   // Dynamic (non-cached) reminder so the model actually uses available tools.
   const hasWebSearch = tools.some((t) => t.function.name === "web_search");
   const hasFileSearch = tools.some(
     (t) => t.function.name === "search_knowledge_base"
   );
   const hasRenderChart = tools.some((t) => t.function.name === "render_chart");
-  if (hasWebSearch || hasFileSearch || hasRenderChart) {
+  const hasAskFollowUp = tools.some((t) => t.function.name === "ask_followup");
+  if (hasWebSearch || hasFileSearch || hasRenderChart || hasAskFollowUp) {
     const parts: string[] = [];
     if (hasWebSearch) {
       parts.push(
         "You have a web_search tool. Call it ONLY when you need live web facts — never automatically. " +
           "Every call MUST include query and depth (snippet | full | standard | deep). " +
           "snippet = quick facts; full = richer page content; standard = multi-facet research; deep = exhaustive multi-facet research. " +
+          `For anything time-sensitive, put the requested period in the query (e.g. "Q${currentQuarter()} ${new Date().getFullYear()}") and set time_range to keep results recent; ` +
+          "if the first results are from an older year than requested, search again with the explicit period before concluding the data does not exist. " +
           "Follow-ups inherit the prior topic. Cite web results with inline [n] markers only (no raw URLs)."
       );
     }
@@ -586,6 +659,12 @@ export async function runCloudNativeToolLoop(
         "You have a render_chart tool for dashboards and plots. Call it with chart_type (bar|pie|line|timeline|dual_line|grouped_bar), title, labels[], and values[] — mix types, not all bars. For dual_line/grouped_bar also pass series[]. " +
           "never invent Chart.js or hand-written echarts.init. Embed the returned nela-chart:N token in HTML as " +
           '<div data-nela-chart="nela-chart:N"></div>.'
+      );
+    }
+    if (hasAskFollowUp) {
+      parts.push(
+        "You have ask_followup for a sparse popup when required facts are missing (numbers, files, ambiguous target). " +
+          "Use at most once per turn; never for chit-chat; never invent missing data."
       );
     }
     const hint = parts.join(" ");
@@ -607,6 +686,7 @@ export async function runCloudNativeToolLoop(
   let lastContent = "";
   let lastModel: string | undefined;
   let lastCreditsRemaining: number | undefined;
+  let lastAnnotations: FileAnnotation[] | undefined;
 
   try {
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
@@ -618,10 +698,10 @@ export async function runCloudNativeToolLoop(
         messages,
         tools,
         {
-          ...opts,
+          ...loopOpts,
           onThinking: (t) => {
             thinking += t;
-            opts.onThinking(t);
+            loopOpts.onThinking(t);
           },
           onChunk: () => {
             /* suppress until final prose or no-tool answer */
@@ -635,12 +715,15 @@ export async function runCloudNativeToolLoop(
       if (typeof decision.creditsRemaining === "number") {
         lastCreditsRemaining = decision.creditsRemaining;
       }
+      if (decision.annotations?.length) {
+        lastAnnotations = decision.annotations;
+      }
 
       const toolCalls = decision.tool_calls ?? [];
 
       if (!toolCalls.length) {
         if (decision.content.trim()) {
-          opts.onChunk(decision.content);
+          loopOpts.onChunk(decision.content);
         }
         return {
           content: decision.content,
@@ -649,6 +732,7 @@ export async function runCloudNativeToolLoop(
           artifacts,
           model: lastModel,
           creditsRemaining: lastCreditsRemaining,
+          fileAnnotations: lastAnnotations,
         };
       }
 
@@ -659,11 +743,14 @@ export async function runCloudNativeToolLoop(
           role: "assistant",
           content: decision.content || null,
           tool_calls: toolCalls,
+          ...(decision.annotations?.length
+            ? { annotations: decision.annotations }
+            : {}),
         },
       ];
 
       for (const call of toolCalls) {
-        const executed = await executeToolCall(call, opts, webSearchResult);
+        const executed = await executeToolCall(call, loopOpts, webSearchResult);
         webSearchResult = executed.webSearchResult;
         if (executed.artifact) artifacts.push(executed.artifact);
         messages = [
@@ -710,32 +797,35 @@ export async function runCloudNativeToolLoop(
       content: string;
       model?: string;
       creditsRemaining?: number;
+      annotations?: FileAnnotation[];
     }>((resolve, reject) => {
         let content = "";
         streamChatByMode({
           messages,
           intent: "quick_chat",
-          containsFileContext: opts.containsFileContext ?? false,
-          userConfirmedCloudContext: opts.userConfirmedCloudContext,
-          contextSource: opts.contextSource,
-          modelId: opts.modelId,
-          signal: opts.signal,
-          disableThinking: opts.disableThinking,
+          containsFileContext: loopOpts.containsFileContext ?? false,
+          userConfirmedCloudContext: loopOpts.userConfirmedCloudContext,
+          contextSource: loopOpts.contextSource,
+          plugins: loopOpts.plugins,
+          modelId: loopOpts.modelId,
+          signal: loopOpts.signal,
+          disableThinking: loopOpts.disableThinking,
           disableLocalFallback: true,
-          generationOptions: opts.generationOptions,
+          generationOptions: loopOpts.generationOptions,
           onChunk: (chunk) => {
             content += chunk;
-            opts.onChunk(chunk);
+            loopOpts.onChunk(chunk);
           },
           onThinking: (t) => {
             thinking += t;
-            opts.onThinking(t);
+            loopOpts.onThinking(t);
           },
           onFinish: (meta) =>
             resolve({
               content,
               model: meta?.model,
               creditsRemaining: meta?.creditsRemaining,
+              annotations: meta?.annotations,
             }),
           onError: reject,
         });
@@ -745,6 +835,9 @@ export async function runCloudNativeToolLoop(
     if (typeof finale.creditsRemaining === "number") {
       lastCreditsRemaining = finale.creditsRemaining;
     }
+    if (finale.annotations?.length) {
+      lastAnnotations = finale.annotations;
+    }
 
     return {
       content: finale.content || lastContent,
@@ -753,9 +846,10 @@ export async function runCloudNativeToolLoop(
       artifacts,
       model: lastModel,
       creditsRemaining: lastCreditsRemaining,
+      fileAnnotations: lastAnnotations,
     };
   } finally {
-    opts.onToolStatus?.(null);
+    loopOpts.onToolStatus?.(null);
   }
 }
 
@@ -770,10 +864,13 @@ export async function runCloudArtifactWebResearch(opts: {
   webDepth?: "snippets" | "full";
   /** When true, expose local Doc Graph search alongside web_search. */
   fileSearchEnabled?: boolean;
+  /** Recent chat content the model should assess for relevance. */
+  priorContent?: string;
   signal?: AbortSignal;
   onStatus?: (status: string | null) => void;
 }): Promise<WebSearchResult | null> {
   const webDepth = opts.webDepth ?? "snippets";
+  const priorContent = opts.priorContent?.trim() ?? "";
   const fileSearchEnabled = Boolean(opts.fileSearchEnabled);
   const kind =
     opts.schemaId === "presentation_synthesis"
@@ -803,7 +900,12 @@ export async function runCloudArtifactWebResearch(opts: {
       },
       {
         role: "user",
-        content: `Research for this ${kind} request:\n${opts.artifactRequest.slice(0, 1500)}`,
+        content:
+          (priorContent
+            ? `Candidate context from the recent chat:\n${priorContent.slice(0, 4000)}\n\n` +
+              `Decide whether the current artifact request depends on that context. If relevant and complete, do not search for the same facts again. If unrelated or additional live facts are needed, ignore/use it as appropriate and search normally.\n\n`
+            : "") +
+          `Research for this ${kind} request:\n${opts.artifactRequest.slice(0, 1500)}`,
       },
     ],
     webDepth,
@@ -823,10 +925,13 @@ export async function runCloudArtifactWebResearch(opts: {
     onToolStatus: opts.onStatus,
   };
 
+  // No ask_followup here: this is a background grounding pass, and a popup
+  // mid-generation is exactly the interruption the tool is meant to avoid.
   const tools = buildCloudChatTools({
     webEnabled: true,
     fileSearchEnabled,
     mcpEnabled: false,
+    askFollowUpEnabled: false,
   });
   let messages = toCloudMessages(researchOpts.messages);
   const mustCallHint =

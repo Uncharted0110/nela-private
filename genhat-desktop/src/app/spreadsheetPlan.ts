@@ -7,12 +7,15 @@ import {
   parseJsonCandidates,
 } from "./artifactPlanJson";
 import { deriveArtifactFilename } from "./artifactFilename";
+import { NELA_NUMERICAL_ACCURACY_RULES } from "./nelaSystemPrompt";
 import type { SpreadsheetOp, SpreadsheetPlan, SpreadsheetSheet } from "../types";
 
 export interface SpreadsheetDataContext {
   headers?: string[];
   rows?: string[][];
   ambientContent?: string;
+  /** Recent chat content was injected for the planner to assess for relevance. */
+  hasConversationSource?: boolean;
 }
 
 /** Build the user-message data context block for spreadsheet plan generation. */
@@ -46,6 +49,14 @@ export function buildSpreadsheetDataContext(ctx: SpreadsheetDataContext): string
       `- "headers": clear, human-readable column names derived from the document\n` +
       `- "rows": one row per logical record; every row must have the same number of cells as headers\n` +
       `Extract only information present in the source. Map fields to columns systematically (e.g. Field, Value pairs for form data).\n\n`
+    );
+  }
+
+  if (ctx.hasConversationSource) {
+    return (
+      `A RECENT CHAT CONTEXT block is available above. Decide semantically whether the current request depends on it.\n` +
+      `- If relevant: include WRITE_DATA as the first op, derive headers from that content, and transcribe its rows and values exactly. Do not invent, round, or substitute figures.\n` +
+      `- If unrelated: ignore that block and generate the workbook solely from the current request.\n\n`
     );
   }
 
@@ -121,7 +132,9 @@ Output rules:
 - For dashboards, analysis, or "chart/visualize" requests: include at least one ADD_CHART after the data is present.
 - For document/form extraction, prefer columns like "Field" and "Value", or logical domain columns.
 - When web search excerpts are provided, treat them as the only source of truth — never fabricate data not in those excerpts.
-- Keep cell values as strings; numbers without currency symbols unless requested.`;
+- Keep cell values as strings; numbers without currency symbols unless requested.
+
+${NELA_NUMERICAL_ACCURACY_RULES}`;
 
 export type SpreadsheetSystemParts = {
   cacheable: string;
@@ -169,6 +182,8 @@ CSV RULES (per sheet):
 - LINKS: Put every source URL in its own column named "Source URL" (or "Link") as a bare https://… URL with no surrounding text.
   Do not bury URLs inside Notes. Notes may say "see Source URL" but the clickable link must be the bare URL cell.
   Example: ...,"Day hike to Kolsai","https://example.com/kolsai"
+
+${NELA_NUMERICAL_ACCURACY_RULES}
 `;
 
 export function buildSpreadsheetSystemParts(

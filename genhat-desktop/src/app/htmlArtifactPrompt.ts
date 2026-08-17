@@ -3,6 +3,8 @@
  * Cloud (including Fast) uses freeform HTML; local uses the section JSON template.
  */
 
+import { NELA_NUMERICAL_ACCURACY_RULES } from "./nelaSystemPrompt";
+
 export const HTML_PLAN_MAX_TOKENS = 16_384;
 /** Freeform HTML — allow long pages; capped only by model completion limit upstream. */
 export const HTML_FREEFORM_MAX_TOKENS = 65_536;
@@ -32,7 +34,9 @@ CRITICAL CONTENT RULES:
 - Self-contained: inline <style>. Do NOT write Chart.js, Plotly, or hand-rolled echarts.init / chart config JS.
 - NEVER invent nela-chart markers. Only when an AVAILABLE CHARTS catalog is provided, embed with <div data-nela-chart="nela-chart:0"></div> using those exact indices.
 - When AVAILABLE IMAGES are listed, embed them with <img src="nela-img:0"> (or :1, :2, …). Do not invent image URLs.
-- No markdown fences around the HTML.`;
+- No markdown fences around the HTML.
+
+${NELA_NUMERICAL_ACCURACY_RULES}`;
 
 export const HTML_RENDERER_THEMES = [
   "midnight",
@@ -214,7 +218,9 @@ Rules:
 - Dashboard archetype: include four CHART sections with mixed chart_type (not all bars) when source data allows.
 - For interactive archetype: GRID must list actual pickable items, never marketing bullets.
 - Pick theme that fits the topic (food/local → sunset or rose, tech → cyber or midnight, data → aurora or corporate).
-- No markdown, no code fences, no explanations outside JSON.`;
+- No markdown, no code fences, no explanations outside JSON.
+
+${NELA_NUMERICAL_ACCURACY_RULES}`;
 
 export type HtmlArtifactSystemParts = {
   /** Stable schema — first system message for OpenRouter caching. */

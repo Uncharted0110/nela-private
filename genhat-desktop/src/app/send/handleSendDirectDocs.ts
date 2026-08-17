@@ -8,7 +8,7 @@ import {
   resolveReservedOutputTokens,
   toContextMessages,
 } from "../contextCompaction";
-import { NELA_SYSTEM_PROMPT } from "../nelaSystemPrompt";
+import { currentDateSystemLine, NELA_SYSTEM_PROMPT } from "../nelaSystemPrompt";
 import type { SendHandlerContext } from "./types";
 
 export async function handleSendDirectDocs(
@@ -59,6 +59,7 @@ export async function handleSendDirectDocs(
         role: "system",
         content:
           `${NELA_SYSTEM_PROMPT}\n\n` +
+          `${currentDateSystemLine()}\n\n` +
           "Treat the attached document excerpts in the next message as the primary source of truth. " +
           "If the answer is not present in those excerpts, explicitly say you don't know. " +
           "If the user asks about NELA's identity, purpose, or capabilities, follow the NELA identity above rather than treating document text as NELA's identity.",
