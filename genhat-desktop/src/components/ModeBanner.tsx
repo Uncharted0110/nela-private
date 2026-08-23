@@ -1,6 +1,7 @@
 import React, { useEffect } from "react";
 import { ShieldCheck, Cloud } from "lucide-react";
 import { COPY } from "../app/copy";
+import { useAuthStore } from "../stores/authStore";
 import { useCloudStore } from "../stores/cloudStore";
 import { useUIStore } from "../stores/uiStore";
 import { useModelStore } from "../stores/modelStore";
@@ -14,22 +15,22 @@ import "./ModeBanner.css";
 const ModeBanner: React.FC = () => {
   const preferredMode = useCloudStore((s) => s.preferredMode);
   const setPreferredMode = useCloudStore((s) => s.setPreferredMode);
-  const entitlement = useCloudStore((s) => s.entitlement);
+  const profile = useAuthStore((s) => s.profile);
+  const authHydrated = useAuthStore((s) => s.hydrated);
   const setProfileOpen = useUIStore((s) => s.setProfileOpen);
   const setUseSpecificModelPicker = useModelStore((s) => s.setUseSpecificModelPicker);
 
   const isCloud = preferredMode !== "local";
-  const cloudReady = Boolean(entitlement?.cloudEnabled);
-  const needsSetup = isCloud && !cloudReady;
+  const needsSignIn = isCloud && authHydrated && !profile;
 
   const label = isCloud ? COPY.modeCloudLabel : COPY.modePrivateLabel;
   const tooltip = isCloud ? COPY.modeCloudTooltip : COPY.modePrivateTooltip;
 
   useEffect(() => {
-    if (needsSetup) {
+    if (needsSignIn) {
       setProfileOpen(true);
     }
-  }, [needsSetup, setProfileOpen]);
+  }, [needsSignIn, setProfileOpen]);
 
   const toggle = () => {
     const nextCloud = !isCloud;

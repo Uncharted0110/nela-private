@@ -30,7 +30,6 @@ import {
   MAX_ARTIFACT_WEB_RESEARCH_ROUNDS,
   MAX_WEB_SEARCH_TOOL_ROUNDS,
 } from "./webSearchLimits";
-import { useDocGraphStore } from "../../stores/docGraphStore";
 import { useModelStore } from "../../stores/modelStore";
 import {
   ArtifactChartPool,
@@ -293,9 +292,7 @@ async function executeToolCall(
         : 25;
     opts.onToolStatus?.(`Searching knowledge base for “${query}”`);
     try {
-      useDocGraphStore.getState().openQuery(query);
       const md = await Api.queryKnowledgeBase(query, topK);
-      useDocGraphStore.setState({ queryResult: md, queryText: query });
       opts.onToolStatus?.(null);
       if (!md.trim() || md === "No relevant structural context found.") {
         return {
@@ -540,6 +537,49 @@ async function executeToolCall(
   };
 }
 
+type ExecutedToolCall = {
+  content: string;
+  webSearchResult: WebSearchResult | null;
+  artifact?: ArtifactResult;
+};
+
+/** Run a round of tool_calls in parallel, then merge citations in call order. */
+async function executeToolCallsParallel(
+  toolCalls: CloudToolCall[],
+  opts: CloudNativeToolLoopOptions,
+  webSearchResult: WebSearchResult | null
+): Promise<{
+  results: ExecutedToolCall[];
+  webSearchResult: WebSearchResult | null;
+  artifacts: ArtifactResult[];
+}> {
+  const kbCount = toolCalls.filter(
+    (c) =>
+      c.function.name === "search_knowledge_base" ||
+      c.function.name === "file_search"
+  ).length;
+  if (kbCount > 1) {
+    opts.onToolStatus?.(
+      `Searching knowledge base (${kbCount} queries)`
+    );
+  }
+
+  const results = await Promise.all(
+    toolCalls.map((call) => executeToolCall(call, opts, null))
+  );
+
+  let merged = webSearchResult;
+  const artifacts: ArtifactResult[] = [];
+  for (const executed of results) {
+    if (executed.webSearchResult) {
+      merged = mergeWebSearchResults(merged, executed.webSearchResult);
+    }
+    if (executed.artifact) artifacts.push(executed.artifact);
+  }
+  opts.onToolStatus?.(null);
+  return { results, webSearchResult: merged, artifacts };
+}
+
 /**
  * Prefer native cloud tools[] when routing to cloud; otherwise fall back to
  * the local JSON host-mediated web_search loop. Cloud failures fall back to
@@ -651,6 +691,7 @@ export async function runCloudNativeToolLoop(
         "You have a search_knowledge_base tool for the user's local indexed document graph. " +
           "Call it ONLY when the user clearly needs their own files/notes/PDFs/slides — never for general web topics (travel, news, public facts). " +
           "Prefer higher top_k (25–40) so graph retrieval can surface related chunks; use 10–15 only for pinpoint lookups. " +
+          "For multiple facets, emit several search_knowledge_base tool calls in the same turn — they run in parallel. " +
           "Cite local sources with inline [n] markers only (no raw file paths or Sources list)."
       );
     }
@@ -749,18 +790,22 @@ export async function runCloudNativeToolLoop(
         },
       ];
 
-      for (const call of toolCalls) {
-        const executed = await executeToolCall(call, loopOpts, webSearchResult);
-        webSearchResult = executed.webSearchResult;
-        if (executed.artifact) artifacts.push(executed.artifact);
+      {
+        const batch = await executeToolCallsParallel(
+          toolCalls,
+          loopOpts,
+          webSearchResult
+        );
+        webSearchResult = batch.webSearchResult;
+        artifacts.push(...batch.artifacts);
         messages = [
           ...messages,
-          {
-            role: "tool",
+          ...toolCalls.map((call, i) => ({
+            role: "tool" as const,
             tool_call_id: call.id,
             name: call.function.name,
-            content: executed.content,
-          },
+            content: batch.results[i]!.content,
+          })),
         ];
       }
 
@@ -776,7 +821,7 @@ export async function runCloudNativeToolLoop(
         }
         if (hasFileSearch) {
           nextHintParts.push(
-            "Only if you still need local-file context the user asked about, call search_knowledge_base with a refined query."
+            "Only if you still need local-file context the user asked about, call search_knowledge_base (multiple parallel calls OK) with refined queries."
           );
         }
         nextHintParts.push(
@@ -1017,21 +1062,21 @@ export async function runCloudArtifactWebResearch(opts: {
         },
       ];
 
-      for (const call of decision.tool_calls) {
-        const executed = await executeToolCall(
-          call,
+      {
+        const batch = await executeToolCallsParallel(
+          decision.tool_calls,
           researchOpts,
           webSearchResult
         );
-        webSearchResult = executed.webSearchResult;
+        webSearchResult = batch.webSearchResult;
         messages = [
           ...messages,
-          {
-            role: "tool",
+          ...decision.tool_calls.map((call, i) => ({
+            role: "tool" as const,
             tool_call_id: call.id,
             name: call.function.name,
-            content: executed.content,
-          },
+            content: batch.results[i]!.content,
+          })),
         ];
       }
 
@@ -1039,7 +1084,7 @@ export async function runCloudArtifactWebResearch(opts: {
       if (webSearchResult && round + 1 < MAX_ARTIFACT_WEB_RESEARCH_ROUNDS) {
         const remaining = MAX_ARTIFACT_WEB_RESEARCH_ROUNDS - (round + 1);
         const localRoundHint = fileSearchEnabled
-          ? " Call search_knowledge_base only if a local-file facet is clearly needed."
+          ? " Call search_knowledge_base (parallel calls OK) only if a local-file facet is clearly needed."
           : "";
         messages = [
           ...messages,
@@ -1161,16 +1206,20 @@ export async function runCloudArtifactChartPrep(opts: {
         },
       ];
 
-      for (const call of decision.tool_calls) {
-        const executed = await executeToolCall(call, prepOpts, null);
+      {
+        const batch = await executeToolCallsParallel(
+          decision.tool_calls,
+          prepOpts,
+          null
+        );
         messages = [
           ...messages,
-          {
-            role: "tool",
+          ...decision.tool_calls.map((call, i) => ({
+            role: "tool" as const,
             tool_call_id: call.id,
             name: call.function.name,
-            content: executed.content,
-          },
+            content: batch.results[i]!.content,
+          })),
         ];
       }
 

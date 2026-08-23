@@ -22,16 +22,16 @@ export const COPY = {
   toolShowReasoningHint: "Show the assistant's step-by-step thinking.",
 
   // Attach menu (was: Add Files / Ingest / direct)
-  addDocumentsTitle: "Add documents",
-  addDocumentsHint: "PDF, Word, PowerPoint, text, and more.",
+  addDocumentsTitle: "Attach files",
+  addDocumentsHint: "PDF, Word, PowerPoint, images, text, and more.",
   attachToChatTitle: "Attach to this chat",
-  attachToChatHint: "Excel, CSV, PDF — ask for a dashboard or questions. Not indexed.",
+  attachToChatHint: "PDF, Office, images, text, spreadsheets, and more. Not indexed.",
   addToLibraryTitle: "Add to library",
   addToLibraryHint: "Index into your document library for Search my documents.",
   addFolderTitle: "Add a folder",
   addFolderHint: "Add every supported file in a folder.",
   uploadImageTitle: "Upload an image",
-  uploadImageHint: "JPG, PNG, WEBP, or GIF.",
+  uploadImageHint: "JPG, PNG, WEBP, GIF, or BMP.",
   attachCloudDisclosure:
     "Files will be sent to NELA Cloud/OpenRouter for this conversation.",
   attachLocalDestination: "Local",

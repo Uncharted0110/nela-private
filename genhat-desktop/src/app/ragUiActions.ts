@@ -1,4 +1,3 @@
-import { open } from "@tauri-apps/plugin-dialog";
 import { Api } from "../api";
 import type { IngestionStatus } from "../types";
 import type { RagSourceSelection } from "../stores/ragSourcePickerStore";
@@ -14,28 +13,29 @@ export const DOCUMENT_PICKER_EXTENSIONS = [
   "rs", "py", "js", "ts", "jsx", "tsx", "java", "c", "cpp",
   "h", "go", "rb", "sh", "toml", "yaml", "yml", "css",
   "scss", "sql", "log", "ini", "cfg",
-  "png", "jpg", "jpeg", "webp", "gif",
+  "png", "jpg", "jpeg", "webp", "gif", "bmp",
   "mp3", "wav", "m4a", "ogg", "flac",
+];
+
+export const IMAGE_PICKER_EXTENSIONS = [
+  "jpg", "jpeg", "png", "webp", "gif", "bmp",
 ];
 
 export async function selectImage(): Promise<void> {
   const chatModeStore = useChatModeStore.getState();
-  
+
   try {
-    const selected = await open({
-      multiple: false,
-      filters: [
-        {
-          name: "Images",
-          extensions: ["jpg", "jpeg", "png", "webp", "gif"],
-        },
-      ],
+    const selection = await openRagSourcePicker({
+      allowedExtensions: IMAGE_PICKER_EXTENSIONS,
+      filesOnly: true,
+      title: "Upload an image",
+      confirmLabel: "Use selected",
     });
-    if (selected && typeof selected === "string") {
-      chatModeStore.setImagePath(selected);
-      const dataUrl = await Api.readImageBase64(selected);
-      chatModeStore.setImagePreview(dataUrl);
-    }
+    if (!selection || selection.filePaths.length === 0) return;
+    const selected = selection.filePaths[0];
+    chatModeStore.setImagePath(selected);
+    const dataUrl = await Api.readImageBase64(selected);
+    chatModeStore.setImagePreview(dataUrl);
   } catch (err) {
     console.error("Failed to select image:", err);
   }
@@ -44,24 +44,17 @@ export async function selectImage(): Promise<void> {
 export async function attachDirectDocuments(): Promise<void> {
   const chatModeStore = useChatModeStore.getState();
   const uiStore = useUIStore.getState();
-  
-  try {
-    const selected = await open({
-      multiple: true,
-      filters: [
-        {
-          name: "Spreadsheets",
-          extensions: ["xlsx", "xls", "ods", "csv", "tsv"],
-        },
-        {
-          name: "Documents",
-          extensions: DOCUMENT_PICKER_EXTENSIONS,
-        },
-      ],
-    });
-    if (!selected) return;
 
-    const files = Array.isArray(selected) ? selected : [selected];
+  try {
+    const selection = await openRagSourcePicker({
+      allowedExtensions: DOCUMENT_PICKER_EXTENSIONS,
+      filesOnly: true,
+      title: "Attach files to chat",
+      confirmLabel: "Attach selected",
+    });
+    if (!selection) return;
+
+    const files = selection.filePaths ?? [];
     if (files.length === 0) return;
 
     const currentPaths = useChatModeStore.getState().directDocumentPaths;

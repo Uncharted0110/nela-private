@@ -88,6 +88,7 @@ export const SEARCH_KNOWLEDGE_BASE_TOOL: CloudToolDefinition = {
       "Searches the user's indexed local document graph (doc_graph) for relevant slides, sections, spreadsheets, notes, and files. " +
       "Uses hybrid BM25 + dense vector embeddings over a structural knowledge graph, then expands hits into Markdown chunk windows with source file paths. " +
       "Prefer a higher top_k (20–40) so graph/vector retrieval can surface multiple related chunks before expansion — low top_k under-uses the embedding graph. " +
+      "You may emit multiple search_knowledge_base calls in the same turn for different facets — they run in parallel. " +
       "Call this only for the user's indexed library when they did not already attach the relevant files. " +
       "Do NOT call this when the needed documents are already attached to the current message. Do NOT use this for live public-web facts. " +
       "After results, cite matched files with inline [n] markers (clickable in the UI).",

@@ -174,4 +174,31 @@ export async function exportArtifactDocx(htmlPath: string): Promise<string | nul
   return finalPath;
 }
 
+/** True when the user asked for a Word/DOCX deliverable (not just any document). */
+export function wantsWordDocument(text: string): boolean {
+  const t = text.toLowerCase();
+  if (!/\b(word|docx?)\b|\bmicrosoft\s+word\b/.test(t)) return false;
+  return /\b(document|file|essay|report|paper|convert|save|create|make|generate|write|export|download)\b/.test(
+    t
+  );
+}
+
+/**
+ * Convert a saved HTML artifact into a sibling .docx in the artifacts folder
+ * (no save dialog). Used when the user asked for Word and the model emitted HTML.
+ */
+export async function materializeHtmlAsDocxArtifact(
+  htmlPath: string
+): Promise<string> {
+  const html = await Api.readFileText(htmlPath);
+  const base = documentExportBaseName(html, htmlPath);
+  const stamp = Date.now().toString(36);
+  const dir = htmlPath.replace(/[/\\][^/\\]+$/, "");
+  const sep = htmlPath.includes("\\") ? "\\" : "/";
+  const dest = `${dir}${sep}${base}-${stamp}.docx`;
+  const base64 = await htmlToDocxBase64(html);
+  await Api.saveBinaryFile(dest, base64);
+  return dest;
+}
+
 export { looksLikePresentationTitle };

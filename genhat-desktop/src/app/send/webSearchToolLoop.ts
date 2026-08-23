@@ -21,7 +21,6 @@ import { normalizeWebToolDepth, runWebSearchWithDepth } from "./webSearchDepth";
 import type { WebToolDepth } from "./webSearchDepth";
 import type { GenerationOptions } from "./types";
 import { MAX_WEB_SEARCH_TOOL_ROUNDS } from "./webSearchLimits";
-import { useDocGraphStore } from "../../stores/docGraphStore";
 import {
   knowledgeBaseToSearchResult,
   fileUrlToPath,
@@ -39,8 +38,10 @@ Cite web results with inline [n] markers only (no raw URLs).`;
 
 export const FILE_SEARCH_TOOL_SYSTEM = `You have a search_knowledge_base tool for the user's local indexed document graph (hybrid BM25 + dense vector embeddings + structural expansion).
 Call it ONLY when the user clearly needs their own files, resumes, notes, PDFs, or slides — never for general web/travel topics.
-Reply with ONLY this JSON (no markdown):
+Reply with ONLY JSON (no markdown). One query:
 {"tool":"search_knowledge_base","query":"keyphrase","top_k":25}
+Several facets at once (preferred — they run in parallel):
+[{"tool":"search_knowledge_base","query":"facet A","top_k":25},{"tool":"search_knowledge_base","query":"facet B","top_k":25}]
 Prefer higher top_k (25–40) so graph/vector retrieval can surface related chunks; use 10–15 only for pinpoint lookups (max 50).
 After tool results, answer from those sources with inline [n] citations only (no raw file paths or Sources list).`;
 
@@ -102,82 +103,151 @@ function buildHostToolSystem(opts: {
   return parts.join("\n\n");
 }
 
-/** Try to parse a web_search / web_extract / search_knowledge_base tool call. */
-export function parseWebSearchToolCall(text: string): HostWebToolCall | null {
+/** Parse one tool object (already JSON-decoded). */
+function toolCallFromObject(obj: Record<string, unknown>): HostWebToolCall | null {
+  const tool =
+    (typeof obj.tool === "string" && obj.tool) ||
+    (typeof obj.name === "string" && obj.name) ||
+    "";
+  const args: Record<string, unknown> =
+    obj.arguments && typeof obj.arguments === "object"
+      ? (obj.arguments as Record<string, unknown>)
+      : obj;
+
+  if (tool === "web_extract") {
+    const urls = Array.isArray(args.urls)
+      ? (args.urls as unknown[])
+          .filter((u): u is string => typeof u === "string")
+          .filter((u) => u.startsWith("http"))
+          .slice(0, 5)
+      : [];
+    if (urls.length === 0) return null;
+    return {
+      tool: "web_extract",
+      urls,
+      query:
+        typeof args.query === "string" && args.query.trim()
+          ? args.query.trim().slice(0, 200)
+          : undefined,
+    };
+  }
+
+  if (
+    tool === "search_knowledge_base" ||
+    tool === "file_search" ||
+    tool === "search_files"
+  ) {
+    const query = typeof args.query === "string" ? args.query.trim() : "";
+    if (!query) return null;
+    const topKRaw = args.top_k ?? args.topK;
+    const topK =
+      typeof topKRaw === "number" && Number.isFinite(topKRaw)
+        ? Math.max(1, Math.min(50, Math.floor(topKRaw)))
+        : 25;
+    return {
+      tool: "search_knowledge_base",
+      query: query.slice(0, 200),
+      topK,
+    };
+  }
+
+  if (tool !== "web_search") return null;
+
+  const query = typeof args.query === "string" ? args.query.trim() : "";
+  if (!query) return null;
+  return {
+    tool: "web_search",
+    query: query.slice(0, 200),
+    depth: normalizeWebToolDepth(args.depth ?? args.web_depth),
+  };
+}
+
+function toolCallsFromParsed(parsed: unknown): HostWebToolCall[] {
+  if (Array.isArray(parsed)) {
+    const out: HostWebToolCall[] = [];
+    for (const item of parsed) {
+      if (item && typeof item === "object") {
+        const call = toolCallFromObject(item as Record<string, unknown>);
+        if (call) out.push(call);
+      }
+    }
+    return out;
+  }
+  if (parsed && typeof parsed === "object") {
+    const call = toolCallFromObject(parsed as Record<string, unknown>);
+    return call ? [call] : [];
+  }
+  return [];
+}
+
+/** Try to parse one or more web_search / web_extract / search_knowledge_base tool calls. */
+export function parseWebSearchToolCalls(text: string): HostWebToolCall[] {
   const trimmed = text.trim();
-  if (!trimmed) return null;
+  if (!trimmed) return [];
 
   const candidates: string[] = [trimmed];
 
   const fence = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
   if (fence?.[1]) candidates.push(fence[1].trim());
 
+  const arrayMatch = trimmed.match(/\[[\s\S]*\]/);
+  if (arrayMatch?.[0] && arrayMatch[0] !== trimmed) {
+    candidates.push(arrayMatch[0]);
+  }
+
   const brace = trimmed.match(/\{[\s\S]*\}/);
   if (brace?.[0] && brace[0] !== trimmed) candidates.push(brace[0]);
 
   for (const raw of candidates) {
     try {
-      const obj = JSON.parse(raw) as Record<string, unknown>;
-      const tool =
-        (typeof obj.tool === "string" && obj.tool) ||
-        (typeof obj.name === "string" && obj.name) ||
-        "";
-      const args: Record<string, unknown> =
-        obj.arguments && typeof obj.arguments === "object"
-          ? (obj.arguments as Record<string, unknown>)
-          : obj;
-
-      if (tool === "web_extract") {
-        const urls = Array.isArray(args.urls)
-          ? (args.urls as unknown[])
-              .filter((u): u is string => typeof u === "string")
-              .filter((u) => u.startsWith("http"))
-              .slice(0, 5)
-          : [];
-        if (urls.length === 0) continue;
-        return {
-          tool: "web_extract",
-          urls,
-          query:
-            typeof args.query === "string" && args.query.trim()
-              ? args.query.trim().slice(0, 200)
-              : undefined,
-        };
-      }
-
-      if (
-        tool === "search_knowledge_base" ||
-        tool === "file_search" ||
-        tool === "search_files"
-      ) {
-        const query = typeof args.query === "string" ? args.query.trim() : "";
-        if (!query) continue;
-        const topKRaw = args.top_k ?? args.topK;
-        const topK =
-          typeof topKRaw === "number" && Number.isFinite(topKRaw)
-            ? Math.max(1, Math.min(50, Math.floor(topKRaw)))
-            : 25;
-        return {
-          tool: "search_knowledge_base",
-          query: query.slice(0, 200),
-          topK,
-        };
-      }
-
-      if (tool !== "web_search") continue;
-
-      const query = typeof args.query === "string" ? args.query.trim() : "";
-      if (!query) continue;
-      return {
-        tool: "web_search",
-        query: query.slice(0, 200),
-        depth: normalizeWebToolDepth(args.depth ?? args.web_depth),
-      };
+      const calls = toolCallsFromParsed(JSON.parse(raw));
+      if (calls.length > 0) return calls;
     } catch {
       // try next candidate
     }
   }
-  return null;
+
+  return [];
+}
+
+/** Try to parse a single web_search / web_extract / search_knowledge_base tool call. */
+export function parseWebSearchToolCall(text: string): HostWebToolCall | null {
+  return parseWebSearchToolCalls(text)[0] ?? null;
+}
+
+function formatKnowledgeBaseToolBody(
+  query: string,
+  md: string,
+  webSearchResult: WebSearchResult | null
+): { toolBody: string; webSearchResult: WebSearchResult | null } {
+  if (!md.trim() || md === "No relevant structural context found.") {
+    return {
+      toolBody: `No local documents matched query: ${query}`,
+      webSearchResult,
+    };
+  }
+  let merged = webSearchResult;
+  const asSearchResult = knowledgeBaseToSearchResult(query, md);
+  if (asSearchResult) {
+    merged = mergeWebSearchResults(merged, asSearchResult);
+  }
+  const citeLines = (merged?.results ?? [])
+    .map((h, i) =>
+      isLocalFileHitUrl(h.url)
+        ? `[${i + 1}] ${h.title} — ${fileUrlToPath(h.url)}`
+        : null
+    )
+    .filter(Boolean)
+    .join("\n");
+  return {
+    toolBody:
+      `Local knowledge-graph results for "${query}":\n\n${md}\n\n` +
+      (citeLines
+        ? `Cite these local sources with inline [n] markers from this list only:\n${citeLines}\n` +
+          `Do not paste raw paths or add a Sources list.`
+        : `Cite file names in prose.`),
+    webSearchResult: merged,
+  };
 }
 
 export function mergeWebSearchResults(
@@ -343,19 +413,19 @@ export async function runWebSearchToolLoop(
 
       if (decision.thinking) thinking += decision.thinking;
 
-      let call = parseWebSearchToolCall(decision.content);
-
-      // Disable tools the host didn't enable for this turn.
-      if (call?.tool === "web_search" || call?.tool === "web_extract") {
-        if (!webEnabled) call = null;
-      }
-      if (call?.tool === "search_knowledge_base" && !fileSearchEnabled) {
-        call = null;
-      }
+      const calls = parseWebSearchToolCalls(decision.content).filter((c) => {
+        if (c.tool === "web_search" || c.tool === "web_extract") {
+          return webEnabled;
+        }
+        if (c.tool === "search_knowledge_base") {
+          return fileSearchEnabled;
+        }
+        return false;
+      });
 
       // Never inject tools the model did not request (including file search).
 
-      if (!call) {
+      if (calls.length === 0) {
         if (decision.content.trim()) {
           opts.onChunk(decision.content);
           return {
@@ -369,113 +439,117 @@ export async function runWebSearchToolLoop(
       }
 
       const canSearchAgain = round + 1 < MAX_TOOL_ROUNDS;
-      const toolName = call.tool;
+      const primaryName = calls[0]!.tool;
 
       messages = [
         ...messages,
         {
           role: "assistant",
-          content: JSON.stringify(call),
-          name: toolName,
+          content: JSON.stringify(calls.length === 1 ? calls[0] : calls),
+          name: primaryName,
         },
       ];
 
       try {
-        let toolBody: string;
+        const fileCalls = calls.filter(
+          (c): c is FileSearchToolCall => c.tool === "search_knowledge_base"
+        );
+        const otherCalls = calls.filter((c) => c.tool !== "search_knowledge_base");
 
-        if (call.tool === "search_knowledge_base") {
-          opts.onToolStatus?.(`Searching knowledge base for “${call.query}”`);
-          useDocGraphStore.getState().openQuery(call.query);
-          const md = await Api.queryKnowledgeBase(call.query, call.topK ?? 25);
-          useDocGraphStore.setState({
-            queryResult: md,
-            queryText: call.query,
-          });
+        const toolBodies: string[] = [];
+
+        if (fileCalls.length > 0) {
+          opts.onToolStatus?.(
+            fileCalls.length > 1
+              ? `Searching knowledge base (${fileCalls.length} queries)`
+              : `Searching knowledge base for “${fileCalls[0]!.query}”`
+          );
+          const mdResults = await Promise.all(
+            fileCalls.map(async (c) => ({
+              query: c.query,
+              md: await Api.queryKnowledgeBase(c.query, c.topK ?? 25),
+            }))
+          );
           opts.onToolStatus?.(null);
-          if (!md.trim() || md === "No relevant structural context found.") {
-            toolBody = `No local documents matched query: ${call.query}`;
-          } else {
-            const asSearchResult = knowledgeBaseToSearchResult(call.query, md);
-            if (asSearchResult) {
+          for (const { query, md } of mdResults) {
+            const formatted = formatKnowledgeBaseToolBody(
+              query,
+              md,
+              webSearchResult
+            );
+            webSearchResult = formatted.webSearchResult;
+            toolBodies.push(formatted.toolBody);
+          }
+        }
+
+        for (const call of otherCalls) {
+          if (call.tool === "web_extract") {
+            opts.onToolStatus?.(
+              `Reading ${call.urls.length} page${call.urls.length > 1 ? "s" : ""}`
+            );
+            const result = await Api.webExtract(call.urls, call.query, "basic");
+            opts.onToolStatus?.(null);
+            if (result.results.length > 0) {
+              const asSearchResult: WebSearchResult = {
+                query: call.query ?? call.urls[0]!,
+                results: result.results.map((p) => ({
+                  title: p.url,
+                  snippet: p.content.slice(0, 600),
+                  url: p.url,
+                  image_url: p.images?.[0] ?? null,
+                })),
+                formatted_context: "",
+                extracted_tables: result.extracted_tables,
+                images: result.results.flatMap((p) => p.images ?? []).slice(0, 8),
+              };
               webSearchResult = mergeWebSearchResults(
                 webSearchResult,
                 asSearchResult
               );
             }
-            const citeLines = (webSearchResult?.results ?? [])
-              .map((h, i) =>
-                isLocalFileHitUrl(h.url)
-                  ? `[${i + 1}] ${h.title} — ${fileUrlToPath(h.url)}`
-                  : null
-              )
-              .filter(Boolean)
-              .join("\n");
-            toolBody =
-              `Local knowledge-graph results for "${call.query}":\n\n${md}\n\n` +
-              (citeLines
-                ? `Cite these local sources with inline [n] markers from this list only:\n${citeLines}\n` +
-                  `Do not paste raw paths or add a Sources list.`
-                : `Cite file names in prose.`);
-          }
-        } else if (call.tool === "web_extract") {
-          opts.onToolStatus?.(
-            `Reading ${call.urls.length} page${call.urls.length > 1 ? "s" : ""}`
-          );
-          const result = await Api.webExtract(call.urls, call.query, "basic");
-          opts.onToolStatus?.(null);
-          if (result.results.length > 0) {
-            const asSearchResult: WebSearchResult = {
-              query: call.query ?? call.urls[0]!,
-              results: result.results.map((p) => ({
-                title: p.url,
-                snippet: p.content.slice(0, 600),
-                url: p.url,
-                image_url: p.images?.[0] ?? null,
-              })),
-              formatted_context: "",
-              extracted_tables: result.extracted_tables,
-              images: result.results.flatMap((p) => p.images ?? []).slice(0, 8),
-            };
-            webSearchResult = mergeWebSearchResults(
-              webSearchResult,
-              asSearchResult
+            toolBodies.push(
+              result.formatted_context?.trim() ||
+                "No content could be extracted from the provided URLs."
             );
-          }
-          toolBody =
-            result.formatted_context?.trim() ||
-            "No content could be extracted from the provided URLs.";
-        } else {
-          let searchQuery = call.query;
-          try {
-            searchQuery = await groundWebSearchQuery(call.query, {
+          } else {
+            let searchQuery = call.query;
+            try {
+              searchQuery = await groundWebSearchQuery(call.query, {
+                messages: opts.messages,
+                userText: call.query,
+                modelId: opts.modelId,
+                signal: opts.signal,
+              });
+            } catch (e) {
+              if (e instanceof DOMException && e.name === "AbortError") throw e;
+            }
+            const result = await runWebSearchWithDepth({
+              query: searchQuery,
+              depth: call.depth,
               messages: opts.messages,
-              userText: call.query,
               modelId: opts.modelId,
               signal: opts.signal,
+              onToolStatus: opts.onToolStatus,
             });
-          } catch (e) {
-            if (e instanceof DOMException && e.name === "AbortError") throw e;
+            opts.onToolStatus?.(null);
+            if (result.results.length > 0 || result.formatted_context?.trim()) {
+              webSearchResult = mergeWebSearchResults(webSearchResult, result);
+            }
+            toolBodies.push(
+              result.formatted_context?.trim() ||
+                (result.results.length === 0
+                  ? `No web results found for query: ${searchQuery}`
+                  : result.results
+                      .map(
+                        (h, i) =>
+                          `${i + 1}. ${h.title}\n${h.snippet}\n${h.url}`
+                      )
+                      .join("\n\n"))
+            );
           }
-          const result = await runWebSearchWithDepth({
-            query: searchQuery,
-            depth: call.depth,
-            messages: opts.messages,
-            modelId: opts.modelId,
-            signal: opts.signal,
-            onToolStatus: opts.onToolStatus,
-          });
-          opts.onToolStatus?.(null);
-          if (result.results.length > 0 || result.formatted_context?.trim()) {
-            webSearchResult = mergeWebSearchResults(webSearchResult, result);
-          }
-          toolBody =
-            result.formatted_context?.trim() ||
-            (result.results.length === 0
-              ? `No web results found for query: ${searchQuery}`
-              : result.results
-                  .map((h, i) => `${i + 1}. ${h.title}\n${h.snippet}\n${h.url}`)
-                  .join("\n\n"));
         }
+
+        const toolBody = toolBodies.join("\n\n---\n\n");
 
         const continueHint = canSearchAgain
           ? `Using the tool results above, continue. You have ${MAX_TOOL_ROUNDS - (round + 1)} tool rounds left — ` +
@@ -484,7 +558,7 @@ export async function runWebSearchToolLoop(
                 ? "call web_search (with depth) / web_extract if more web facts are needed"
                 : null,
               fileSearchEnabled
-                ? "call search_knowledge_base with a refined query (prefer higher top_k) if more local context is needed"
+                ? "call search_knowledge_base once or as a parallel JSON array of queries (prefer higher top_k) if more local context is needed"
                 : null,
               "otherwise answer in prose with inline [n] citations only (no raw URLs/paths or Sources list)",
             ]
@@ -497,8 +571,8 @@ export async function runWebSearchToolLoop(
           ...messages,
           {
             role: "tool",
-            name: toolName,
-            tool_call_id: `${toolName}_${round}`,
+            name: primaryName,
+            tool_call_id: `${primaryName}_${round}`,
             content: toolBody,
           },
           {
@@ -510,14 +584,14 @@ export async function runWebSearchToolLoop(
         if (!canSearchAgain) break;
       } catch (e) {
         opts.onToolStatus?.(null);
-        console.warn(`[${toolName} tool] Failed:`, e);
+        console.warn(`[${primaryName} tool] Failed:`, e);
         messages = [
           ...messages,
           {
             role: "tool",
-            name: toolName,
-            tool_call_id: `${toolName}_${round}`,
-            content: `${toolName} failed: ${e}. Answer from your knowledge and note that the tool was unavailable.`,
+            name: primaryName,
+            tool_call_id: `${primaryName}_${round}`,
+            content: `${primaryName} failed: ${e}. Answer from your knowledge and note that the tool was unavailable.`,
           },
           {
             role: "user",

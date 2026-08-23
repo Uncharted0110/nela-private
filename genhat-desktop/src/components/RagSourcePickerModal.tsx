@@ -90,6 +90,9 @@ export default function RagSourcePickerModal() {
   const isOpen = useRagSourcePickerStore((s) => s.open);
   const allowedExtensions = useRagSourcePickerStore((s) => s.allowedExtensions);
   const foldersOnly = useRagSourcePickerStore((s) => s.foldersOnly);
+  const filesOnly = useRagSourcePickerStore((s) => s.filesOnly);
+  const title = useRagSourcePickerStore((s) => s.title);
+  const confirmLabel = useRagSourcePickerStore((s) => s.confirmLabel);
 
   const [roots, setRoots] = useState<FsEntry[]>([]);
   const [currentPath, setCurrentPath] = useState<string>("");
@@ -130,7 +133,9 @@ export default function RagSourcePickerModal() {
 
   const hasSelection = foldersOnly
     ? selectedFolders.size > 0
-    : selectedFolders.size + selectedFiles.size > 0;
+    : filesOnly
+      ? selectedFiles.size > 0
+      : selectedFolders.size + selectedFiles.size > 0;
 
   const isCoveredBySelectedFolder = useCallback(
     (nodePath: string) => {
@@ -294,10 +299,11 @@ export default function RagSourcePickerModal() {
   const visibleSelectable = useMemo(() => {
     return filteredEntries.filter((entry) => {
       if (foldersOnly && !entry.is_dir) return false;
+      if (filesOnly && entry.is_dir) return false;
       if (isCoveredBySelectedFolder(entry.path)) return false;
       return true;
     });
-  }, [filteredEntries, foldersOnly, isCoveredBySelectedFolder]);
+  }, [filteredEntries, foldersOnly, filesOnly, isCoveredBySelectedFolder]);
 
   const allVisibleSelected =
     visibleSelectable.length > 0 &&
@@ -363,7 +369,7 @@ export default function RagSourcePickerModal() {
         <header className="rsp-header">
           <div className="rsp-title">
             <Folder size={16} />
-            <span>{foldersOnly ? "Select folders to index" : "Select sources"}</span>
+            <span>{title}</span>
           </div>
           <button type="button" className="rsp-icon-btn" onClick={() => resolveRagSourcePicker(null)} aria-label="Close">
             <X size={16} />
@@ -470,6 +476,11 @@ export default function RagSourcePickerModal() {
                     : selectedFiles.has(entry.path);
                   const covered = isCoveredBySelectedFolder(entry.path);
                   const disabled = covered && !checked;
+                  const folderNotSelectable = filesOnly && entry.is_dir;
+                  const checkboxDisabled =
+                    disabled ||
+                    (!entry.is_dir && foldersOnly) ||
+                    folderNotSelectable;
 
                   return (
                     <div
@@ -483,10 +494,13 @@ export default function RagSourcePickerModal() {
                         <input
                           type="checkbox"
                           checked={checked}
-                          disabled={disabled || (!entry.is_dir && foldersOnly)}
+                          disabled={checkboxDisabled}
                           onChange={() => {
-                            if (entry.is_dir) onToggleFolder(entry.path);
-                            else if (!foldersOnly) onToggleFile(entry.path);
+                            if (entry.is_dir) {
+                              if (!filesOnly) onToggleFolder(entry.path);
+                            } else if (!foldersOnly) {
+                              onToggleFile(entry.path);
+                            }
                           }}
                           onClick={(e) => e.stopPropagation()}
                         />
@@ -519,8 +533,14 @@ export default function RagSourcePickerModal() {
           <div className="rsp-selection-meta">
             {foldersOnly
               ? `${selectedFolders.size} folders`
-              : `${selectedFolders.size} folders · ${selectedFiles.size} files`}
-            <span className="rsp-hint">Selecting a folder disables its children</span>
+              : filesOnly
+                ? `${selectedFiles.size} files`
+                : `${selectedFolders.size} folders · ${selectedFiles.size} files`}
+            {!filesOnly ? (
+              <span className="rsp-hint">Selecting a folder disables its children</span>
+            ) : (
+              <span className="rsp-hint">Open folders to browse; select files to attach</span>
+            )}
           </div>
           <div className="rsp-actions">
             <button
@@ -546,10 +566,17 @@ export default function RagSourcePickerModal() {
                   });
                   return;
                 }
+                if (filesOnly) {
+                  resolveRagSourcePicker({
+                    folderPaths: [],
+                    filePaths: Array.from(selectedFiles),
+                  });
+                  return;
+                }
                 setSummaryOpen(true);
               }}
             >
-              {foldersOnly ? "Use selected folders" : "Index selected"}
+              {confirmLabel}
             </button>
           </div>
         </footer>
@@ -597,8 +624,20 @@ export default function RagSourcePickerModal() {
                 )}
               </div>
               <div className="rsp-summary-actions">
-                <button type="button" className="rsp-btn primary" onClick={() => setSummaryOpen(false)}>
-                  OK
+                <button type="button" className="rsp-btn ghost" onClick={() => setSummaryOpen(false)}>
+                  Back
+                </button>
+                <button
+                  type="button"
+                  className="rsp-btn primary"
+                  onClick={() =>
+                    resolveRagSourcePicker({
+                      folderPaths: Array.from(selectedFolders),
+                      filePaths: Array.from(selectedFiles),
+                    })
+                  }
+                >
+                  {confirmLabel}
                 </button>
               </div>
             </div>

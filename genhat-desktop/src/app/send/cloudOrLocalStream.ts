@@ -7,8 +7,10 @@ import { friendlyError } from "../friendlyError";
 import { prepareMessagesForCloudCaching } from "./prepareCloudMessages";
 import {
   CLOUD_ARTIFACT_STREAM_IDLE_TIMEOUT_MS,
+  CLOUD_ARTIFACT_TTFT_TIMEOUT_MS,
   CLOUD_STREAM_ABSOLUTE_TIMEOUT_MS,
   CLOUD_STREAM_IDLE_TIMEOUT_MS,
+  CLOUD_STREAM_TTFT_TIMEOUT_MS,
 } from "./webSearchLimits";
 import type {
   CloudChatMessage,
@@ -29,6 +31,8 @@ type StreamFinishMeta = {
   trialCreditsRemaining?: number;
   trialExpiresAt?: string | null;
   annotations?: FileAnnotation[];
+  /** OpenRouter finish_reason (stop | length | tool_calls | …). */
+  finishReason?: string;
 };
 
 type StreamCallbacks = {
@@ -74,6 +78,8 @@ type StreamArgs = {
   };
   /** Override idle abort; artifact_plan defaults to a longer window. */
   idleTimeoutMs?: number;
+  /** Override time-to-first-token abort (gateway cold start / model fallback). */
+  ttftTimeoutMs?: number;
 } & StreamCallbacks;
 
 export function isCloudReadyForMode(mode: CloudQualityMode): boolean {
@@ -153,6 +159,9 @@ export function formatCloudFallbackNotice(err: unknown): string {
 /** Deep / artifact cloud answers should not inherit tiny local-model max_tokens. */
 const CLOUD_DEEP_MIN_OUTPUT_TOKENS = 65_536;
 const CLOUD_ARTIFACT_MIN_OUTPUT_TOKENS = 65_536;
+/** Align with gateway CLOUD_MODE_MIN_OUTPUT_TOKENS (smart ≥32k, fast ≥16k). */
+const CLOUD_SMART_MIN_OUTPUT_TOKENS = 32_768;
+const CLOUD_FAST_MIN_OUTPUT_TOKENS = 16_384;
 
 function resolveCloudMaxTokens(
   mode: CloudQualityMode,
@@ -168,6 +177,12 @@ function resolveCloudMaxTokens(
   }
   if (mode === "deep") {
     return Math.max(base ?? 0, CLOUD_DEEP_MIN_OUTPUT_TOKENS);
+  }
+  if (mode === "smart" || mode === "auto") {
+    return Math.max(base ?? 0, CLOUD_SMART_MIN_OUTPUT_TOKENS);
+  }
+  if (mode === "fast") {
+    return Math.max(base ?? 0, CLOUD_FAST_MIN_OUTPUT_TOKENS);
   }
   return base;
 }
@@ -231,6 +246,31 @@ function runLocalStreamWithNotice(args: StreamArgs, notice: string): void {
   });
 }
 
+const MAX_CLOUD_CONTINUATIONS = 4;
+
+function isTruncatedFinishReason(reason?: string | null): boolean {
+  const r = (reason ?? "").toLowerCase().trim();
+  return (
+    r === "length" ||
+    r === "max_tokens" ||
+    r === "max_length" ||
+    r === "max_output_tokens"
+  );
+}
+
+/** Heuristic when upstream omits finish_reason but the body clearly stopped mid-flight. */
+function looksTruncatedCloudContent(text: string): boolean {
+  const t = text.trimEnd();
+  if (t.length < 280) return false;
+  if (/<nela-artifact\b/i.test(t) && !/<\/nela-artifact>/i.test(t)) return true;
+  if (/<!DOCTYPE\s+html/i.test(t) && !/<\/html>/i.test(t)) return true;
+  // Mid-sentence / mid-phrase cut (common when max_tokens hits).
+  if (!/[.!?…"')\]]\s*$/u.test(t) && !/`{3}\s*$/.test(t) && /\s(?:and|or|the|to|of|from|with|a|an)\s*$/i.test(t)) {
+    return true;
+  }
+  return false;
+}
+
 async function runCloudStream(args: StreamArgs): Promise<void> {
   const intelligenceMode = useModelStore.getState().intelligenceMode;
   const mode =
@@ -284,175 +324,265 @@ async function runCloudStream(args: StreamArgs): Promise<void> {
     },
   };
 
-  await new Promise<void>((resolve, reject) => {
-    let settled = false;
-    let idleTimer: ReturnType<typeof setTimeout> | null = null;
-    let absoluteTimer: ReturnType<typeof setTimeout> | null = null;
+  let roundMessages = messages;
+  let lastMeta: StreamFinishMeta | undefined;
+  let hadError = false;
 
-    const clearTimers = () => {
-      if (idleTimer) {
-        clearTimeout(idleTimer);
-        idleTimer = null;
-      }
-      if (absoluteTimer) {
-        clearTimeout(absoluteTimer);
-        absoluteTimer = null;
-      }
+  for (let continuation = 0; continuation <= MAX_CLOUD_CONTINUATIONS; continuation++) {
+    if (args.signal?.aborted) {
+      throw new DOMException("Aborted", "AbortError");
+    }
+
+    const roundRequest: CloudChatRequest = {
+      ...request,
+      messages: roundMessages,
     };
 
-    const finish = (fn: () => void) => {
-      if (settled) return;
-      settled = true;
-      clearTimers();
-      fn();
-    };
+    const round = await new Promise<{
+      content: string;
+      meta?: StreamFinishMeta;
+      error?: unknown;
+    }>((resolve, reject) => {
+      let settled = false;
+      let idleTimer: ReturnType<typeof setTimeout> | null = null;
+      let ttftTimer: ReturnType<typeof setTimeout> | null = null;
+      let absoluteTimer: ReturnType<typeof setTimeout> | null = null;
+      let sawFirstToken = false;
+      let roundContent = "";
 
-    const idleMs =
-      args.idleTimeoutMs ??
-      (args.intent === "artifact_plan"
-        ? CLOUD_ARTIFACT_STREAM_IDLE_TIMEOUT_MS
-        : CLOUD_STREAM_IDLE_TIMEOUT_MS);
+      const clearTimers = () => {
+        if (idleTimer) {
+          clearTimeout(idleTimer);
+          idleTimer = null;
+        }
+        if (ttftTimer) {
+          clearTimeout(ttftTimer);
+          ttftTimer = null;
+        }
+        if (absoluteTimer) {
+          clearTimeout(absoluteTimer);
+          absoluteTimer = null;
+        }
+      };
 
-    const armIdle = () => {
-      if (idleTimer) clearTimeout(idleTimer);
-      idleTimer = setTimeout(() => {
-        finish(() => {
-          unlistenFn?.();
-          args.onError(
-            new Error(
-              "NELA Cloud stopped sending tokens. Please try again."
-            )
-          );
-          resolve();
-        });
-      }, idleMs);
-    };
-
-    let unlistenFn: (() => void) | null = null;
-
-    void (async () => {
-      const unlisten = await listen<{
-        chunk: string;
-        thinking?: string;
-        done: boolean;
-        error?: string;
-        tool_calls?: CloudToolCall[];
-        model?: string;
-        creditsRemaining?: number;
-        trialCreditsRemaining?: number;
-        trialExpiresAt?: string | null;
-        annotations?: FileAnnotation[];
-      }>("cloud-chat-stream", (event) => {
+      const finish = (fn: () => void) => {
         if (settled) return;
-        const {
-          chunk,
-          thinking,
-          done,
-          error,
-          tool_calls,
-          model,
-          creditsRemaining,
-          trialCreditsRemaining,
-          trialExpiresAt,
-          annotations,
-        } = event.payload;
-        if (error) {
-          finish(() => {
-            unlisten();
-            args.onError(new Error(error));
-            // Resolve so callers that only await this promise don't hang;
-            // onError already triggered fallback / UI handling.
-            resolve();
-          });
-          return;
-        }
-        if (thinking) {
-          armIdle();
-          args.onThinking(thinking);
-        }
-        if (chunk) {
-          armIdle();
-          args.onChunk(chunk);
-        }
-        if (done) {
-          finish(() => {
-            unlisten();
-            const meta: StreamFinishMeta = {};
-            if (tool_calls?.length) meta.tool_calls = tool_calls;
-            if (model?.trim()) meta.model = model.trim();
-            if (typeof creditsRemaining === "number") {
-              meta.creditsRemaining = creditsRemaining;
-            }
-            if (typeof trialCreditsRemaining === "number") {
-              meta.trialCreditsRemaining = trialCreditsRemaining;
-            }
-            if (trialExpiresAt !== undefined) {
-              meta.trialExpiresAt = trialExpiresAt;
-            }
-            if (annotations?.length) meta.annotations = annotations;
-            if (typeof meta.creditsRemaining === "number") {
-              useCloudStore.getState().applyCreditsSnapshot({
-                balance: meta.creditsRemaining,
-                trialCredits: meta.trialCreditsRemaining,
-                trialExpiresAt: meta.trialExpiresAt,
-              });
-            }
-            args.onFinish(
-              meta.tool_calls ||
-                meta.model ||
-                typeof meta.creditsRemaining === "number" ||
-                meta.annotations
-                ? meta
-                : undefined
-            );
-            resolve();
-          });
-        }
-      });
-      unlistenFn = unlisten;
+        settled = true;
+        clearTimers();
+        fn();
+      };
 
-      if (args.signal) {
-        const onAbort = () => {
-          finish(() => {
-            unlisten();
-            args.onError(new DOMException("Aborted", "AbortError"));
-            reject(new DOMException("Aborted", "AbortError"));
-          });
-        };
-        if (args.signal.aborted) {
-          onAbort();
-          return;
-        }
-        args.signal.addEventListener("abort", onAbort, { once: true });
-      }
+      const idleMs =
+        args.idleTimeoutMs ??
+        (args.intent === "artifact_plan"
+          ? CLOUD_ARTIFACT_STREAM_IDLE_TIMEOUT_MS
+          : CLOUD_STREAM_IDLE_TIMEOUT_MS);
 
-      absoluteTimer = setTimeout(() => {
-        finish(() => {
-          unlisten();
-          args.onError(
-            new Error(
-              "That took too long. Please try again with a shorter request."
-            )
-          );
-          resolve();
+      const ttftMs =
+        args.ttftTimeoutMs ??
+        (args.intent === "artifact_plan"
+          ? CLOUD_ARTIFACT_TTFT_TIMEOUT_MS
+          : CLOUD_STREAM_TTFT_TIMEOUT_MS);
+
+      const armIdle = () => {
+        if (idleTimer) clearTimeout(idleTimer);
+        idleTimer = setTimeout(() => {
+          finish(() => {
+            unlistenFn?.();
+            resolve({
+              content: roundContent,
+              error: new Error(
+                "NELA Cloud stopped sending tokens. Please try again."
+              ),
+            });
+          });
+        }, idleMs);
+      };
+
+      const armTtft = () => {
+        if (ttftTimer) clearTimeout(ttftTimer);
+        ttftTimer = setTimeout(() => {
+          finish(() => {
+            unlistenFn?.();
+            resolve({
+              content: roundContent,
+              error: new Error(
+                "NELA Cloud is still starting your request (cold start or model fallback). Please try again."
+              ),
+            });
+          });
+        }, ttftMs);
+      };
+
+      const onStreamActivity = () => {
+        if (!sawFirstToken) {
+          sawFirstToken = true;
+          if (ttftTimer) {
+            clearTimeout(ttftTimer);
+            ttftTimer = null;
+          }
+        }
+        armIdle();
+      };
+
+      let unlistenFn: (() => void) | null = null;
+
+      void (async () => {
+        const unlisten = await listen<{
+          chunk: string;
+          thinking?: string;
+          done: boolean;
+          error?: string;
+          tool_calls?: CloudToolCall[];
+          model?: string;
+          creditsRemaining?: number;
+          trialCreditsRemaining?: number;
+          trialExpiresAt?: string | null;
+          annotations?: FileAnnotation[];
+          finishReason?: string;
+        }>("cloud-chat-stream", (event) => {
+          if (settled) return;
+          const {
+            chunk,
+            thinking,
+            done,
+            error,
+            tool_calls,
+            model,
+            creditsRemaining,
+            trialCreditsRemaining,
+            trialExpiresAt,
+            annotations,
+            finishReason,
+          } = event.payload;
+          if (error) {
+            finish(() => {
+              unlisten();
+              resolve({ content: roundContent, error: new Error(error) });
+            });
+            return;
+          }
+          if (thinking) {
+            onStreamActivity();
+            args.onThinking(thinking);
+          }
+          if (chunk) {
+            onStreamActivity();
+            roundContent += chunk;
+            args.onChunk(chunk);
+          }
+          if (done) {
+            finish(() => {
+              unlisten();
+              const meta: StreamFinishMeta = {};
+              if (tool_calls?.length) meta.tool_calls = tool_calls;
+              if (model?.trim()) meta.model = model.trim();
+              if (typeof creditsRemaining === "number") {
+                meta.creditsRemaining = creditsRemaining;
+              }
+              if (typeof trialCreditsRemaining === "number") {
+                meta.trialCreditsRemaining = trialCreditsRemaining;
+              }
+              if (trialExpiresAt !== undefined) {
+                meta.trialExpiresAt = trialExpiresAt;
+              }
+              if (annotations?.length) meta.annotations = annotations;
+              if (finishReason?.trim()) meta.finishReason = finishReason.trim();
+              if (typeof meta.creditsRemaining === "number") {
+                useCloudStore.getState().applyCreditsSnapshot({
+                  balance: meta.creditsRemaining,
+                  trialCredits: meta.trialCreditsRemaining,
+                  trialExpiresAt: meta.trialExpiresAt,
+                });
+              }
+              resolve({ content: roundContent, meta });
+            });
+          }
         });
-      }, CLOUD_STREAM_ABSOLUTE_TIMEOUT_MS);
-      armIdle();
+        unlistenFn = unlisten;
 
-      try {
-        // Returns immediately (stream runs in a Rust background task) so
-        // Tauri can deliver chunk events while tokens arrive.
-        await cloudStreamChat(request);
-      } catch (err) {
-        finish(() => {
-          unlisten();
-          args.onError(err);
-          reject(err);
-        });
-      }
-    })();
-  });
+        if (args.signal) {
+          const onAbort = () => {
+            finish(() => {
+              unlisten();
+              reject(new DOMException("Aborted", "AbortError"));
+            });
+          };
+          if (args.signal.aborted) {
+            onAbort();
+            return;
+          }
+          args.signal.addEventListener("abort", onAbort, { once: true });
+        }
+
+        absoluteTimer = setTimeout(() => {
+          finish(() => {
+            unlisten();
+            resolve({
+              content: roundContent,
+              error: new Error(
+                "That took too long. Please try again with a shorter request."
+              ),
+            });
+          });
+        }, CLOUD_STREAM_ABSOLUTE_TIMEOUT_MS);
+        armTtft();
+
+        try {
+          // Returns immediately (stream runs in a Rust background task) so
+          // Tauri can deliver chunk events while tokens arrive.
+          await cloudStreamChat(roundRequest);
+        } catch (err) {
+          finish(() => {
+            unlisten();
+            resolve({ content: roundContent, error: err });
+          });
+        }
+      })();
+    });
+
+    if (round.error) {
+      hadError = true;
+      args.onError(round.error);
+      return;
+    }
+
+    lastMeta = round.meta;
+    const truncated =
+      !round.meta?.tool_calls?.length &&
+      (isTruncatedFinishReason(round.meta?.finishReason) ||
+        looksTruncatedCloudContent(round.content));
+
+    if (!truncated || continuation >= MAX_CLOUD_CONTINUATIONS) {
+      break;
+    }
+
+    // Seamlessly continue — do not surface a half answer to the user.
+    roundMessages = [
+      ...roundMessages,
+      { role: "assistant", content: round.content || null },
+      {
+        role: "user",
+        content:
+          "Continue exactly from where you left off. Do not repeat any prior text. Finish the full answer (and close any open HTML / nela-artifact tags if present).",
+      },
+    ];
+  }
+
+  if (!hadError) {
+    args.onFinish(
+      lastMeta &&
+        (lastMeta.tool_calls ||
+          lastMeta.model ||
+          typeof lastMeta.creditsRemaining === "number" ||
+          lastMeta.annotations ||
+          lastMeta.finishReason)
+        ? lastMeta
+        : undefined
+    );
+  }
 }
+
 
 /**
  * Route chat streaming by preferred cloud routing preference.

@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { open } from "@tauri-apps/plugin-dialog";
 import { Paperclip, X } from "lucide-react";
 import { Api } from "../api";
 import { DOCUMENT_PICKER_EXTENSIONS } from "../app/ragUiActions";
+import { openRagSourcePicker } from "../stores/ragSourcePickerStore";
 import {
   resolveFollowUp,
   useFollowUpStore,
@@ -97,24 +97,16 @@ export default function FollowUpModal() {
 
   const pickFiles = useCallback(async () => {
     try {
-      const selected = await open({
-        multiple: true,
-        filters: [
-          {
-            name: "Images",
-            extensions: ["png", "jpg", "jpeg", "webp", "gif", "bmp", "svg"],
-          },
-          {
-            name: "Documents",
-            extensions: DOCUMENT_PICKER_EXTENSIONS,
-          },
-        ],
+      const selection = await openRagSourcePicker({
+        allowedExtensions: DOCUMENT_PICKER_EXTENSIONS,
+        filesOnly: true,
+        title: "Attach files",
+        confirmLabel: "Attach selected",
       });
-      if (!selected) return;
-      const files = Array.isArray(selected) ? selected : [selected];
+      if (!selection || selection.filePaths.length === 0) return;
       setAttachedPaths((prev) => {
         const merged = new Set(prev);
-        for (const f of files) merged.add(f);
+        for (const f of selection.filePaths) merged.add(f);
         return Array.from(merged);
       });
     } catch (err) {

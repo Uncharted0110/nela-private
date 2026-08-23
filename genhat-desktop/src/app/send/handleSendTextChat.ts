@@ -23,6 +23,10 @@ import {
 } from "../artifactChatCopy";
 import { StreamArtifactParser, scrubChatArtifactProtocol, stripPartialArtifactTags } from "../streamArtifactParser";
 import { saveStreamedArtifact } from "../streamArtifactSave";
+import {
+  materializeHtmlAsDocxArtifact,
+  wantsWordDocument,
+} from "../artifactDownload";
 import { ArtifactChartPool } from "../artifactChartPool";
 import { useCloudStore } from "../../stores/cloudStore";
 import { streamChatByMode, willRouteToCloud } from "./cloudOrLocalStream";
@@ -324,6 +328,18 @@ export async function handleSendTextChat(
         });
         artifactPath = saved.path;
         artifactStage = "LivePreview";
+        if (
+          wantsWordDocument(text) &&
+          streamedArtifactType === "text/html" &&
+          !asPresentation &&
+          artifactPath
+        ) {
+          try {
+            artifactPath = await materializeHtmlAsDocxArtifact(artifactPath);
+          } catch (docxErr) {
+            console.warn("Word (.docx) materialize failed; keeping HTML:", docxErr);
+          }
+        }
         useArtifactStreamStore.getState().clear();
       } catch (saveErr) {
         console.warn("Auto artifact save failed:", saveErr);
@@ -333,9 +349,12 @@ export async function handleSendTextChat(
     const title =
       streamedArtifactTitle ||
       (artifactPath
-        ? artifactPath.split(/[/\\]/).pop()?.replace(/\.(html?|xlsx|csv)$/i, "")
+        ? artifactPath.split(/[/\\]/).pop()?.replace(/\.(html?|xlsx|csv|docx?)$/i, "")
         : undefined) ||
       "Artifact";
+
+    const wordDeliverable =
+      Boolean(artifactPath) && /\.docx?$/i.test(artifactPath || "");
 
     const introFromModel = scrubChatArtifactProtocol(
       (streamParser?.chatBeforeArtifact || chatProse).trim() ||
@@ -363,14 +382,14 @@ export async function handleSendTextChat(
       if (body && !intro) {
         intro = defaultArtifactIntro({
           title,
-          type: streamedArtifactType,
+          type: wordDeliverable ? "docx" : streamedArtifactType,
           asPresentation,
         });
       }
       let followup = followupFromModel;
       if (body && !followup) {
         followup = defaultArtifactFollowup({
-          type: streamedArtifactType,
+          type: wordDeliverable ? "docx" : streamedArtifactType,
           asPresentation,
         });
       }

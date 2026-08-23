@@ -687,8 +687,9 @@ pub async fn chat_stream(
         let mut tool_acc = ToolCallAccumulator::default();
         let mut emitted_done = false;
         let mut collected_annotations: Vec<Value> = Vec::new();
-        // Abort if the upstream sends nothing for this long (half-open hangs).
-        const IDLE_SECS: u64 = 60;
+        let mut finish_reason: Option<String> = None;
+        // Abort if the upstream sends nothing for this long after stream starts.
+        const IDLE_SECS: u64 = 120;
 
         loop {
             let next = tokio::time::timeout(
@@ -747,6 +748,7 @@ pub async fn chat_stream(
                             stream_trial_credits,
                             stream_trial_expires.as_deref(),
                             &dedupe_file_annotations(&collected_annotations),
+                            finish_reason.as_deref(),
                         );
                     }
                     continue;
@@ -758,6 +760,13 @@ pub async fn chat_stream(
                                 stream_model = Some(m.to_string());
                             }
                         }
+                    }
+                    if let Some(fr) = value
+                        .pointer("/choices/0/finish_reason")
+                        .and_then(|v| v.as_str())
+                        .filter(|s| !s.is_empty())
+                    {
+                        finish_reason = Some(fr.to_string());
                     }
                     if let Some(text) = extract_stream_delta(&value) {
                         if !text.is_empty() {
@@ -794,6 +803,7 @@ pub async fn chat_stream(
                 stream_trial_credits,
                 stream_trial_expires.as_deref(),
                 &dedupe_file_annotations(&collected_annotations),
+                finish_reason.as_deref(),
             );
         }
         return Ok(());
@@ -865,6 +875,7 @@ fn emit_stream_done(
     trial_credits: Option<u64>,
     trial_expires: Option<&str>,
     annotations: &[Value],
+    finish_reason: Option<&str>,
 ) {
     let mut payload = serde_json::json!({ "chunk": "", "done": true });
     if let Some(calls) = tool_acc.finish() {
@@ -884,6 +895,9 @@ fn emit_stream_done(
     }
     if !annotations.is_empty() {
         payload["annotations"] = serde_json::json!(annotations);
+    }
+    if let Some(fr) = finish_reason.filter(|s| !s.is_empty()) {
+        payload["finishReason"] = serde_json::json!(fr);
     }
     let _ = app.emit("cloud-chat-stream", payload);
 }

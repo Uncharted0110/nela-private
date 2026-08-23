@@ -97,6 +97,17 @@ export function friendlyError(raw: string | undefined | null): string {
     return COPY.errorTimeout;
   }
 
+  if (
+    lower.includes("still starting your request") ||
+    lower.includes("cold start or model fallback")
+  ) {
+    return COPY.errorCloudBusy;
+  }
+
+  if (lower.includes("stopped sending tokens")) {
+    return COPY.errorTimeout;
+  }
+
   if (lower.includes("out of memory") || lower.includes("oom") || /\bmemory\b/.test(lower)) {
     return COPY.errorMemory;
   }

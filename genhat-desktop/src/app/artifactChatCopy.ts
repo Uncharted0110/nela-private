@@ -6,6 +6,9 @@ export function artifactKindLabel(
 ): string {
   if (type === "text/csv") return "spreadsheet";
   if (asPresentation) return "presentation";
+  if (type === "docx" || type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
+    return "Word document";
+  }
   return "webpage";
 }
 

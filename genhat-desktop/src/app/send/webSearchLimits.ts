@@ -12,11 +12,20 @@ export const MAX_ARTIFACT_HOST_QUERIES = 4;
 /** Results per search call for artifact grounding. */
 export const ARTIFACT_WEB_MAX_RESULTS = 5;
 
-/** Abort a cloud stream if no tokens arrive for this long (ms). */
-export const CLOUD_STREAM_IDLE_TIMEOUT_MS = 60_000;
+/**
+ * Abort if no first token arrives within this long (ms).
+ * Covers Render cold start + gateway model fallback before SSE begins.
+ */
+export const CLOUD_STREAM_TTFT_TIMEOUT_MS = 180_000;
 
-/** Artifact HTML can pause between large slides/CSS; don't cut the stream at 60s. */
+/** Abort a cloud stream if tokens pause for this long after the first token (ms). */
+export const CLOUD_STREAM_IDLE_TIMEOUT_MS = 120_000;
+
+/** Artifact HTML can pause between large slides/CSS; allow longer mid-stream gaps. */
 export const CLOUD_ARTIFACT_STREAM_IDLE_TIMEOUT_MS = 180_000;
+
+/** Artifact plan prelude: model fallback + long JSON plan before first byte. */
+export const CLOUD_ARTIFACT_TTFT_TIMEOUT_MS = 240_000;
 
 /** Hard cap for a single cloud stream (ms) — prevents forever-stuck PPT UI. */
 export const CLOUD_STREAM_ABSOLUTE_TIMEOUT_MS = 8 * 60_000;
