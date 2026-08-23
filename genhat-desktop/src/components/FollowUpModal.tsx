@@ -60,17 +60,22 @@ export default function FollowUpModal() {
   const [dragOver, setDragOver] = useState(false);
   const [pasteError, setPasteError] = useState<string | null>(null);
   const firstInputRef = useRef<HTMLElement | null>(null);
-
-  useEffect(() => {
-    if (!pending) return;
+  const requestId = pending?.requestId ?? null;
+  const [initId, setInitId] = useState<string | null>(null);
+  if (pending && requestId !== initId) {
+    setInitId(requestId);
     const init: Record<string, string> = {};
     for (const q of pending.questions) init[q.id] = "";
     setAnswers(init);
     setFreeformNote("");
     setAttachedPaths([]);
     setPasteError(null);
+  }
+
+  useEffect(() => {
+    if (!pending) return;
     queueMicrotask(() => firstInputRef.current?.focus());
-  }, [pending?.requestId]);
+  }, [pending, requestId]);
 
   const submit = useCallback(() => {
     if (!pending) return;

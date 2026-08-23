@@ -184,7 +184,7 @@ function upsertDeckOverridesInFreeformHtml(
       `{ font-family: '${merged.font}', system-ui, sans-serif !important; }\n`;
   }
 
-  let out = html.replace(marker, "");
+  const out = html.replace(marker, "");
   if (!css) return out;
   const block = `<style id="${DECK_OVERRIDES_ID}" data-nela-deck="${escapeAttr(
     JSON.stringify(merged)

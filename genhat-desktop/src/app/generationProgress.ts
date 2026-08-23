@@ -220,12 +220,14 @@ export function useGenerationProgressLabel(
   intervalMs = 2200
 ): { verb: string; etaSec: number } {
   const [tick, setTick] = useState(0);
+  const [wasActive, setWasActive] = useState(active);
+  if (wasActive !== active) {
+    setWasActive(active);
+    if (!active) setTick(0);
+  }
 
   useEffect(() => {
-    if (!active) {
-      setTick(0);
-      return;
-    }
+    if (!active) return;
     const id = setInterval(() => setTick((t) => t + 1), intervalMs);
     return () => clearInterval(id);
   }, [active, mode, stage, intervalMs]);

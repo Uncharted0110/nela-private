@@ -267,7 +267,7 @@ export default function InlineArtifact({ artifactPath, artifactStage, errorMessa
             rows: res.rows,
           });
         })
-        .catch((err: any) => {
+        .catch((err: unknown) => {
           console.error("Failed to parse spreadsheet data:", err);
         })
         .finally(() => {

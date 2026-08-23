@@ -114,10 +114,11 @@ export default function ProgressSlate({ stage, error }: ProgressSlateProps) {
   const currentIdx = STAGE_ORDER.indexOf(stage);
   const info = STAGE_INFO[stage];
   const [verbIndex, setVerbIndex] = useState(0);
-
-  useEffect(() => {
+  const [verbStage, setVerbStage] = useState(stage);
+  if (verbStage !== stage) {
+    setVerbStage(stage);
     setVerbIndex(0);
-  }, [stage]);
+  }
 
   useEffect(() => {
     if (stage === "LivePreview" || stage === "Error") return;

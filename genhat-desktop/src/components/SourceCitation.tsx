@@ -72,7 +72,6 @@ export interface SourceCitationProps {
  */
 export const SourceCitation: React.FC<SourceCitationProps> = ({
   hit,
-  index: _index,
   variant = "inline",
 }) => {
   const [open, setOpen] = useState(false);
@@ -108,7 +107,6 @@ export const SourceCitation: React.FC<SourceCitationProps> = ({
 
   useLayoutEffect(() => {
     if (!open || !anchorRef.current) {
-      setPos(null);
       return;
     }
 

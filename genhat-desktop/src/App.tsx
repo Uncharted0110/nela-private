@@ -71,8 +71,19 @@ function App() {
   }, []);
 
   useEffect(() => {
-    void refreshFileIndexerSetup();
-  }, [refreshFileIndexerSetup]);
+    let cancelled = false;
+    void fileindexerGetSetupStatus()
+      .then((status) => {
+        if (!cancelled) setFileIndexerSetup(status);
+      })
+      .catch((e) => {
+        console.warn("FileIndexer setup status unavailable:", e);
+        if (!cancelled) setFileIndexerSetup(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const handleSidebarNav = (section: "chats" | "audio" | "mindmaps" | "playground") => {
     setSidebarSection(section === sidebarSection ? null : section);

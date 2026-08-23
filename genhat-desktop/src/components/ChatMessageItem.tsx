@@ -282,7 +282,6 @@ function ChatMessageItemInner({
   hasLiveStreamBody,
   retryText,
   isLoading = false,
-  onSend: _onSend,
   onRetry,
   saveAudioToSidebar,
   onOpenPreview,
@@ -518,7 +517,7 @@ function ChatMessageItemInner({
                                 <InlineArtifact
                                   key={`artifact-${idx}-${msg.artifactPath ?? "pending"}`}
                                   artifactPath={msg.artifactPath}
-                                  artifactStage={msg.artifactStage as any}
+                                  artifactStage={msg.artifactStage as PipelineStageKind | null | undefined}
                                   errorMessage={msg.artifactStage === "Error" ? friendlyError(msg.content) : undefined}
                                 />
                                 {msg.artifactStage === "Error" && (

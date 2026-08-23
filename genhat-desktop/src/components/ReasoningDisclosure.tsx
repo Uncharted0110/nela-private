@@ -16,21 +16,12 @@ export default function ReasoningDisclosure({
 }: ReasoningDisclosureProps) {
   const trimmed = thinking.trim();
   const [expanded, setExpanded] = useState(streaming);
+  const [prevStreaming, setPrevStreaming] = useState(streaming);
   const bodyRef = useRef<HTMLPreElement>(null);
-  const wasStreamingRef = useRef(streaming);
-
-  useEffect(() => {
-    if (streaming) {
-      setExpanded(true);
-      wasStreamingRef.current = true;
-      return;
-    }
-    // Collapse once a live stream finishes.
-    if (wasStreamingRef.current) {
-      wasStreamingRef.current = false;
-      setExpanded(false);
-    }
-  }, [streaming]);
+  if (prevStreaming !== streaming) {
+    setPrevStreaming(streaming);
+    setExpanded(streaming);
+  }
 
   useEffect(() => {
     if (!streaming || !expanded) return;

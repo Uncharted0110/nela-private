@@ -139,7 +139,7 @@ export function extractCopyFromWebContext(
   const sentences: string[] = [];
   for (const line of webContext.split(/\n+/)) {
     // Metadata-only lines from the formatted search context.
-    if (/^\s*(?:source|url|link|query|result\s*\d*)\s*[:\-]/i.test(line)) continue;
+    if (/^\s*(?:source|url|link|query|result\s*\d*)\s*[:-]/i.test(line)) continue;
     const cleaned = cleanText(line);
     if (cleaned.length < 40) continue;
     for (const raw of cleaned.split(/(?<=[.!?])\s+/)) {

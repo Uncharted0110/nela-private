@@ -57,7 +57,7 @@ export function sanitizeCsvArtifactBody(raw: string): string {
   const sheets = extractCsvSheetArtifacts(raw);
   if (sheets.length > 0) return sheets[0]!.csv;
 
-  let s = (raw || "").trim();
+  const s = (raw || "").trim();
   if (!s) return "";
   return sanitizeCsvInner(s);
 }

@@ -191,12 +191,11 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
   }, [messages.length, streamingContent]);
 
   // Close composer menus while a response is generating (same gate as mic).
-  useEffect(() => {
-    if (!isLoading) return;
+  if (isLoading && (showAttachMenu || showModeMenu || showToolsMenu)) {
     setShowAttachMenu(false);
     setShowModeMenu(false);
     setShowToolsMenu(false);
-  }, [isLoading]);
+  }
 
   // Close attach menu on outside click
   useEffect(() => {

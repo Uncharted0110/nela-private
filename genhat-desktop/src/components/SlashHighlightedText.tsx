@@ -6,7 +6,7 @@ export type SlashHighlightSegment =
   | { type: "command"; value: string; def: SlashCommandDef };
 
 /** Split text into plain runs and recognized /command tokens. */
-export function segmentSlashCommands(text: string): SlashHighlightSegment[] {
+function segmentSlashCommands(text: string): SlashHighlightSegment[] {
   if (!text) return [];
 
   const segments: SlashHighlightSegment[] = [];
@@ -37,7 +37,7 @@ export function segmentSlashCommands(text: string): SlashHighlightSegment[] {
   return segments;
 }
 
-export function slashCommandChipClass(
+function slashCommandChipClass(
   def: SlashCommandDef,
   variant: "overlay" | "bubble" = "bubble"
 ): string {

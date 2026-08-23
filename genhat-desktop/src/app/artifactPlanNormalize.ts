@@ -211,8 +211,7 @@ function isUtterlyEmpty(slide: Record<string, unknown>): boolean {
 
 /** @deprecated Kept for any external imports; prefer not fabricating outlines. */
 export function buildTopicPresentationOutline(
-  topic: string,
-  _targetCount: number
+  topic: string
 ): Record<string, unknown>[] {
   return [
     {

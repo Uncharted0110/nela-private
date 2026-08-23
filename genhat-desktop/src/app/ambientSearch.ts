@@ -85,14 +85,14 @@ export function extractAmbientSearchQuery(text: string): string {
     /\b(?:latest|newest|most\s+recent|recent)\s+(?:[\w-]+\s+){0,2}(?:resume|résumé|resumé|cv|cover\s+letter|transcript)\b/i
   );
   if (recencyDoc) {
-    return recencyDoc[0].replace(/[,\/#!$%\^&\*;:{}=`~()?]/g, "").trim();
+    return recencyDoc[0].replace(/[,/#!$%^&*;:{}=`~()?]/g, "").trim();
   }
 
   const namedDoc = text.match(
     /\b(?:[\w-]+\s+){0,4}(?:resumes?|résumé|resumé|cv|cover\s+letter|transcript)\b/i
   );
   if (namedDoc) {
-    return namedDoc[0].replace(/[,\/#!$%\^&\*;:{}=`~()?]/g, "").trim();
+    return namedDoc[0].replace(/[,/#!$%^&*;:{}=`~()?]/g, "").trim();
   }
 
   const lowerText = text.toLowerCase();
@@ -172,7 +172,7 @@ export function extractAmbientSearchQuery(text: string): string {
     }
   }
 
-  cleaned = cleaned.replace(/[,\/#!$%\^&\*;:{}=`~()?]/g, "").trim();
+  cleaned = cleaned.replace(/[,/#!$%^&*;:{}=`~()?]/g, "").trim();
 
   // Preserve document-type phrases when stripping left the query empty.
   if (!cleaned) {

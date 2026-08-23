@@ -7,14 +7,14 @@ export const MAX_ARTIFACT_SOURCE_CHARS = 14_000;
 /** Extract a local absolute file path from the user's message, if present. */
 export function extractLocalFilePath(text: string): string | null {
   const unix = text.match(
-    /(?:^|[\s('"`])(\/(?:[\w.\-]+\/)+[\w.\-]+\.(pdf|docx?|pptx?|xlsx?|xls|csv|tsv|txt|md|json|rtf|odt|ods))(?:[\s'"`.,;!?]|$)/i
+    /(?:^|[\s('"`])(\/(?:[\w.-]+\/)+[\w.-]+\.(pdf|docx?|pptx?|xlsx?|xls|csv|tsv|txt|md|json|rtf|odt|ods))(?:[\s'"`.,;!?]|$)/i
   );
   if (unix?.[1]) {
     return unix[1];
   }
 
   const win = text.match(
-    /(?:^|[\s('"`])([A-Za-z]:\\(?:[\w.\-\\]+\\)+[\w.\-]+\.(pdf|docx?|pptx?|xlsx?|xls|csv|tsv|txt|md|json|rtf|odt|ods))(?:[\s'"`.,;!?]|$)/i
+    /(?:^|[\s('"`])([A-Za-z]:\\(?:[\w.\\-]+\\)+[\w.-]+\.(pdf|docx?|pptx?|xlsx?|xls|csv|tsv|txt|md|json|rtf|odt|ods))(?:[\s'"`.,;!?]|$)/i
   );
   return win?.[1] ?? null;
 }

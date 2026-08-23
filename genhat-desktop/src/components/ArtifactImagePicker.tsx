@@ -22,7 +22,7 @@ export default function ArtifactImagePicker() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [pending?.requestId, pending?.status]);
+  }, [pending]);
 
   if (!pending || pending.status !== "picking" || pending.candidates.length === 0) {
     return null;

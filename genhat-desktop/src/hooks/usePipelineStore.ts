@@ -161,7 +161,7 @@ export function usePipelineStore(): PipelineStoreActions {
     await savePipeline(updated);
     setPipelines(prev => prev.map(p => (p.id === updated.id ? updated : p)));
     lastSavedRef.current = serializePipeline(updated);
-  }, [activePipeline]);
+  }, [activePipeline, serializePipeline]);
 
   const importPipeline = useCallback(async (p: Pipeline) => {
     await savePipeline(p);

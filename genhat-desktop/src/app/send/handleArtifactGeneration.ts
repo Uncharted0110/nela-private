@@ -461,13 +461,13 @@ export async function handleArtifactGeneration(
 
     let supplementalContext = "";
 
-    let webHitsForImages: import("../../types").SearchHit[] = [];
-    let galleryUrlsForImages: string[] = [];
+    const webHitsForImages: import("../../types").SearchHit[] = [];
+    const galleryUrlsForImages: string[] = [];
     const rowPlan =
       schemaId === "spreadsheet_synthesis"
         ? extractSpreadsheetRowCount(text)
         : { count: null, explicit: false };
-    let deterministicWebPlan = null as ReturnType<
+    const deterministicWebPlan = null as ReturnType<
       typeof tryBuildDeterministicWebSpreadsheetPlan
     >;
 

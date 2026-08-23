@@ -427,7 +427,7 @@ export async function handleSendTextChat(
         loading: false,
         artifactPath: artifactPath ?? prev.artifactPath,
         artifactStage: artifactStage ?? prev.artifactStage,
-        artifactPanelOpen: Boolean(body) ? true : prev.artifactPanelOpen,
+        artifactPanelOpen: body ? true : prev.artifactPanelOpen,
         artifactStreamActive: Boolean(body),
         streamingArtifactCsv: undefined,
         ...(body && streamedArtifactType === "text/html"

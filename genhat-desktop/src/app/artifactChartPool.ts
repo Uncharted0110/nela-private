@@ -470,7 +470,7 @@ export function embedPoolChartsInHtml(
   const unused = pool.filter((e) => !usedIndices.has(e.index));
   if (unused.length) {
     let ui = 0;
-    const fillOnce = (match: string, _tag: string, _attrs: string, _token: string) => {
+    const fillOnce = (match: string) => {
       // Skip if this token was already replaced with a real fragment.
       if (/echarts-host|nela-chart-panel/.test(match)) return match;
       const entry = unused[ui++];
@@ -478,12 +478,8 @@ export function embedPoolChartsInHtml(
       usedIndices.add(entry.index);
       return entry.fragment;
     };
-    out = out.replace(markerAttrRe, (m, tag, attrs, token) =>
-      fillOnce(m, tag, attrs, token)
-    );
-    out = out.replace(selfClosingAttrRe, (m, tag, attrs, token) =>
-      fillOnce(m, tag, attrs, token)
-    );
+    out = out.replace(markerAttrRe, (m) => fillOnce(m));
+    out = out.replace(selfClosingAttrRe, (m) => fillOnce(m));
   }
 
   const used = usedIndices.size > 0;

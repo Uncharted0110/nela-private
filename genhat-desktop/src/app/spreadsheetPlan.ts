@@ -255,7 +255,7 @@ export function sanitizeExcelSheetName(name: string): string {
   const codeMatch = cleaned.match(/set_name\s*\(\s*["'](.+?)["']\s*\)/i);
   if (codeMatch) cleaned = codeMatch[1];
   cleaned = cleaned.replace(/^["']+|["']+$/g, "").trim();
-  cleaned = cleaned.replace(/[\\/*?:\[\]]/g, "_");
+  cleaned = cleaned.replace(/[\\/*?:[\]]/g, "_");
   const chars = [...cleaned];
   const truncated = chars.slice(0, 31).join("").trim();
   return truncated || "Sheet1";

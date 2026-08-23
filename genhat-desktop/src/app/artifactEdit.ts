@@ -842,7 +842,7 @@ export function parseAddSlideFromPrompt(
     let content = stripOuterQuotes(about[1].trim());
     content = content
       .replace(/\s+(?:at the|before|after|to the)\s+.*$/i, "")
-      .replace(/[,\/#!$%\^&\*;:{}=`~()?]+$/g, "")
+      .replace(/[,/#!$%^&*;:{}=`~()?]+$/g, "")
       .trim();
     if (content) {
       return {

@@ -19,7 +19,6 @@ export interface ArtifactPreviewEditChatProps {
 export default function ArtifactPreviewEditChat({
   open,
   busy,
-  messages: _messages,
   onClose,
   onSend,
 }: ArtifactPreviewEditChatProps) {

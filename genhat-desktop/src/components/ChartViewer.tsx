@@ -102,7 +102,7 @@ const ChartInner: React.FC<ChartViewerProps> = ({
     });
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${(title || "chart").replace(/[^\w\-]+/g, "_").slice(0, 60)}.png`;
+    a.download = `${(title || "chart").replace(/[^\w-]+/g, "_").slice(0, 60)}.png`;
     a.click();
   };
 

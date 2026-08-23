@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useMemo, useState, type CSSProperties } from "react";
 
 export interface ExcelSheetTab {
   name: string;
@@ -55,13 +55,14 @@ export default function ExcelSheetGrid({
       : [{ name: sheetName, rows }];
 
   const [activeIdx, setActiveIdx] = useState(0);
+  const sheetKey = tabs.map((t) => t.name).join("\0");
+  const [seenSheetKey, setSeenSheetKey] = useState(sheetKey);
+  if (seenSheetKey !== sheetKey) {
+    setSeenSheetKey(sheetKey);
+    setActiveIdx(0);
+  }
   const safeIdx = Math.min(Math.max(0, activeIdx), Math.max(0, tabs.length - 1));
   const active = tabs[safeIdx] ?? { name: sheetName, rows };
-
-  const sheetKey = tabs.map((t) => t.name).join("\0");
-  useEffect(() => {
-    setActiveIdx(0);
-  }, [sheetKey]);
 
   const { colCount, displayRows, truncated } = useMemo(() => {
     const cols = active.rows.reduce((m, r) => Math.max(m, r.length), 0);
