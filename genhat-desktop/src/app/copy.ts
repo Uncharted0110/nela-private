@@ -125,8 +125,6 @@ export const COPY = {
     "Your computer ran low on memory. Try a smaller model or close other apps, then retry.",
   errorCloudUnreachable:
     "We couldn't reach NELA Cloud. Check your internet connection and try again.",
-  errorCloudUnableToRespond:
-    "Unable to respond, check:\n1. If you have logged in\n2. You still have credits / in the correct tier\n3. Cloud service might be down, try again later",
   errorCloudBusy:
     "NELA Cloud is busy right now. Wait a moment, then try again.",
   errorRateLimited:

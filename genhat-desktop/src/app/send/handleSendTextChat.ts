@@ -1,6 +1,6 @@
 import { Api } from "../../api";
 import type { ChatMessage, WebSearchResult } from "../../types";
-import { chatResponseError } from "../cloudResponseError";
+import { friendlyErrorFromUnknown } from "../friendlyError";
 import { createStreamChunkFlusher, createLatestValueFlusher, createThrottledFlusher } from "../streamUiBatch";
 import {
   CONTEXT_COMPACTION_KEEP_RECENT,
@@ -453,7 +453,7 @@ export async function handleSendTextChat(
         {
           id: crypto.randomUUID(),
           role: "assistant" as const,
-          content: chatResponseError(err),
+          content: friendlyErrorFromUnknown(err),
         },
       ],
       streamingContent: "",

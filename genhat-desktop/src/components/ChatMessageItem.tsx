@@ -8,7 +8,7 @@ import ArtifactChip from "./ArtifactChip";
 import { Api } from "../api";
 import type { ChatMessage, EntitlementResponse, MediaAsset } from "../types";
 import { COPY } from "../app/copy";
-import { chatResponseErrorText } from "../app/cloudResponseError";
+import { friendlyError } from "../app/friendlyError";
 import { SlashHighlightedText } from "./SlashHighlightedText";
 import GenerationProgressLabel from "./GenerationProgressLabel";
 import WebSearchDisclosure from "./WebSearchDisclosure";
@@ -435,8 +435,8 @@ function ChatMessageItemInner({
                                     />
                                   ) : null}
                                   {msg.artifactStage === "Error" && (
-                                    <div className="mt-2 text-[0.85rem] text-red-300/90 whitespace-pre-wrap">
-                                      {chatResponseErrorText(msg.content)}
+                                    <div className="mt-2 text-[0.85rem] text-red-300/90">
+                                      {friendlyError(msg.content)}
                                       <button
                                         type="button"
                                         className="mt-2 block text-[0.78rem] text-neon hover:text-neon-hover underline-offset-2 hover:underline"
@@ -518,7 +518,7 @@ function ChatMessageItemInner({
                                   key={`artifact-${idx}-${msg.artifactPath ?? "pending"}`}
                                   artifactPath={msg.artifactPath}
                                   artifactStage={msg.artifactStage as PipelineStageKind | null | undefined}
-                                  errorMessage={msg.artifactStage === "Error" ? chatResponseErrorText(msg.content) : undefined}
+                                  errorMessage={msg.artifactStage === "Error" ? friendlyError(msg.content) : undefined}
                                 />
                                 {msg.artifactStage === "Error" && (
                                   <button

@@ -1,6 +1,6 @@
 import { Api } from "../../api";
 import type { ChatMessage } from "../../types";
-import { chatResponseError } from "../cloudResponseError";
+import { friendlyError } from "../friendlyError";
 import { createStreamChunkFlusher, createLatestValueFlusher } from "../streamUiBatch";
 import {
   CONTEXT_COMPACTION_KEEP_RECENT,
@@ -160,7 +160,7 @@ export async function handleSendRag(
               {
                 id: crypto.randomUUID(),
                 role: "assistant" as const,
-                content: chatResponseError(err),
+                content: friendlyError(String(err)),
               },
             ],
             streamingContent: "",

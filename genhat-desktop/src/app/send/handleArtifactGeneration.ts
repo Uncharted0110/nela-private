@@ -82,7 +82,7 @@ import {
   defaultArtifactIntro,
   truncatedArtifactFollowup,
 } from "../artifactChatCopy";
-import { chatResponseError } from "../cloudResponseError";
+import { friendlyErrorFromUnknown } from "../friendlyError";
 import { saveStreamedArtifact } from "../streamArtifactSave";
 import { completeTruncatedPresentationHtml } from "../presentationHtmlCompleteness";
 import {
@@ -1518,7 +1518,7 @@ SOURCE + USER-BRIEF RULES (mandatory):
                   updateArtifactMsg(
                     "Error",
                     null,
-                    chatResponseError(
+                    friendlyErrorFromUnknown(
                       msg ? `Preview is ready but saving failed: ${msg}` : streamErr
                     )
                   );
@@ -1644,7 +1644,7 @@ SOURCE + USER-BRIEF RULES (mandatory):
             console.error("Artifact generation execution failed:", execErr);
             useChatModeStore.getState().setLiveToolStatus(null);
             ctx.updateSession(sid, { loading: false });
-            updateArtifactMsg("Error", null, chatResponseError(execErr));
+            updateArtifactMsg("Error", null, friendlyErrorFromUnknown(execErr));
           }
         })();
       },
@@ -1658,7 +1658,7 @@ SOURCE + USER-BRIEF RULES (mandatory):
           }
           useChatModeStore.getState().setLiveToolStatus(null);
           ctx.updateSession(sid, { loading: false });
-          updateArtifactMsg("Error", null, chatResponseError(err));
+          updateArtifactMsg("Error", null, friendlyErrorFromUnknown(err));
         })();
       },
     });
@@ -1669,6 +1669,6 @@ SOURCE + USER-BRIEF RULES (mandatory):
     ctx.updateSession(sid, {
       loading: false,
     });
-    updateArtifactMsg("Error", null, chatResponseError(err));
+    updateArtifactMsg("Error", null, friendlyErrorFromUnknown(err));
   }
 }

@@ -3,7 +3,7 @@ import { Api, cloudStreamChat } from "../../api";
 import { useCloudStore } from "../../stores/cloudStore";
 import { useModelStore } from "../../stores/modelStore";
 import { cloudQualityModeForIntelligence } from "../intelligenceModes";
-import { chatResponseErrorText } from "../cloudResponseError";
+import { friendlyError } from "../friendlyError";
 import { prepareMessagesForCloudCaching } from "./prepareCloudMessages";
 import {
   CLOUD_ARTIFACT_STREAM_IDLE_TIMEOUT_MS,
@@ -143,7 +143,7 @@ function isAbortError(err: unknown): boolean {
 /** Short user-visible reason extracted from cloud / API errors. */
 export function summarizeCloudError(err: unknown): string {
   const raw = err instanceof Error ? err.message : String(err);
-  return chatResponseErrorText(raw);
+  return friendlyError(raw);
 }
 
 export function formatCloudFallbackNotice(err: unknown): string {
@@ -511,12 +511,12 @@ export function streamChatByMode(args: StreamArgs): void {
     const paidNeeded = needsPremiumForCloudMode(mode);
     if (paidNeeded) {
       useCloudStore.getState().openUpgradeModal();
-      args.onError(new Error(chatResponseErrorText("Upgrade to Premium to use Smart and Deep in Cloud")));
+      args.onError(new Error(friendlyError("Upgrade to Premium to use Smart and Deep in Cloud")));
       return;
     }
     const reason = "not signed in or Fast quota exhausted";
     if (disableLocalFallback) {
-      args.onError(new Error(chatResponseErrorText(reason)));
+      args.onError(new Error(friendlyError(reason)));
       return;
     }
     console.warn(`Cloud not ready (${reason}); falling back to local`);
@@ -535,16 +535,16 @@ export function streamChatByMode(args: StreamArgs): void {
     const msg = err instanceof Error ? err.message : String(err);
     if (/upgrade to premium|UPGRADE_REQUIRED|buy a credit pack/i.test(msg)) {
       useCloudStore.getState().openUpgradeModal("upgrade");
-      args.onError(new Error(chatResponseErrorText(msg)));
+      args.onError(new Error(friendlyError(msg)));
       return;
     }
     if (/QUOTA_EXHAUSTED|credit balance|FAST_QUOTA|buy a pack/i.test(msg)) {
       useCloudStore.getState().openUpgradeModal("credits");
-      args.onError(new Error(chatResponseErrorText(msg)));
+      args.onError(new Error(friendlyError(msg)));
       return;
     }
     if (disableLocalFallback) {
-      args.onError(new Error(chatResponseErrorText(msg)));
+      args.onError(new Error(friendlyError(msg)));
       return;
     }
     console.warn("Cloud stream failed; falling back to local:", err);

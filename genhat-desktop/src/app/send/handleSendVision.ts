@@ -1,6 +1,6 @@
 import { listen } from "@tauri-apps/api/event";
 import { Api } from "../../api";
-import { chatResponseError } from "../cloudResponseError";
+import { friendlyError } from "../friendlyError";
 import { withNelaIdentity } from "../nelaSystemPrompt";
 import type { SendHandlerContext } from "./types";
 
@@ -94,7 +94,7 @@ export async function handleSendVision(
     ctx.updateSession(sid, (prev) => ({
       messages: [
         ...prev.messages,
-        { role: "assistant" as const, content: chatResponseError(e) },
+        { role: "assistant" as const, content: friendlyError(String(e)) },
       ],
       loading: false,
     }));
