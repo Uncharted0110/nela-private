@@ -4,7 +4,7 @@ By default the desktop app talks to **production**:
 
 | Service | URL |
 |---------|-----|
-| API | `https://nela-backend.onrender.com` |
+| API | `https://nela-gateway.onrender.com` |
 | Website | `https://nela-webpage.vercel.app` |
 
 If production is unreachable, it falls back to `http://localhost:3001` / `http://localhost:3000`.

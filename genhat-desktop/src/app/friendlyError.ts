@@ -11,6 +11,10 @@ export function friendlyError(raw: string | undefined | null): string {
 
   const lower = text.toLowerCase();
 
+  if (lower.startsWith("unable to respond")) {
+    return COPY.errorCloudUnableToRespond;
+  }
+
   // Already friendly (from Rust cloud client / COPY) — pass through first sentence.
   if (looksAlreadyFriendly(lower) && !looksTechnical(text)) {
     const firstSentence = text.split(/(?<=\.)\s+/)[0] ?? text;
@@ -227,6 +231,7 @@ export function friendlyErrorFromUnknown(err: unknown): string {
 
 function looksAlreadyFriendly(lower: string): boolean {
   return (
+    lower.startsWith("unable to respond") ||
     lower.startsWith("we couldn't") ||
     lower.startsWith("something went wrong") ||
     lower.startsWith("please sign in") ||

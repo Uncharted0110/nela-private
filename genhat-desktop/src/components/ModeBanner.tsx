@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect } from "react";
 import { ShieldCheck, Cloud } from "lucide-react";
 import { COPY } from "../app/copy";
 import { useCloudStore } from "../stores/cloudStore";
@@ -15,7 +15,7 @@ const ModeBanner: React.FC = () => {
   const preferredMode = useCloudStore((s) => s.preferredMode);
   const setPreferredMode = useCloudStore((s) => s.setPreferredMode);
   const entitlement = useCloudStore((s) => s.entitlement);
-  const setCloudSettingsOpen = useUIStore((s) => s.setCloudSettingsOpen);
+  const setProfileOpen = useUIStore((s) => s.setProfileOpen);
   const setUseSpecificModelPicker = useModelStore((s) => s.setUseSpecificModelPicker);
 
   const isCloud = preferredMode !== "local";
@@ -24,6 +24,12 @@ const ModeBanner: React.FC = () => {
 
   const label = isCloud ? COPY.modeCloudLabel : COPY.modePrivateLabel;
   const tooltip = isCloud ? COPY.modeCloudTooltip : COPY.modePrivateTooltip;
+
+  useEffect(() => {
+    if (needsSetup) {
+      setProfileOpen(true);
+    }
+  }, [needsSetup, setProfileOpen]);
 
   const toggle = () => {
     const nextCloud = !isCloud;
@@ -60,17 +66,6 @@ const ModeBanner: React.FC = () => {
           </span>
         </span>
       </button>
-
-      {needsSetup && (
-        <button
-          type="button"
-          className="mode-toggle__setup"
-          title={COPY.modeCloudSetupTooltip}
-          onClick={() => setCloudSettingsOpen(true)}
-        >
-          {COPY.modeCloudSetup}
-        </button>
-      )}
     </div>
   );
 };

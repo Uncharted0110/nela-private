@@ -15,7 +15,7 @@ import { handleSendVision } from "./handleSendVision";
 import { handleSendTextChat } from "./handleSendTextChat";
 import { handleArtifactGeneration } from "./handleArtifactGeneration";
 import { handleArtifactEdit } from "./handleArtifactEdit";
-import { friendlyErrorFromUnknown } from "../friendlyError";
+import { chatResponseError } from "../cloudResponseError";
 import type { SendHandlerContext } from "./types";
 import { buildSendHandlerContext } from "./buildContext";
 import { useCloudStore } from "../../stores/cloudStore";
@@ -386,7 +386,7 @@ export async function executeHandleSend(
     ctx.updateSession(sid, (prev) => ({
       messages: [
         ...prev.messages,
-        { role: "assistant" as const, content: friendlyErrorFromUnknown(err) },
+        { role: "assistant" as const, content: chatResponseError(err) },
       ],
       loading: false,
     }));

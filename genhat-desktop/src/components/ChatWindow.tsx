@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef, memo, useCallback } from "react";
-import { MessageSquare, Eye, Volume2, Mic, FileText, Share2, Workflow, X, Wrench } from "lucide-react";
+import { X, Wrench } from "lucide-react";
 import MarkdownRenderer from "./MarkdownRenderer";
-import VoiceInputButton from "./VoiceInputButton";
 import type { ChatMessage, MediaAsset, IngestionStatus, ChatMode, ChatSession } from "../types";
 import { COPY } from "../app/copy";
 import { isSpreadsheetPath } from "../app/spreadsheetDashboardIntent";
@@ -43,16 +42,6 @@ function looksLikeArtifactDump(text: string): boolean {
     /^<\/?[a-zA-Z!]/.test(scrubbed)
   );
 }
-
-const MODE_ICON_MAP: Record<ChatMode, React.ElementType> = {
-  text: MessageSquare,
-  rag: FileText,
-  podcast: Mic,
-  mindmap: Share2,
-  vision: Eye,
-  audio: Volume2,
-  playground: Workflow,
-};
 
 interface ChatWindowProps {
   messages: ChatMessage[];
@@ -142,9 +131,6 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
   onToggleDocPanel,
   showRagControls = false,
   docPanelOpen = false,
-  modeOptions = [],
-  currentMode = "text",
-  onSelectMode,
   modeSwitchNotice = null,
   saveAudioToSidebar = () => {},
   streamingThinking = "",
@@ -161,14 +147,12 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
     preferredMode !== "local" ? "mode-chat-border--cloud" : "mode-chat-border--private";
   const [inputObj, setInputObj] = useState("");
   const [showAttachMenu, setShowAttachMenu] = useState(false);
-  const [showModeMenu, setShowModeMenu] = useState(false);
   const [showToolsMenu, setShowToolsMenu] = useState(false);
   const [previewModal, setPreviewModal] = useState<{ src: string; title: string } | null>(null);
   const onOpenPreview = useCallback((src: string, title: string) => {
     setPreviewModal({ src, title });
   }, []);
   const attachMenuRef = useRef<HTMLDivElement>(null);
-  const modeMenuRef = useRef<HTMLDivElement>(null);
   const toolsMenuRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const highlightMirrorRef = useRef<HTMLDivElement>(null);
@@ -190,10 +174,9 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
     endRef.current?.scrollIntoView({ behavior, block: "end" });
   }, [messages.length, streamingContent]);
 
-  // Close composer menus while a response is generating (same gate as mic).
-  if (isLoading && (showAttachMenu || showModeMenu || showToolsMenu)) {
+  // Close composer menus while a response is generating.
+  if (isLoading && (showAttachMenu || showToolsMenu)) {
     setShowAttachMenu(false);
-    setShowModeMenu(false);
     setShowToolsMenu(false);
   }
 
@@ -203,9 +186,6 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
       if (attachMenuRef.current && !attachMenuRef.current.contains(e.target as Node)) {
         setShowAttachMenu(false);
       }
-      if (modeMenuRef.current && !modeMenuRef.current.contains(e.target as Node)) {
-        setShowModeMenu(false);
-      }
       if (toolsMenuRef.current && !toolsMenuRef.current.contains(e.target as Node)) {
         setShowToolsMenu(false);
       }
@@ -213,14 +193,11 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
     if (showAttachMenu) {
       document.addEventListener("mousedown", handleClickOutside);
     }
-    if (showModeMenu) {
-      document.addEventListener("mousedown", handleClickOutside);
-    }
     if (showToolsMenu) {
       document.addEventListener("mousedown", handleClickOutside);
     }
     return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [showAttachMenu, showModeMenu, showToolsMenu]);
+  }, [showAttachMenu, showToolsMenu]);
 
   const slash = useSlashCommandInput({
     value: inputObj,
@@ -307,8 +284,6 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
   const hasMessages = messages.length > 0 || isLoading;
   const showAttachButton = showRagControls || chatMode === "vision";
   const visionFileName = visionImagePath ? visionImagePath.split(/[/\\]/).pop() ?? "image" : "image";
-  const currentModeLabel = modeOptions.find((option) => option.mode === currentMode)?.label ?? "Mode";
-  const CurrentModeIcon = MODE_ICON_MAP[currentMode] ?? MessageSquare;
   const canToggleThinking = Boolean(onToggleThinking);
   const canToggleRag = chatMode === "text" && Boolean(onToggleRagEnabled);
   const canToggleWeb = chatMode === "text" && Boolean(onToggleWebEnabled);
@@ -774,13 +749,6 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
             )}
 
             {renderChatTextarea()}
-            {/* Voice input button - allows speaking instead of typing */}
-            <VoiceInputButton
-              onTranscript={(text) => {
-                setInputObj((prev) => (prev ? prev + " " + text : text));
-              }}
-              disabled={isLoading}
-            />
             <div className="relative" ref={toolsMenuRef}>
               <button
                 className="glass-btn flex items-center justify-center w-10 h-10 rounded-lg bg-glass-bg border border-glass-border text-txt-muted cursor-pointer transition-colors duration-150 hover:text-txt disabled:opacity-40 disabled:cursor-not-allowed"
@@ -797,47 +765,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
 
               {showToolsMenu && !isLoading && renderToolsMenu()}
             </div>
-            <div className="relative" ref={modeMenuRef}>
-              <button
-                className="glass-btn flex items-center gap-1.5 h-10 px-2 rounded-lg bg-glass-bg border border-glass-border text-txt-muted cursor-pointer transition-colors duration-150 hover:text-txt disabled:opacity-40 disabled:cursor-not-allowed"
-                onClick={() => {
-                  if (isLoading) return;
-                  setShowModeMenu((v) => !v);
-                }}
-                title="Switch mode"
-                aria-label="Switch mode"
-                disabled={isLoading}
-                data-tour="mode-switch"
-              >
-                <CurrentModeIcon size={16} strokeWidth={1.9} />
-                <span className="text-[0.8rem] font-medium leading-none">{currentModeLabel}</span>
-              </button>
-
-              {showModeMenu && !isLoading && (
-                <div className="animate-attach-menu absolute bottom-full right-0 mb-2 w-[180px] rounded-xl bg-void-700/90 backdrop-blur-xl border border-glass-border shadow-[0_8px_32px_rgba(0,0,0,0.5)] p-1 z-50">
-                  {modeOptions.map((option) => {
-                    const active = option.mode === currentMode;
-                    return (
-                      <button
-                        key={option.mode}
-                        className={`w-full flex items-center gap-2 py-2 px-3 rounded-lg text-sm transition-all duration-150 ${active ? "bg-neon-subtle text-neon" : "text-txt-secondary hover:bg-glass-hover hover:text-txt"}`}
-                        onClick={() => {
-                          onSelectMode?.(option.mode);
-                          setShowModeMenu(false);
-                        }}
-                      >
-                        {(() => {
-                          const OptionIcon = MODE_ICON_MAP[option.mode] ?? MessageSquare;
-                          return <OptionIcon size={15} strokeWidth={1.9} />;
-                        })()}
-                        {option.label}
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-            <button className="send-btn flex items-center justify-center w-10 h-10 rounded-lg bg-neon text-void-900 border border-neon/50 cursor-pointer transition-colors duration-150 hover:bg-neon-hover disabled:opacity-30 disabled:cursor-not-allowed shrink-0" onClick={handleSend} disabled={!inputObj.trim()} aria-label="Send message">
+                        <button className="send-btn flex items-center justify-center w-10 h-10 rounded-lg bg-neon text-void-900 border border-neon/50 cursor-pointer transition-colors duration-150 hover:bg-neon-hover disabled:opacity-30 disabled:cursor-not-allowed shrink-0" onClick={handleSend} disabled={!inputObj.trim()} aria-label="Send message">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <path d="M5 12H19M19 12L12 5M19 12L12 19" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
@@ -1071,54 +999,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
           )}
 
           {renderChatTextarea()}
-          {/* Voice input button - allows speaking instead of typing */}
-          <VoiceInputButton
-            onTranscript={(text) => {
-              setInputObj((prev) => (prev ? prev + " " + text : text));
-            }}
-            disabled={isLoading}
-          />
-          <div className="relative" ref={modeMenuRef}>
-            <button
-              className="glass-btn flex items-center gap-1.5 h-10 px-2 rounded-lg bg-glass-bg border border-glass-border text-txt-muted cursor-pointer transition-all duration-200 hover:text-neon hover:border-neon/30 hover:shadow-[0_0_10px_rgba(0,212,255,0.12)] disabled:opacity-40 disabled:cursor-not-allowed"
-              onClick={() => {
-                if (isLoading) return;
-                setShowModeMenu((v) => !v);
-              }}
-              title="Switch mode"
-              aria-label="Switch mode"
-              disabled={isLoading}
-              data-tour="mode-switch"
-            >
-              <CurrentModeIcon size={16} strokeWidth={1.9} />
-              <span className="text-[0.8rem] font-medium leading-none">{currentModeLabel}</span>
-            </button>
-
-            {showModeMenu && !isLoading && (
-              <div className="animate-attach-menu absolute bottom-full right-0 mb-2 w-[180px] rounded-xl bg-void-700/90 backdrop-blur-xl border border-glass-border shadow-[0_8px_32px_rgba(0,0,0,0.5)] p-1 z-50">
-                {modeOptions.map((option) => {
-                  const active = option.mode === currentMode;
-                  return (
-                    <button
-                      key={option.mode}
-                      className={`w-full flex items-center gap-2 py-2 px-3 rounded-lg text-sm transition-all duration-150 ${active ? "bg-neon-subtle text-neon" : "text-txt-secondary hover:bg-glass-hover hover:text-txt"}`}
-                      onClick={() => {
-                        onSelectMode?.(option.mode);
-                        setShowModeMenu(false);
-                      }}
-                    >
-                      {(() => {
-                        const OptionIcon = MODE_ICON_MAP[option.mode] ?? MessageSquare;
-                        return <OptionIcon size={15} strokeWidth={1.9} />;
-                      })()}
-                      {option.label}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-          <div className="relative" ref={toolsMenuRef}>
+                    <div className="relative" ref={toolsMenuRef}>
             <button
               className="glass-btn flex items-center justify-center w-10 h-10 rounded-lg bg-glass-bg border border-glass-border text-txt-muted cursor-pointer transition-all duration-200 hover:text-neon hover:border-neon/30 hover:shadow-[0_0_10px_rgba(0,212,255,0.12)] disabled:opacity-40 disabled:cursor-not-allowed"
               onClick={() => {

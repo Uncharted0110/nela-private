@@ -88,24 +88,6 @@
   transform: translateX(16px);
 }
 
-.mode-toggle__setup {
-  display: inline-flex;
-  align-items: center;
-  font-size: 0.68rem;
-  font-weight: 600;
-  padding: 0.28rem 0.5rem;
-  border-radius: 0.55rem;
-  border: 1px solid var(--mode-border);
-  background: var(--mode-surface);
-  color: var(--mode-fg);
-  cursor: pointer;
-  transition: background 0.15s ease;
-}
-
-.mode-toggle__setup:hover {
-  filter: brightness(1.08);
-}
-
 @media (prefers-reduced-motion: reduce) {
   .mode-toggle__thumb {
     transition: none !important;

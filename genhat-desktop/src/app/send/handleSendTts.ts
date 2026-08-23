@@ -1,5 +1,5 @@
 import { Api } from "../../api";
-import { friendlyError } from "../friendlyError";
+import { chatResponseError } from "../cloudResponseError";
 import type { SendHandlerContext } from "./types";
 
 export async function handleSendTts(
@@ -51,7 +51,7 @@ export async function handleSendTts(
     ctx.updateSession(sid, (prev) => ({
       messages: [
         ...prev.messages,
-        { role: "assistant" as const, content: friendlyError(String(e)) },
+        { role: "assistant" as const, content: chatResponseError(e) },
       ],
     }));
   }

@@ -1,6 +1,6 @@
 import { Api } from "../../api";
 import type { ChatMessage } from "../../types";
-import { friendlyError } from "../friendlyError";
+import { chatResponseError } from "../cloudResponseError";
 import { createStreamChunkFlusher, createLatestValueFlusher } from "../streamUiBatch";
 import {
   CONTEXT_COMPACTION_KEEP_RECENT,
@@ -156,7 +156,7 @@ export async function handleSendDirectDocs(
             {
               id: crypto.randomUUID(),
               role: "assistant" as const,
-              content: friendlyError(String(err)),
+              content: chatResponseError(err),
             },
           ],
           streamingContent: "",

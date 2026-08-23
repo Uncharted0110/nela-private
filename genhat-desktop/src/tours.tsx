@@ -105,14 +105,6 @@ export const TOURS: TourDefinition[] = [
     version: 1,
     steps: [
       {
-        id: "mindmap-mode-switch",
-        title: "Switch to Mindmap mode",
-        body: <span>In the input bar, open the mode selector and choose <strong>Mindmaps</strong> to enter Mindmap mode.</span>,
-        target: '[data-tour="mode-switch"]',
-        placement: "top",
-        onBeforeStep: switchModeFromBindings("text"),
-      },
-      {
         id: "mindmap-model-selector",
         title: "Select a model",
         body: <span>Choose a suitable model for generating mindmaps from the model selector.</span>,
@@ -143,14 +135,6 @@ export const TOURS: TourDefinition[] = [
     name: "Podcast Studio",
     version: 1,
     steps: [
-      {
-        id: "podcast-mode-switch",
-        title: "Switch to Podcast mode",
-        body: <span>In the input bar, open the mode selector and choose <strong>Podcast</strong> to enter Podcast Studio.</span>,
-        target: '[data-tour="mode-switch"]',
-        placement: "top",
-        onBeforeStep: switchModeFromBindings("text"),
-      },
       {
         id: "podcast-header",
         title: "Podcast workspace",
@@ -191,14 +175,6 @@ export const TOURS: TourDefinition[] = [
     version: 1,
     steps: [
       {
-        id: "rag-mode-switch",
-        title: "Select chat mode",
-        body: <span>In the input bar, ensure you have selected the <strong>Chat</strong> mode to query documents.</span>,
-        target: '[data-tour="mode-switch"]',
-        placement: "top",
-        onBeforeStep: switchModeFromBindings("text"),
-      },
-      {
         id: "rag-attach",
         title: "Upload documents",
         body: <span>Use the + button to add files or folders and build your local knowledge base.</span>,
@@ -228,39 +204,10 @@ export const TOURS: TourDefinition[] = [
     ],
   },
   {
-    id: "audio-prompting",
-    name: "Audio Prompting",
-    version: 1,
-    steps: [
-      {
-        id: "audio-mic-button",
-        title: "Start dictation",
-        body: <span>Click the microphone icon to start recording your voice query. Click it again to stop and transcribe.</span>,
-        target: '[data-tour="mic-button"]',
-        placement: "top",
-      },
-      {
-        id: "audio-transcription-result",
-        title: "Review transcription",
-        body: <span>Your transcribed speech will appear here in the chat bar. You can edit it if needed or press Enter to send it to the model.</span>,
-        target: '[data-tour="chat-input"]',
-        placement: "top",
-      },
-    ],
-  },
-  {
     id: "audio-tts",
     name: "Audio Generation",
     version: 1,
     steps: [
-      {
-        id: "audio-tts-mode-switch",
-        title: "Switch to Audio mode",
-        body: <span>In the input bar, open the mode selector and choose <strong>Audio</strong> to enter Text-to-Speech mode.</span>,
-        target: '[data-tour="mode-switch"]',
-        placement: "top",
-        onBeforeStep: switchModeFromBindings("text"),
-      },
       {
         id: "audio-tts-input",
         title: "Enter text",

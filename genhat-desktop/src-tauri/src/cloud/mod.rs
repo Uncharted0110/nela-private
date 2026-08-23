@@ -12,7 +12,7 @@ use std::sync::RwLock;
 use std::time::Duration;
 
 /// Production API (Render). Used unless `NELA_CLOUD_API_BASE_URL` is set.
-pub const DEFAULT_API_BASE_URL: &str = "https://nela-backend.onrender.com";
+pub const DEFAULT_API_BASE_URL: &str = "https://nela-gateway.onrender.com";
 /// Production website (Vercel). Used unless `NELA_CLOUD_WEB_BASE_URL` is set.
 pub const DEFAULT_WEB_BASE_URL: &str = "https://nela-webpage.vercel.app";
 /// Local API fallback when production is unreachable.

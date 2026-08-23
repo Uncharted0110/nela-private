@@ -133,14 +133,6 @@
   cursor: not-allowed;
 }
 
-.profile-auth-divider {
-  width: 100%;
-  margin: 4px 0;
-  color: var(--color-txt-muted);
-  font-size: 0.8rem;
-  text-transform: lowercase;
-}
-
 .profile-device-code {
   width: 100%;
   display: flex;
@@ -169,35 +161,6 @@
   font-size: 1.1rem;
   font-weight: 700;
   letter-spacing: 0.04em;
-}
-
-.profile-auth-tabs {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-  width: 100%;
-}
-
-.profile-auth-tabs button {
-  border-radius: 10px;
-  border: 1px solid var(--color-glass-border);
-  background: transparent;
-  color: var(--color-txt-muted);
-  padding: 8px 10px;
-  cursor: pointer;
-  font-size: 0.85rem;
-}
-
-.profile-auth-tabs button.is-active {
-  background: var(--modal-panel-bg);
-  color: var(--color-txt);
-  border-color: color-mix(in srgb, var(--color-neon) 40%, transparent);
-}
-
-.profile-signed-out .profile-field,
-.profile-signed-out .profile-save-btn {
-  width: 100%;
-  text-align: left;
 }
 
 .profile-plan-banner {
