@@ -3,5 +3,18 @@
 /target/
 /gen/schemas
 
-# Local FastEmbed model cache (downloaded at runtime)
+# FileIndexer is its own Cargo workspace — never commit its build tree
+/crates/file-indexer/target/
+
+# Staged Tauri externalBin / Windows handoff copies (built by `npm run prepare:sidecars`)
+/bin/fileindexer_sidecar-*
+/bin/mcp-win/*.exe
+/resources/fileindexer_sidecar
+/resources/fileindexer_sidecar.exe
+
+# Local FastEmbed / benchmark caches (downloaded at runtime)
 .fastembed_cache/
+.squad_cache/
+
+# Accidental local exports / scratch HTML left next to the crate
+/*.html

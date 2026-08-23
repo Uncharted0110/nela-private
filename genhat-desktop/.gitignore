@@ -11,10 +11,12 @@ node_modules
 dist
 dist-ssr
 *.local
+*.tsbuildinfo
 
 # Local secrets (copy from .env.example)
 .env
 .env.local
+.env.*.local
 
 # Editor directories and files
 .vscode/*
@@ -26,3 +28,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Test / coverage
+coverage
+*.lcov
