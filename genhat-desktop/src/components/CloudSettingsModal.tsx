@@ -26,7 +26,7 @@ const MODE_OPTIONS: Array<{
   {
     value: "local",
     label: "Private Local",
-    hint: "All inference stays on this device.",
+    hint: "Chat and library inference stay on this device (Private mode).",
   },
   {
     value: "cloud",
@@ -36,7 +36,7 @@ const MODE_OPTIONS: Array<{
   {
     value: "auto",
     label: "Auto (prefer cloud)",
-    hint: "Prefer cloud when signed in and entitled; fall back to local.",
+    hint: "Prefer Cloud when signed in and entitled; otherwise use your local Smart model.",
   },
 ];
 
@@ -101,8 +101,8 @@ const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
           <section className="cloud-settings-section">
             <h3>Preferred mode</h3>
             <p className="cloud-settings-hint">
-              Local mode always works offline. Cloud never routes through local
-              model processes.
+              Private works without Cloud after local models are installed.
+              Cloud never routes answers through local model processes.
             </p>
             <div className="cloud-mode-list" role="radiogroup" aria-label="Cloud mode">
               {MODE_OPTIONS.map((opt) => (

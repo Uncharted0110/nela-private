@@ -14,6 +14,7 @@ import type {
   PreparedCloudAttachment,
 } from "../../types";
 import { Api } from "../../api";
+import { sameAttachmentPath } from "../attachmentDisplay";
 
 export const DIRECT_ATTACHMENT_SYSTEM = `The user attached named files to this turn. Those attachments are already present in the message as images, PDF files, or extracted document text. Treat them as the primary source. Do not call search_knowledge_base for these attached files.`;
 
@@ -55,6 +56,18 @@ export function shouldSuppressFileSearch(messages: ChatMessage[]): boolean {
 
 function textPart(text: string): CloudChatContentPart {
   return { type: "text", text };
+}
+
+function getByAttachmentPath<T>(
+  byPath: Map<string, T>,
+  path: string
+): T | undefined {
+  const direct = byPath.get(path);
+  if (direct) return direct;
+  for (const [key, value] of byPath) {
+    if (sameAttachmentPath(key, path)) return value;
+  }
+  return undefined;
 }
 
 export function preparedToContentParts(
@@ -146,7 +159,7 @@ export async function prepareMessageAttachments(
 
   for (const message of messages) {
     for (const doc of message.directDocuments ?? []) {
-      const prepared = preparedByPath.get(doc.path);
+      const prepared = getByAttachmentPath(preparedByPath, doc.path);
       if (!prepared) {
         warningsByPath.set(
           doc.path,
@@ -162,7 +175,7 @@ export async function prepareMessageAttachments(
       }
     }
     const vision = message.visionImage;
-    if (vision?.path && !preparedByPath.has(vision.path)) {
+    if (vision?.path && !getByAttachmentPath(preparedByPath, vision.path)) {
       warningsByPath.set(
         vision.path,
         `Couldn't read ${vision.name}. Reattach the image to continue.`
@@ -221,7 +234,7 @@ export function overlayCloudAttachments(input: {
       ...(prior.directDocuments ?? []).map((d) => d.path),
     ];
     const prepared = paths
-      .map((path) => input.preparedByPath.get(path))
+      .map((path) => getByAttachmentPath(input.preparedByPath, path))
       .filter((file): file is PreparedCloudAttachment => Boolean(file))
       .filter(
         (file) =>
@@ -230,7 +243,7 @@ export function overlayCloudAttachments(input: {
           !annotatedHashes.has(file.contentHash)
       );
     const warnings = paths
-      .map((path) => input.warningsByPath.get(path))
+      .map((path) => getByAttachmentPath(input.warningsByPath, path))
       .filter((text): text is string => Boolean(text));
     out[apiIndex] = {
       ...out[apiIndex]!,

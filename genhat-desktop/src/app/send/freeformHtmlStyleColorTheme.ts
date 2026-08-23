@@ -322,7 +322,7 @@ export function recolorRgb(
       l = clamp(0.58 + (l - 0.72) * 0.5, 0.52, 0.78);
       c = Math.max(c, 0.12);
     }
-    if (targetDark && l < 0.35 && usage !== "text") {
+    if (targetDark && l < 0.35) {
       l = clamp(l + 0.15, 0.4, 0.7);
     }
     next = {

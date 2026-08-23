@@ -1,5 +1,8 @@
 {
   "bundle": {
+    "externalBin": [
+      "bin/fileindexer_sidecar"
+    ],
     "resources": {
       "bin/llama-lin/*": "bin/llama-lin/",
       "bin/pdfium-lin/*": "bin/pdfium-lin/",
@@ -16,7 +19,12 @@
       "models/kittenTTS/mini/*": "models/tts/kitten-tts/mini/",
       "models/LLM/*": "models/LLM/",
       "models/LiquidAI-VLM/*": "models/LiquidAI-VLM/",
-      "models/parakeet/*": "models/parakeet/"
+      "models/parakeet/*": "models/asr/parakeet/"
+    },
+    "linux": {
+      "deb": {
+        "postInstallScript": "linux/deb/postinst.sh"
+      }
     }
   }
 }

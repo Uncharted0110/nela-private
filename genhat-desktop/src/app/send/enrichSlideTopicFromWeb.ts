@@ -379,7 +379,11 @@ export async function enrichSlideTopicFromWeb(
               : "") + `Add a slide about ${title} to this presentation.`,
         },
       ],
-      onToolStatus: onStatus,
+      onToolStatus: onStatus
+        ? (status) => {
+            if (status != null) onStatus(status);
+          }
+        : undefined,
     });
     merged = primary;
 

@@ -4,8 +4,8 @@ import type { ArtifactResult } from "../../types";
 import { parseArtifactPlanJson, parseHtmlPlanJson } from "../artifactPlanJson";
 import { normalizePresentationPlan } from "../artifactPlanNormalize";
 import { fitArtifactPlanPrompt } from "../artifactContextBudget";
-import { buildPresentationFallbackPlan } from "../presentationDocumentPlan";
-import { streamChatByMode, willRouteToCloud } from "./cloudOrLocalStream";
+import { buildPresentationFallbackPlan, isLikelyDeckTemplate } from "../presentationDocumentPlan";
+import { streamChatByMode, collectStreamText, willRouteToCloud } from "./cloudOrLocalStream";
 import { useCloudStore } from "../../stores/cloudStore";
 import { useChatModeStore } from "../../stores/chatModeStore";
 import { useArtifactStreamStore } from "../../stores/artifactStreamStore";
@@ -65,16 +65,11 @@ import {
   looksLikePresentationJsonPlan,
 } from "../artifactHtmlOutput";
 import {
-  webArtifactGroundingPreamble,
-  webPresentationGroundingPreamble,
   localArtifactGroundingPreamble,
-  webContextCharLimit,
-  webSearchOptionsForArtifact,
   extractWebSearchQuery,
 } from "../webSearchQuery";
-import { formulateArtifactWebQueries, mergeWebSearchResults } from "./webSearchToolLoop";
-import { MAX_ARTIFACT_HOST_QUERIES } from "./webSearchLimits";
-import { runCloudArtifactWebResearch, runCloudArtifactChartPrep } from "./cloudNativeToolLoop";
+import { mergeWebSearchResults } from "./webSearchToolLoop";
+import { runCloudArtifactChartPrep } from "./cloudNativeToolLoop";
 import {
   attachedPathsToSearchResult,
   knowledgeBaseToSearchResult,
@@ -82,11 +77,14 @@ import {
 import { useModelStore } from "../../stores/modelStore";
 import { StreamArtifactParser, looksLikeHtmlContent, stripPartialArtifactTags } from "../streamArtifactParser";
 import {
+  continuedArtifactFollowup,
   defaultArtifactFollowup,
   defaultArtifactIntro,
+  truncatedArtifactFollowup,
 } from "../artifactChatCopy";
 import { friendlyErrorFromUnknown } from "../friendlyError";
 import { saveStreamedArtifact } from "../streamArtifactSave";
+import { completeTruncatedPresentationHtml } from "../presentationHtmlCompleteness";
 import {
   createStreamChunkFlusher,
   createThrottledFlusher,
@@ -123,6 +121,8 @@ export async function handleArtifactGeneration(
     forceFileSearch?: boolean;
     /** Prior chat turns, used to ground referential requests ("the same"). */
     conversationMessages?: ChatMessage[];
+    /** Composer attachments for this send (copied before the picker is cleared). */
+    attachedPaths?: string[];
   }
 ): Promise<void> {
   const preferredModeEarly = useCloudStore.getState().preferredMode;
@@ -254,13 +254,17 @@ export async function handleArtifactGeneration(
     let workbookProfiles: SheetProfile[] = [];
     let activeSheetProfile: SheetProfile | null = null;
     let ambientFileContent = "";
+    let designTemplateContent = "";
     let usedDocGraphMarkdown = false;
 
-    const fileSearchEnabled =
-      Boolean(ctx.fileIndexerEnabled) || Boolean(options?.forceFileSearch);
-
-    const attachedPaths =
-      ctx.directDocumentPaths.length > 0 ? [...ctx.directDocumentPaths] : [];
+    const attachedPaths = [
+      ...(options?.attachedPaths?.length
+        ? options.attachedPaths
+        : ctx.directDocumentPaths.length > 0
+          ? ctx.directDocumentPaths
+          : []),
+    ];
+    const explicitAttachments = attachedPaths.length > 0;
     let attachedFile = attachedPaths[0] ?? null;
 
     const wantsAmbientFileSearch = shouldRunAmbientFileSearch(text, {
@@ -395,12 +399,24 @@ export async function handleArtifactGeneration(
         schemaId === "spreadsheet_synthesis"
           ? 20480
           : Math.floor(MAX_ARTIFACT_SOURCE_CHARS / Math.max(1, Math.min(attachedPaths.length, 3)));
-      const sections: string[] = [];
+      const sourceSections: string[] = [];
+      const templateSections: string[] = [];
       for (const path of attachedPaths.slice(0, 3)) {
         const section = await loadDocumentBody(path, perFileLimit);
-        if (section.trim()) sections.push(section);
+        if (!section.trim()) continue;
+        const bodyOnly = section.replace(/^File:[\s\S]*?\nContent:\n/i, "");
+        if (isLikelyDeckTemplate(path, bodyOnly, text)) {
+          templateSections.push(section);
+        } else {
+          sourceSections.push(section);
+        }
       }
-      ambientFileContent = sections.join("\n\n");
+      if (sourceSections.length === 0 && templateSections.length > 0) {
+        sourceSections.push(...templateSections);
+        templateSections.length = 0;
+      }
+      ambientFileContent = sourceSections.join("\n\n");
+      designTemplateContent = templateSections.join("\n\n");
       usedDocGraphMarkdown = false;
       const citeQuery =
         extractWebSearchQuery(text).trim() ||
@@ -440,7 +456,8 @@ export async function handleArtifactGeneration(
     updateArtifactMsg("CrunchingMetrics");
 
     const contextWindowTokens = ctx.getContextWindowTokens(ctx.selectedModel);
-    const webActive = Boolean(options?.webEnabled);
+    // Do not shrink source text to make room for host-run web research.
+    const webActive = false;
 
     let supplementalContext = "";
 
@@ -454,7 +471,7 @@ export async function handleArtifactGeneration(
       typeof tryBuildDeterministicWebSpreadsheetPlan
     >;
 
-    if (options?.ragEnabled && ctx.ragDocs.length > 0) {
+    if (options?.ragEnabled && ctx.ragDocs.length > 0 && !explicitAttachments) {
       try {
         const setup = await Api.queryRagStream(text);
         if (setup.sources.length > 0) {
@@ -467,141 +484,6 @@ export async function handleArtifactGeneration(
         }
       } catch (err) {
         console.warn("RAG grounding for artifact generation failed:", err);
-      }
-    }
-
-    if (options?.webEnabled) {
-      try {
-        const { fetchContent, maxResults } = webSearchOptionsForArtifact(
-          schemaId,
-          contextWindowTokens
-        );
-        let merged = null as WebSearchResult | null;
-
-        const intelligenceMode = useModelStore.getState().intelligenceMode;
-        const useCloudWebTools =
-          willRouteToCloud({
-            containsFileContext: false,
-            userConfirmedCloudContext: cloudConfirmed,
-          }) &&
-          (intelligenceMode === "smart" ||
-            intelligenceMode === "deep" ||
-            intelligenceMode === "auto");
-
-        if (useCloudWebTools) {
-          // Smart/Deep: OpenRouter model issues web_search / optional KB tool calls.
-          useChatModeStore
-            .getState()
-            .setLiveToolStatus("Cloud model choosing web searches…");
-          try {
-            merged = await runCloudArtifactWebResearch({
-              artifactRequest: text,
-              schemaId,
-              webDepth: fetchContent ? "full" : "snippets",
-              fileSearchEnabled,
-              ...(conversationSource
-                ? { priorContent: conversationSource.sourceAnswer }
-                : {}),
-              signal: ctrl.signal,
-              onStatus: (status) =>
-                useChatModeStore.getState().setLiveToolStatus(status),
-            });
-          } catch (cloudWebErr) {
-            console.warn(
-              "Cloud artifact web research failed; falling back to host queries:",
-              cloudWebErr
-            );
-          }
-        }
-
-        if (!merged) {
-          useChatModeStore
-            .getState()
-            .setLiveToolStatus("Choosing web search queries…");
-          const queries = await formulateArtifactWebQueries(text, {
-            modelId: ctx.selectedModel || undefined,
-            maxQueries: MAX_ARTIFACT_HOST_QUERIES,
-          });
-          const perQuery = Math.max(
-            1,
-            Math.ceil(maxResults / Math.max(queries.length, 1))
-          );
-          const trimmedQueries = queries
-            .map((q) => q.trim())
-            .filter(Boolean)
-            .slice(0, MAX_ARTIFACT_HOST_QUERIES);
-          useChatModeStore
-            .getState()
-            .setLiveToolStatus(
-              `Searching the web (${trimmedQueries.length} queries)…`
-            );
-          // Run host queries in parallel (same count as before).
-          const settled = await Promise.all(
-            trimmedQueries.map(async (searchQuery) => {
-              try {
-                return await Api.webSearch(searchQuery, perQuery, {
-                  profile: fetchContent ? "research" : "simple",
-                });
-              } catch (err) {
-                console.warn("Web search query failed:", searchQuery, err);
-                return null;
-              }
-            })
-          );
-          for (const result of settled) {
-            if (!result) continue;
-            merged = mergeWebSearchResults(merged, result);
-          }
-        }
-
-        if (merged) {
-          mergeArtifactCitations(merged);
-          updateArtifactMsg("CrunchingMetrics");
-          if (
-            schemaId === "spreadsheet_synthesis" &&
-            merged.extracted_tables &&
-            merged.extracted_tables.length > 0
-          ) {
-            deterministicWebPlan = tryBuildDeterministicWebSpreadsheetPlan(
-              merged.extracted_tables,
-              text,
-              rowPlan.explicit ? rowPlan.count : null
-            );
-            if (deterministicWebPlan) {
-              console.info(
-                "Using deterministic web table for spreadsheet:",
-                merged.extracted_tables[0]?.source_url
-              );
-            }
-          }
-          if (merged.formatted_context) {
-            const webLimit = webContextCharLimit(contextWindowTokens);
-            const trimmedWeb =
-              merged.formatted_context.length > webLimit
-                ? merged.formatted_context.slice(0, webLimit) +
-                  "\n\n[...web excerpts truncated for context limit]\n--- End of web sources ---\n"
-                : merged.formatted_context;
-            const grounding =
-              schemaId === "presentation_synthesis"
-                ? webPresentationGroundingPreamble()
-                : webArtifactGroundingPreamble();
-            supplementalContext += grounding + `${trimmedWeb}\n\n`;
-          }
-          webHitsForImages = merged.results ?? [];
-          galleryUrlsForImages = (merged.images ?? []).filter(
-            (u): u is string => typeof u === "string" && /^https?:\/\//i.test(u)
-          );
-          useChatModeStore
-            .getState()
-            .setLiveToolStatus(
-              `Found ${merged.results?.length ?? 0} web sources`
-            );
-        } else {
-          useChatModeStore.getState().setLiveToolStatus(null);
-        }
-      } catch (err) {
-        console.warn("Web grounding for artifact generation failed:", err);
-        useChatModeStore.getState().setLiveToolStatus(null);
       }
     }
 
@@ -662,7 +544,13 @@ export async function handleArtifactGeneration(
     const imagePool = await buildArtifactImagePool({
       webHits: webHitsForImages,
       galleryUrls: galleryUrlsForImages,
-      documentPath: attachedFile,
+      // PPTX slide bitmaps are full-page PNGs; embedding them freezes the
+      // preview (and retry). Use document text, not slide screenshots.
+      documentPath:
+        schemaId === "presentation_synthesis" &&
+        /\.pptx?$/i.test(attachedFile ?? "")
+          ? null
+          : attachedFile,
     });
     const imageCatalog = formatImageCatalogForPrompt(imagePool);
 
@@ -704,9 +592,15 @@ export async function handleArtifactGeneration(
           dataContext += localArtifactGroundingPreamble();
         }
         dataContext +=
-          `=== ATTACHED SOURCE DOCUMENT (authoritative — every slide must cite concrete facts from here) ===\n` +
+          `=== ATTACHED SOURCE DOCUMENT (evidence — do not dump raw file text or paths onto slides) ===\n` +
           `${ambientFileContent}\n` +
           `=== END SOURCE DOCUMENT ===\n\n`;
+        if (designTemplateContent.trim()) {
+          dataContext +=
+            `=== DESIGN TEMPLATE (match layout, colors, typography; do not copy its placeholder copy) ===\n` +
+            `${designTemplateContent.slice(0, 8000)}\n` +
+            `=== END DESIGN TEMPLATE ===\n\n`;
+        }
       } else {
         if (usedDocGraphMarkdown) {
           dataContext += localArtifactGroundingPreamble();
@@ -718,15 +612,20 @@ export async function handleArtifactGeneration(
     const sourceDocumentRules =
       schemaId === "presentation_synthesis" && hasSourceDocument
         ? `
-SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
-- Every slide MUST reflect specific facts from the attached source document.
-- Use the person's real name, employers, schools, skills, projects, and achievements from the source.
-- Do NOT produce a generic template deck ("Resume Analysis Overview", "Key Skills", "Experience" as empty section headers).
-- Do NOT use placeholder names or filler ("John Doe", "Company X", "Skill 1", "Lorem ipsum").
-- Structure the deck to present what is actually in the document: introduction → experience → skills → education → highlights/summary.
-- Pack each slide with concrete facts — sparse title-only slides are not acceptable when source text is available.
+SOURCE + USER-BRIEF RULES (mandatory):
+- Follow the USER REQUEST for deck purpose, slide topics, and argument (e.g. business justification, cost-benefit, gaps they named).
+- Facts the user stated in the prompt (product gaps, workflow pain) MUST appear on slides even if they are not copied from the attachment.
+- Use attached documents as evidence and current-state detail — do not paste "File:", paths, or raw extractor output as bullets.
+- Do NOT produce a generic shell ("Key Details", "Document Highlights", "Generated from your attached document").
+- Do NOT use a resume outline (experience → skills → education) unless the source is actually a resume.
+- If a DESIGN TEMPLATE is provided, match its visual system (layout, colors, type). Invent the pitch content; do not keep template lorem/placeholder text.
+- Pack slides with concrete claims. Title-only slides are not acceptable when source text is available.
 `
-        : "";
+        : designTemplateContent.trim()
+          ? `
+- A DESIGN TEMPLATE is attached. Match its visual system. Content still follows the USER REQUEST.
+`
+          : "";
 
     const slidePlan = extractSlideCount(text);
     const themeHint = inferPresentationTheme(text);
@@ -934,12 +833,12 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
       schemaId === "presentation_synthesis"
         ? cloudPresentationFreeform
           ? hasSourceDocument
-            ? `Write a complete HTML presentation deck for: "${text}". Use only real details from the ATTACHED SOURCE DOCUMENT. Wrap in <nela-artifact type="text/html" title="...">. Put ALL slide body content BEFORE CSS.`
+            ? `Write a complete HTML presentation deck for this USER REQUEST: "${text}". Follow that brief (structure, named gaps, cost-benefit, template). Ground claims in the ATTACHED SOURCE DOCUMENT; do not dump file paths or raw extractor text. Wrap in <nela-artifact type="text/html" title="...">. Put ALL slide body content BEFORE CSS. Each .slide must be a 16:9 page (1280x720 or 1920x1080) with box-sizing:border-box; size charts/SVG with explicit pixels. Close </html> and </nela-artifact>. Do not stop mid-slide.`
             : `Write a complete HTML presentation deck about: "${text}". ` +
               `Stay on this exact subject — do not pivot to worksheets, crafts, or unrelated products. ` +
-              `Wrap in <nela-artifact type="text/html" title="...">. Put ALL slide body content BEFORE CSS.`
+              `Wrap in <nela-artifact type="text/html" title="...">. Put ALL slide body content BEFORE CSS. Each .slide must be a 16:9 page (1280x720 or 1920x1080); size charts/SVG with explicit pixels. Close </html> and </nela-artifact>. Do not stop mid-slide.`
           : hasSourceDocument
-            ? `Using the ATTACHED SOURCE DOCUMENT, create a ${slidePlan.count}-slide deck. User request: "${text}". Use only real details from the source — no placeholders.${themeSuffix}`
+            ? `Create a ${slidePlan.count}-slide deck for this USER REQUEST: "${text}". Follow the requested outline and named gaps. Use the ATTACHED SOURCE DOCUMENT as evidence only — no placeholders, no file-path bullets.${themeSuffix}`
             : `Create a ${slidePlan.count}-slide JSON deck about: "${text}".` +
               ` Stay on this exact subject — do not pivot to worksheets, crafts, or unrelated products.` +
               ` Define the topic early; include concrete examples and named concepts on later slides.` +
@@ -977,7 +876,7 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
     const desiredPlanMaxTokens =
       schemaId === "presentation_synthesis"
         ? cloudPresentationFreeform
-          ? Math.max(16_384, 4_000 + slidePlan.count * 1_200)
+          ? Math.max(32_768, 8_000 + slidePlan.count * 2_000)
           : cloudPresentationJson
             ? Math.max(
                 12_288,
@@ -1085,7 +984,11 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
         }
       }
 
-      if (schemaId === "presentation_synthesis" && imagePool.length) {
+      if (
+        schemaId === "presentation_synthesis" &&
+        imagePool.length &&
+        planObj._from_document_fallback !== true
+      ) {
         planObj = attachImagesToPresentationPlan(planObj, imagePool);
       }
 
@@ -1423,10 +1326,60 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
                 parserFollowup && !looksLikeHtmlContent(parserFollowup)
                   ? parserFollowup
                   : "";
+              let deckContinued = false;
+              let deckStillIncomplete = false;
+              if (
+                schemaId === "presentation_synthesis" &&
+                streamedArtifactType === "text/html" &&
+                cloudPresentationFreeform &&
+                body
+              ) {
+                const completed = await completeTruncatedPresentationHtml({
+                  html: body,
+                  userRequest: text,
+                  requestedSlides: Math.max(slidePlan.count, 6),
+                  onProgress: (status) => {
+                    useChatModeStore.getState().setLiveToolStatus(status);
+                  },
+                  continueOnce: (prompt) =>
+                    collectStreamText({
+                      messages: [
+                        {
+                          role: "system",
+                          content:
+                            "You complete truncated HTML presentations. Output ONLY remaining HTML. No markdown fences, no nela-artifact tags, no chat commentary.",
+                        },
+                        { role: "user", content: prompt },
+                      ],
+                      intent: "artifact_plan",
+                      containsFileContext: false,
+                      userConfirmedCloudContext: cloudConfirmed,
+                      modelId: ctx.selectedModel || undefined,
+                      signal: ctrl.signal,
+                      disableThinking: true,
+                      disableLocalFallback: cloudConfirmed,
+                      generationOptions: {
+                        ...generationOptions,
+                        maxTokens: planMaxTokens,
+                        temperature: 0.3,
+                        grammar: undefined,
+                      },
+                    }),
+                });
+                streamedArtifactBody = completed.html;
+                deckContinued = completed.continued;
+                deckStillIncomplete = completed.stillIncomplete;
+              }
+              const saveBody =
+                schemaId === "presentation_synthesis" &&
+                streamedArtifactType === "text/html" &&
+                streamedArtifactBody.trim()
+                  ? streamedArtifactBody.trim()
+                  : body;
               try {
                 const result = await saveStreamedArtifact({
                   type: streamedArtifactType,
-                  rawBody: body,
+                  rawBody: saveBody,
                   topic: text,
                   title: streamedArtifactTitle || undefined,
                   filename: streamedArtifactFilename || undefined,
@@ -1477,12 +1430,15 @@ SOURCE DOCUMENT RULES (mandatory when source is provided in the user message):
                     type: streamedArtifactType,
                     asPresentation,
                   });
-                const followup =
-                  safeFollowup ||
-                  defaultArtifactFollowup({
-                    type: streamedArtifactType,
-                    asPresentation,
-                  });
+                const followup = deckStillIncomplete
+                  ? truncatedArtifactFollowup({ asPresentation })
+                  : deckContinued
+                    ? continuedArtifactFollowup({ asPresentation })
+                    : safeFollowup ||
+                      defaultArtifactFollowup({
+                        type: streamedArtifactType,
+                        asPresentation,
+                      });
                 // Panel must show the actual HTML/CSV body (may have lived in planJson).
                 if (!streamedArtifactBody.trim() && body) {
                   streamedArtifactBody = body;

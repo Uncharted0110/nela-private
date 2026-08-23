@@ -23,8 +23,10 @@ import { useUIStore } from "./stores/uiStore";
 import { useDownloadStore } from "./stores/downloadStore";
 import { useChatModeStore } from "./stores/chatModeStore";
 import { useDocGraphStore } from "./stores/docGraphStore";
-import { useEffect } from "react";
+import { useEffect, useState, useCallback } from "react";
 import "./App.css";
+import { fileindexerGetSetupStatus } from "./api";
+import type { FileIndexerSetupStatus } from "./types";
 
 function App() {
   const { theme, setTheme } = useTheme();
@@ -55,6 +57,22 @@ function App() {
 
   const chatMode = useChatModeStore((s) => s.chatMode);
   const downloadOptionalOnStart = useDownloadStore((s) => s.downloadOptionalOnStart);
+
+  const [fileIndexerSetup, setFileIndexerSetup] = useState<FileIndexerSetupStatus | null>(null);
+
+  const refreshFileIndexerSetup = useCallback(async () => {
+    try {
+      const status = await fileindexerGetSetupStatus();
+      setFileIndexerSetup(status);
+    } catch (e) {
+      console.warn("FileIndexer setup status unavailable:", e);
+      setFileIndexerSetup(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshFileIndexerSetup();
+  }, [refreshFileIndexerSetup]);
 
   const handleSidebarNav = (section: "chats" | "audio" | "mindmaps" | "playground") => {
     setSidebarSection(section === sidebarSection ? null : section);
@@ -99,12 +117,17 @@ function App() {
     });
   };
 
-  const showStartupModal = !activeWorkspace && !suppressStartupModal && !docGraphIndexOpen;
+  const showFileIndexerSetup = Boolean(fileIndexerSetup?.showWizard);
+  const showStartupModal =
+    !activeWorkspace && !suppressStartupModal && !docGraphIndexOpen && !showFileIndexerSetup;
 
   return (
     <div className="relative w-full h-full overflow-hidden">
       <AppDialogsLayer
         showStartupModal={showStartupModal}
+        showFileIndexerSetup={showFileIndexerSetup}
+        fileIndexerModelDir={fileIndexerSetup?.modelDir ?? "models/fileindexer"}
+        onFileIndexerSetupComplete={() => void refreshFileIndexerSetup()}
         onContinueWorkspace={continueExistingWorkspace}
         canContinueWorkspace={canContinueStartupWorkspace}
         continueWorkspaceName={startupContinueWorkspace?.name ?? null}

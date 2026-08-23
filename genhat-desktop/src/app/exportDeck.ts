@@ -1,8 +1,11 @@
-import { toPng } from "html-to-image";
 import { jsPDF } from "jspdf";
 import pptxgen from "pptxgenjs";
 import { save } from "@tauri-apps/plugin-dialog";
 import { Api } from "../api";
+import { captureFullSlidePngs, htmlToPptxBase64 } from "./htmlToPptx";
+import { IN_H, IN_W } from "./htmlToPptx/geometry";
+import { withDeckDocument } from "./htmlToPptx/openDeckDocument";
+import { SLIDE_ROOT_SELECTOR } from "./htmlToPptx/slideRoots";
 
 export type DeckExportFormat = "pdf" | "pptx";
 
@@ -10,113 +13,13 @@ export type DeckExportFormat = "pdf" | "pptx";
 const SLIDE_W = 1280;
 const SLIDE_H = 720;
 
-/** PPTX layout size in inches (standard 16:9). */
-const IN_W = 13.333;
-const IN_H = 7.5;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Deck document loading
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Load the deck HTML into an offscreen, same-origin iframe at its native
- * 1280x720 size and run `fn` with the live document. Fonts embedded in the
- * deck (base64 @font-face) are awaited so text measures/paints correctly.
- */
-async function withDeckDocument<T>(
-  html: string,
-  fn: (doc: Document, win: Window) => Promise<T>
-): Promise<T> {
-  const iframe = document.createElement("iframe");
-  iframe.setAttribute("sandbox", "allow-same-origin");
-  Object.assign(iframe.style, {
-    position: "fixed",
-    left: "-100000px",
-    top: "0",
-    width: `${SLIDE_W}px`,
-    height: `${SLIDE_H}px`,
-    border: "0",
-    background: "#ffffff",
-  } as CSSStyleDeclaration);
-  document.body.appendChild(iframe);
-
-  try {
-    await new Promise<void>((resolve, reject) => {
-      iframe.onload = () => resolve();
-      iframe.onerror = () => reject(new Error("Failed to load deck for export."));
-      iframe.srcdoc = html;
-    });
-
-    const doc = iframe.contentDocument;
-    const win = iframe.contentWindow;
-    if (!doc || !win) throw new Error("Cannot access deck document for export.");
-
-    try {
-      await (doc as Document & { fonts?: FontFaceSet }).fonts?.ready;
-    } catch {
-      /* fonts API unavailable — continue */
-    }
-    await new Promise((r) => setTimeout(r, 120));
-
-    return await fn(doc, win);
-  } finally {
-    iframe.remove();
-  }
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // PDF (image-based, pixel-perfect)
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Render each slide of the deck to a high-resolution PNG data URL. */
 async function captureSlides(html: string): Promise<string[]> {
-  return withDeckDocument(html, async (doc, win) => {
-    doc.body.classList.add("exporting");
-
-    // The themed background lives on <body>/.deck-container; the captured
-    // stage is transparent, so paint the same theme background onto it.
-    const rootStyle = win.getComputedStyle(doc.documentElement);
-    const bg = rootStyle.getPropertyValue("--bg").trim() || "#0d0d11";
-    const surface = rootStyle.getPropertyValue("--surface").trim() || bg;
-    const deckBackground = `radial-gradient(circle at top left, ${surface} 0%, ${bg} 100%)`;
-
-    const stage = doc.getElementById("stage") as HTMLElement | null;
-    const target = (stage ??
-      doc.querySelector(".deck-container") ??
-      doc.body) as HTMLElement;
-    if (stage) stage.style.transform = "none";
-    target.style.backgroundColor = bg;
-    target.style.backgroundImage = deckBackground;
-
-    const slides = Array.from(doc.querySelectorAll(".slide")) as HTMLElement[];
-    if (slides.length === 0) throw new Error("No slides found in the presentation.");
-
-    const images: string[] = [];
-    for (const slide of slides) {
-      slides.forEach((s) => {
-        s.classList.remove("active");
-        s.style.opacity = "0";
-        s.style.visibility = "hidden";
-      });
-      slide.classList.add("active");
-      slide.style.opacity = "1";
-      slide.style.visibility = "visible";
-      slide.style.transition = "none";
-      slide.style.transform = "none";
-      await new Promise((r) => requestAnimationFrame(() => r(null)));
-
-      const dataUrl = await toPng(target, {
-        width: SLIDE_W,
-        height: SLIDE_H,
-        pixelRatio: 2,
-        cacheBust: true,
-        backgroundColor: bg,
-        style: { transform: "none", margin: "0" },
-      });
-      images.push(dataUrl);
-    }
-    return images;
-  });
+  return captureFullSlidePngs(html);
 }
 
 /** Convert an ArrayBuffer to a base64 string in chunks (avoids call-stack limits). */
@@ -297,7 +200,9 @@ const txtAll = (els: NodeListOf<Element> | Element[]): string[] =>
   Array.from(els).map((e) => txt(e)).filter((t) => t.length > 0);
 
 function extractSlides(doc: Document): SlideData[] {
-  const slideEls = Array.from(doc.querySelectorAll(".slide")) as HTMLElement[];
+  const slideEls = Array.from(
+    doc.querySelectorAll(SLIDE_ROOT_SELECTOR)
+  ) as HTMLElement[];
   return slideEls.map((el) => {
     const layout = (el.className.match(/layout-(\w+)/)?.[1] ?? "bullet").toLowerCase();
     const accentIndex = parseInt(el.className.match(/accent-(\d+)/)?.[1] ?? "0", 10) || 0;
@@ -380,8 +285,13 @@ function extractSlides(doc: Document): SlideData[] {
         break;
       case "bullet":
       default:
-        data.title = headerTitle || txt(el.querySelector("h2"));
-        data.bullets = lists[0] ? txtAll(lists[0].querySelectorAll("li")) : [];
+        data.title = headerTitle || txt(el.querySelector("h2")) || txt(el.querySelector("h1"));
+        data.bullets = lists[0]
+          ? txtAll(lists[0].querySelectorAll("li"))
+          : txtAll(el.querySelectorAll("li"));
+        if (data.bullets.length === 0) {
+          data.bullets = txtAll(el.querySelectorAll("p")).filter((t) => t !== data.title);
+        }
         break;
     }
     return data;
@@ -613,6 +523,17 @@ function renderSlide(pptx: pptxgen, theme: DeckTheme, d: SlideData) {
   }
 }
 
+function slidesHaveContent(slides: SlideData[]): boolean {
+  return slides.some(
+    (s) =>
+      Boolean(s.title || s.subtitle || s.quote || s.statValue || s.imageSrc) ||
+      s.bullets.length > 0 ||
+      s.cards.length > 0 ||
+      s.left.length > 0 ||
+      s.right.length > 0
+  );
+}
+
 /** Build an editable PPTX (native text boxes + shapes) and return it as base64. */
 async function buildEditablePptxBase64(html: string): Promise<string> {
   const { theme, slides } = await withDeckDocument(html, async (doc, win) => ({
@@ -620,7 +541,9 @@ async function buildEditablePptxBase64(html: string): Promise<string> {
     slides: extractSlides(doc),
   }));
 
-  if (slides.length === 0) throw new Error("No slides found in the presentation.");
+  if (slides.length === 0 || !slidesHaveContent(slides)) {
+    throw new Error("No slides found in the presentation.");
+  }
 
   const pptx = new pptxgen();
   pptx.defineLayout({ name: "NELA_16x9", width: IN_W, height: IN_H });
@@ -629,6 +552,41 @@ async function buildEditablePptxBase64(html: string): Promise<string> {
   for (const d of slides) renderSlide(pptx, theme, d);
 
   return (await pptx.write({ outputType: "base64" })) as string;
+}
+
+/** One rasterized image per slide — works for any HTML deck with `.slide`. */
+async function buildImagePptxBase64(html: string): Promise<string> {
+  const images = await captureSlides(html);
+  const pptx = new pptxgen();
+  pptx.defineLayout({ name: "NELA_16x9", width: IN_W, height: IN_H });
+  pptx.layout = "NELA_16x9";
+  for (const dataUrl of images) {
+    const slide = pptx.addSlide();
+    slide.addImage({
+      data: dataUrl,
+      x: 0,
+      y: 0,
+      w: IN_W,
+      h: IN_H,
+    });
+  }
+  return (await pptx.write({ outputType: "base64" })) as string;
+}
+
+async function buildPptxBase64(html: string): Promise<string> {
+  try {
+    return await htmlToPptxBase64(html);
+  } catch (err) {
+    console.warn("DOM PPTX export failed; using full-slide images:", err);
+    return buildImagePptxBase64(html);
+  }
+}
+
+/** @deprecated NELA-layout rebuild — kept for a future “editable outline” export. */
+export async function buildEditableOutlinePptxBase64(
+  html: string
+): Promise<string> {
+  return buildEditablePptxBase64(html);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -677,16 +635,25 @@ function deckBaseName(html: string, htmlPath: string): string {
   return baseName(htmlPath);
 }
 
+export function presentationExportBaseName(html: string, htmlPath: string): string {
+  return deckBaseName(html, htmlPath);
+}
+
 /**
- * Export a generated presentation deck to PDF or PPTX at a user-chosen path.
- *
- * - PDF  → pixel-perfect image of each slide (exact fonts/background).
- * - PPTX → fully editable native slides (text boxes + shapes) that preserve the
- *          theme background, colors, sizes, and layout. Fonts are referenced by
- *          name; PowerPoint substitutes a similar font if not installed.
- *
- * @returns The saved file path, or `null` if the user cancelled the dialog.
+ * Write a presentation export to an already-chosen path (no save dialog).
  */
+export async function writePresentationExport(
+  htmlPath: string,
+  targetPath: string,
+  format: DeckExportFormat
+): Promise<void> {
+  const html = await Api.readFileText(htmlPath);
+  const base64 =
+    format === "pdf"
+      ? buildPdfBase64(await captureSlides(html))
+      : await buildPptxBase64(html);
+  await Api.saveBinaryFile(targetPath, base64);
+}
 export async function exportPresentation(
   htmlPath: string,
   format: DeckExportFormat
@@ -704,7 +671,7 @@ export async function exportPresentation(
   const base64 =
     format === "pdf"
       ? buildPdfBase64(await captureSlides(html))
-      : await buildEditablePptxBase64(html);
+      : await buildPptxBase64(html);
 
   await Api.saveBinaryFile(targetPath, base64);
   return targetPath;

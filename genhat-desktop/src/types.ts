@@ -220,6 +220,8 @@ export interface WebSearchResult {
   query: string;
   /** Distinct queries used across one or more tool rounds (for disclosure UI). */
   queries?: string[];
+  /** Attached local files (not a Doc Graph search). */
+  citationKind?: "attached";
   results: SearchHit[];
   formatted_context: string;
   extracted_tables?: ExtractedWebTable[];
@@ -891,5 +893,14 @@ export interface DocGraphBackgroundStatus {
   completed: number;
   failed: number;
   total: number;
+}
+
+export interface FileIndexerSetupStatus {
+  needed: boolean;
+  showWizard: boolean;
+  mode: string | null;
+  roots: string[];
+  modelPresent: boolean;
+  modelDir: string;
 }
 

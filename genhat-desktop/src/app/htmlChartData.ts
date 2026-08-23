@@ -450,7 +450,7 @@ export function sheetToSpreadsheetData(profile: SheetProfile): SpreadsheetData {
 }
 
 function formatColumnLine(col: ColumnProfile): string {
-  const bits = [col.kind, col.role];
+  const bits: string[] = [col.kind, col.role];
   if (col.kind !== "numeric") bits.push(`${col.distinctCount} distinct`);
   return `${col.name} (${bits.join(", ")})`;
 }

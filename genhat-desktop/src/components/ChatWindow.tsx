@@ -5,6 +5,11 @@ import VoiceInputButton from "./VoiceInputButton";
 import type { ChatMessage, MediaAsset, IngestionStatus, ChatMode, ChatSession } from "../types";
 import { COPY } from "../app/copy";
 import { isSpreadsheetPath } from "../app/spreadsheetDashboardIntent";
+import {
+  attachmentFileName,
+  attachmentKindLabel,
+  formatAttachmentSize,
+} from "../app/attachmentDisplay";
 import { useAdvancedMode } from "../hooks/useAdvancedMode";
 import { useSlashCommandInput } from "../hooks/useSlashCommandInput";
 import SlashCommandMenu from "./SlashCommandMenu";
@@ -572,15 +577,8 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
     const spreadsheetAttached = directDocumentPaths.some(isSpreadsheetPath);
     const destination = preferredMode === "local" ? COPY.attachLocalDestination : COPY.attachCloudDestination;
 
-    const formatSize = (bytes?: number) => {
-      if (!bytes) return "";
-      if (bytes < 1024) return `${bytes} B`;
-      if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
-      return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-    };
-
     return (
-      <div className="w-full mb-2">
+      <div className="w-full mb-2 min-w-0">
         <div className="flex items-start gap-2 mb-1.5">
           <span className="text-[0.78rem] text-txt-muted">
             Attached files ({directDocumentPaths.length})
@@ -599,30 +597,35 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
             {COPY.attachCloudDisclosure}
           </p>
         ) : null}
-        <div className="flex flex-wrap gap-1.5">
+        <div className="flex flex-wrap gap-1.5 min-w-0">
           {directDocumentPaths.map((path) => {
-            const name = path.split(/[/\\]/).pop() ?? "document";
             const meta = attachmentMetaByPath[path];
+            const name = attachmentFileName(path, meta?.name);
+            const kindLabel = attachmentKindLabel({
+              name,
+              mime: meta?.mime,
+              kind: meta?.kind,
+            });
+            const sizeLabel = formatAttachmentSize(meta?.sizeBytes);
             const spreadsheet = isSpreadsheetPath(path);
-            const isPdf = (meta?.kind === "pdf") || name.toLowerCase().endsWith(".pdf");
+            const isPdf = meta?.kind === "pdf" || name.toLowerCase().endsWith(".pdf");
             const scanned = pdfEngineByPath[path] === "mistral-ocr";
             return (
               <span
                 key={path}
-                className="inline-flex items-center gap-1 py-1 px-2 rounded-lg bg-void-700 border border-glass-border text-[0.78rem] text-txt-secondary max-w-70"
+                className="inline-flex items-center gap-1.5 py-1 px-2 rounded-lg bg-void-700 border border-glass-border text-[0.78rem] text-txt-secondary min-w-0 max-w-full overflow-hidden"
                 title={path}
               >
-                <span className="truncate">{name}</span>
+                <span className="truncate font-medium min-w-0">{name}</span>
                 <span className="shrink-0 text-txt-muted">
-                  · {destination}
-                  {meta?.mime ? ` · ${meta.mime.split("/")[1] ?? meta.mime}` : ""}
-                  {meta?.sizeBytes ? ` · ${formatSize(meta.sizeBytes)}` : ""}
+                  · {destination} · {kindLabel}
+                  {sizeLabel ? ` · ${sizeLabel}` : ""}
                 </span>
                 {spreadsheet ? (
                   <span className="shrink-0 text-txt-muted">· spreadsheet</span>
                 ) : null}
                 {meta?.error ? (
-                  <span className="shrink-0 text-danger">{meta.error}</span>
+                  <span className="shrink-0 text-danger truncate max-w-[10rem]">{meta.error}</span>
                 ) : null}
                 {isPdf && preferredMode !== "local" ? (
                   <button
@@ -639,7 +642,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
                   </button>
                 ) : null}
                 <button
-                  className="w-4 h-4 inline-flex items-center justify-center rounded text-txt-muted hover:text-danger"
+                  className="w-4 h-4 inline-flex items-center justify-center rounded text-txt-muted hover:text-danger shrink-0"
                   onClick={() => onRemoveDirectDocument?.(path)}
                   title="Remove document"
                   aria-label={`Remove ${name}`}
@@ -684,7 +687,10 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
             draggable={false}
           />
           <h2 className="text-2xl font-bold text-txt m-0 mb-1">What would you like to do?</h2>
-          <p className="text-[0.95rem] text-txt-muted m-0">
+          <p className="text-[0.95rem] text-txt-muted m-0 text-center max-w-md">
+            {COPY.welcomeHint}
+          </p>
+          <p className="text-[0.85rem] text-txt-muted/80 m-0 mt-1">
             Ask a question, or add documents with the <strong>+</strong> button.
           </p>
         </div>

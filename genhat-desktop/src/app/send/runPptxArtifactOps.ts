@@ -7,7 +7,6 @@ import {
 } from "../artifactEdit";
 import { streamChatByMode, willRouteToCloud } from "./cloudOrLocalStream";
 import type { GenerationOptions, SendHandlerContext } from "./types";
-import { friendlyErrorFromUnknown } from "../friendlyError";
 
 const THEMES = [
   "midnight",

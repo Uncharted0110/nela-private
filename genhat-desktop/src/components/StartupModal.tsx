@@ -96,7 +96,7 @@ const StartupModal: React.FC<StartupModalProps> = ({
               <img src="/logo-dark.png" alt="Nela" className="startup-logo-img" />
               <div className="startup-brand-copy">
                 <h1 className="startup-title">Nela</h1>
-                <p className="startup-subtitle">The Local Intelligence Engine</p>
+                <p className="startup-subtitle">Your private AI workspace — local or Cloud</p>
               </div>
             </div>
 

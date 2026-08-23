@@ -20,3 +20,4 @@ pub mod web_tables;
 pub mod artifact;
 pub mod artifact_images;
 pub mod attachments;
+pub mod fileindexer_install;

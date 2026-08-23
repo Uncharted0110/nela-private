@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Pencil, SendHorizontal, X } from "lucide-react";
+import { SendHorizontal, X } from "lucide-react";
 
 export type PreviewEditMessage = {
   id: string;

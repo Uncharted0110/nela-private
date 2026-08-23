@@ -97,6 +97,10 @@ npm run prepare:sidecars:release  # release
 
 Installer output: `src-tauri/target/release/bundle/nsis/`.
 
+## Linux parity
+
+Release `.deb` / AppImage builds use a **first-run setup wizard** (same four steps as this NSIS flow) plus a `.deb` `postinst` hook. See [`../linux/README.md`](../linux/README.md).
+
 ## Note on the template
 
 `nsis/installer.nsi` is forked from Tauri’s default template. When upgrading `@tauri-apps/cli`, re-diff against upstream `installer.nsi` and keep the “5b. FileIndexer” page block (including the model download page).

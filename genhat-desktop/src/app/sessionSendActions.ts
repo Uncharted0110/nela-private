@@ -113,6 +113,11 @@ export async function handleRetryPrompt(assistantMsgIndex: number): Promise<void
     streamingArtifactTitle: undefined,
   });
 
+  // Let the UI drop the previous (often huge) preview before work starts.
+  await new Promise<void>((resolve) => {
+    window.setTimeout(resolve, 0);
+  });
+
   await executeHandleSend(retryText, undefined, {
     reuseExistingUserMessage: true,
   });

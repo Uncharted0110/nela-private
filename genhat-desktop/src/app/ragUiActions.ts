@@ -6,6 +6,7 @@ import { openRagSourcePicker } from "../stores/ragSourcePickerStore";
 import { useChatModeStore } from "../stores/chatModeStore";
 import { useUIStore } from "../stores/uiStore";
 import { loadRagDocs } from "./workspaceBridge";
+import { attachmentFileName, sameAttachmentPath } from "./attachmentDisplay";
 
 export const DOCUMENT_PICKER_EXTENSIONS = [
   "pdf", "docx", "pptx", "xlsx", "xls", "ods",
@@ -72,13 +73,26 @@ export async function attachDirectDocuments(): Promise<void> {
     try {
       const inspected = await Api.inspectAttachments(nextPaths);
       const accepted: string[] = [];
-      for (const item of inspected) {
-        chatModeStore.setAttachmentMeta(item.path, item);
-        if (item.error || item.kind === "unsupported") {
-          uiStore.showError(item.error || `Unsupported file: ${item.name}`);
+      for (const original of nextPaths) {
+        const item =
+          inspected.find((entry) => sameAttachmentPath(entry.path, original)) ??
+          inspected.find(
+            (entry) =>
+              attachmentFileName(entry.path, entry.name) ===
+              attachmentFileName(original)
+          );
+        if (!item || item.error || item.kind === "unsupported") {
+          uiStore.showError(
+            item?.error || `Unsupported file: ${attachmentFileName(original)}`
+          );
           continue;
         }
-        accepted.push(item.path);
+        chatModeStore.setAttachmentMeta(original, {
+          ...item,
+          path: original,
+          name: item.name || attachmentFileName(original),
+        });
+        accepted.push(original);
       }
       chatModeStore.setDirectDocumentPaths(accepted);
     } catch (inspectErr) {

@@ -24,8 +24,12 @@ import RagSourcePickerModal from "./RagSourcePickerModal";
 import FollowUpModal from "./FollowUpModal";
 import DocGraphIndexModal from "./DocGraphIndexModal";
 import DocGraphQueryModal from "./DocGraphQueryModal";
+import FileIndexerSetupWizard from "./FileIndexerSetupWizard";
 interface AppDialogsLayerProps {
   showStartupModal: boolean;
+  showFileIndexerSetup: boolean;
+  fileIndexerModelDir: string;
+  onFileIndexerSetupComplete: () => void;
   onContinueWorkspace: () => void;
   canContinueWorkspace: boolean;
   continueWorkspaceName: string | null;
@@ -36,6 +40,9 @@ interface AppDialogsLayerProps {
 
 export default function AppDialogsLayer({
   showStartupModal,
+  showFileIndexerSetup,
+  fileIndexerModelDir,
+  onFileIndexerSetupComplete,
   onContinueWorkspace,
   canContinueWorkspace,
   continueWorkspaceName,
@@ -76,6 +83,13 @@ export default function AppDialogsLayer({
     <>
       <DocGraphIndexModal />
       <DocGraphQueryModal />
+
+      {showFileIndexerSetup && (
+        <FileIndexerSetupWizard
+          modelDir={fileIndexerModelDir}
+          onComplete={onFileIndexerSetupComplete}
+        />
+      )}
 
       {showStartupModal && (
         <StartupModal

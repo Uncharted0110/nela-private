@@ -37,6 +37,14 @@ describe("direct attachment routing", () => {
     assert.equal(
       fileSearchEnabledForTurn({
         fileIndexerEnabled: true,
+        slashFileSearch: true,
+        explicitAttachments: true,
+      }),
+      false
+    );
+    assert.equal(
+      fileSearchEnabledForTurn({
+        fileIndexerEnabled: true,
         slashFileSearch: false,
         explicitAttachments: false,
       }),
@@ -127,5 +135,37 @@ describe("direct attachment routing", () => {
     assert.equal(out[2]?.annotations?.[0]?.file.hash, "abc123");
     assert.equal(hasExplicitAttachments(session[0]!), true);
     assert.equal(shouldSuppressFileSearch(session), true);
+  });
+
+  it("matches prepared files even when path separators differ", () => {
+    const session: ChatMessage[] = [
+      {
+        role: "user",
+        content: "Summarize",
+        directDocuments: [
+          {
+            path: "C:\\tmp\\notes.pdf",
+            name: "notes.pdf",
+            contentHash: "abc123",
+            kind: "pdf",
+            parser: "native",
+          },
+        ],
+      },
+    ];
+    const out = overlayCloudAttachments({
+      apiMessages: [
+        { role: "user", content: "Summarize" },
+      ],
+      sessionMessages: session,
+      preparedByPath: new Map([["C:/tmp/notes.pdf", { ...pdf, path: "C:/tmp/notes.pdf", parser: "native" }]]),
+      warningsByPath: new Map(),
+    });
+    const firstUser = out[0];
+    assert.equal(
+      Array.isArray(firstUser?.content) &&
+        firstUser.content.some((part) => part.type === "file"),
+      true
+    );
   });
 });

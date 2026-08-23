@@ -18,14 +18,14 @@ export const TOURS: TourDefinition[] = [
   {
     id: "getting-started",
     name: "Getting Started (Overview)",
-    version: 2,
+    version: 3,
     steps: [
       {
         id: "privacy",
-        title: "Your data stays here",
+        title: "Private or Cloud — you choose",
         body: (
           <span>
-            Everything you do in NELA happens on this computer. Your documents and chats are never uploaded.
+            Private mode keeps chat and library inference on this device. Switch to Cloud in the top bar when you want NELA Cloud — prompts (and chat attachments in Cloud) then leave this computer.
           </span>
         ),
         target: '[data-tour="privacy-indicator"]',
@@ -47,7 +47,7 @@ export const TOURS: TourDefinition[] = [
         title: "Add your documents",
         body: (
           <span>
-            Add PDFs, Word files, and more. NELA reads them on this device so you can ask questions about them.
+            Add PDFs, Word files, and more to your library — indexed on this device. In Cloud mode, files attached to a chat are sent to NELA Cloud for that conversation.
           </span>
         ),
         target: '[data-tour="attach-button"]',

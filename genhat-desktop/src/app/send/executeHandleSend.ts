@@ -189,6 +189,7 @@ export async function executeHandleSend(
     forceFileSearch: slashFileSearch,
     // Prior turns, so "convert the same into a spreadsheet" has a referent.
     conversationMessages: session.messages,
+    attachedPaths: promptDocumentPaths,
   };
 
   // ── Slash-command routing (explicit user intent) ─────────────────────────
@@ -247,10 +248,10 @@ export async function executeHandleSend(
     }
 
     const spreadsheetAttached = hasSpreadsheetAttach(promptDocumentPaths);
-    const artifactCtx =
-      ctx.directDocumentPaths.length > 0
-        ? ctx
-        : { ...ctx, directDocumentPaths: promptDocumentPaths };
+    const artifactCtx = {
+      ...ctx,
+      directDocumentPaths: [...promptDocumentPaths],
+    };
 
     if (spreadsheetAttached && wantsSpreadsheetDashboard(promptText)) {
       await handleArtifactGeneration(

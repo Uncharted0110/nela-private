@@ -6,6 +6,7 @@ import { cloudQualityModeForIntelligence } from "../intelligenceModes";
 import { friendlyError } from "../friendlyError";
 import { prepareMessagesForCloudCaching } from "./prepareCloudMessages";
 import {
+  CLOUD_ARTIFACT_STREAM_IDLE_TIMEOUT_MS,
   CLOUD_STREAM_ABSOLUTE_TIMEOUT_MS,
   CLOUD_STREAM_IDLE_TIMEOUT_MS,
 } from "./webSearchLimits";
@@ -71,6 +72,8 @@ type StreamArgs = {
     sessionId?: string | null;
     workspaceId?: string | null;
   };
+  /** Override idle abort; artifact_plan defaults to a longer window. */
+  idleTimeoutMs?: number;
 } & StreamCallbacks;
 
 export function isCloudReadyForMode(mode: CloudQualityMode): boolean {
@@ -304,6 +307,12 @@ async function runCloudStream(args: StreamArgs): Promise<void> {
       fn();
     };
 
+    const idleMs =
+      args.idleTimeoutMs ??
+      (args.intent === "artifact_plan"
+        ? CLOUD_ARTIFACT_STREAM_IDLE_TIMEOUT_MS
+        : CLOUD_STREAM_IDLE_TIMEOUT_MS);
+
     const armIdle = () => {
       if (idleTimer) clearTimeout(idleTimer);
       idleTimer = setTimeout(() => {
@@ -316,7 +325,7 @@ async function runCloudStream(args: StreamArgs): Promise<void> {
           );
           resolve();
         });
-      }, CLOUD_STREAM_IDLE_TIMEOUT_MS);
+      }, idleMs);
     };
 
     let unlistenFn: (() => void) | null = null;
@@ -551,3 +560,37 @@ export function streamChatByMode(args: StreamArgs): void {
     onError: failOrFallback,
   }).catch(failOrFallback);
 }
+
+type CollectStreamArgs = Omit<
+  StreamArgs,
+  "onChunk" | "onThinking" | "onFinish" | "onError"
+> & {
+  onChunk?: (chunk: string) => void;
+};
+
+/** Collect a full stream into a string (used to finish cut-off artifact HTML). */
+export function collectStreamText(args: CollectStreamArgs): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let text = "";
+    let settled = false;
+    streamChatByMode({
+      ...args,
+      onChunk: (chunk) => {
+        text += chunk;
+        args.onChunk?.(chunk);
+      },
+      onThinking: () => {},
+      onFinish: () => {
+        if (settled) return;
+        settled = true;
+        resolve(text);
+      },
+      onError: (err) => {
+        if (settled) return;
+        settled = true;
+        reject(err);
+      },
+    });
+  });
+}
+

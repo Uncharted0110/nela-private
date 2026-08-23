@@ -72,7 +72,7 @@ export interface SourceCitationProps {
  */
 export const SourceCitation: React.FC<SourceCitationProps> = ({
   hit,
-  index,
+  index: _index,
   variant = "inline",
 }) => {
   const [open, setOpen] = useState(false);

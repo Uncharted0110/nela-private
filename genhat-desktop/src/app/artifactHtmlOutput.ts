@@ -198,7 +198,7 @@ function extractTitleFromHtml(html: string): string | null {
   return title || null;
 }
 
-function countSlideMarkers(html: string): number {
+export function countSlideMarkers(html: string): number {
   const patterns = [
     /class\s*=\s*["'][^"']*\bslide\b/gi,
     /data-slide\s*=/gi,

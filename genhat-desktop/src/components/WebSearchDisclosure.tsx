@@ -60,17 +60,20 @@ const WebSearchDisclosure: React.FC<WebSearchDisclosureProps> = ({
   const onlyLocal = localCount > 0 && webCount === 0;
   const onlyWeb = webCount > 0 && localCount === 0;
 
-  const summary = onlyLocal
-    ? queries.length === 1
-      ? `Searched files for “${queries[0]}”`
-      : `Searched your files · ${count} source${count === 1 ? "" : "s"}`
-    : queries.length === 1
-      ? `Searched “${queries[0]}”`
-      : queries.length > 1
-        ? `Searched · ${queries.length} queries`
-        : onlyWeb
-          ? `Searched the web · ${count} source${count === 1 ? "" : "s"}`
-          : `Sources · ${count}`;
+  const summary =
+    result.citationKind === "attached" || (onlyLocal && !queries.length)
+      ? `Used ${count} attached file${count === 1 ? "" : "s"}`
+      : onlyLocal
+        ? queries.length === 1
+          ? `Searched files for “${queries[0]}”`
+          : `Searched your files · ${count} source${count === 1 ? "" : "s"}`
+        : queries.length === 1
+          ? `Searched “${queries[0]}”`
+          : queries.length > 1
+            ? `Searched · ${queries.length} queries`
+            : onlyWeb
+              ? `Searched the web · ${count} source${count === 1 ? "" : "s"}`
+              : `Sources · ${count}`;
 
   const favicons = result.results
     .map((h) => h.favicon)

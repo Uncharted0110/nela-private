@@ -22,6 +22,8 @@ export type ComponentTextEditCommit = {
   newText: string;
   /** Prefer this when present — preserves <br> / light markup from contentEditable. */
   newInnerHTML?: string;
+  /** Element style attribute (color / font) from the format bar. */
+  style?: string;
 };
 
 function normalizeText(s: string): string {
@@ -83,6 +85,10 @@ function findTargetInSlide(
 }
 
 function applyTextToElement(el: Element, edit: ComponentTextEditCommit): void {
+  if (typeof edit.style === "string") {
+    if (edit.style) el.setAttribute("style", edit.style);
+    else el.removeAttribute("style");
+  }
   if (typeof edit.newInnerHTML === "string") {
     el.innerHTML = edit.newInnerHTML;
     return;
@@ -113,7 +119,11 @@ export function patchSelectedComponentText(
   html: string,
   edit: ComponentTextEditCommit
 ): string {
-  if (normalizeText(edit.oldText) === normalizeText(edit.newText) && !edit.newInnerHTML) {
+  if (
+    normalizeText(edit.oldText) === normalizeText(edit.newText) &&
+    !edit.newInnerHTML &&
+    edit.style == null
+  ) {
     return html;
   }
   const slideCount = countFreeformSlides(html);

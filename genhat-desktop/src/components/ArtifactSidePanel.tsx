@@ -27,6 +27,9 @@ import { Api } from "../api";
 import ExcelSheetGrid from "./ExcelSheetGrid";
 import type { PreviewEditMessage } from "./ArtifactPreviewEditChat";
 import ArtifactPreviewEditBar from "./ArtifactPreviewEditBar";
+import ArtifactPreviewFormatBar, {
+  type FormatCommand,
+} from "./ArtifactPreviewFormatBar";
 import ArtifactPreviewEditLog from "./ArtifactPreviewEditLog";
 import ArtifactImagePicker from "./ArtifactImagePicker";
 import { cancelImagePicker } from "../stores/imagePickerStore";
@@ -548,7 +551,7 @@ export default function ArtifactSidePanel({
               edit: data,
             });
             const filename = result.path.split(/[/\\]/).pop();
-            pushLibMsg(`Updated text → ${filename}`, "done");
+            pushLibMsg(`Updated → ${filename}`, "done");
             setSelectedComponent(null);
           } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
@@ -655,6 +658,40 @@ export default function ArtifactSidePanel({
       /* opaque / gone */
     }
   }, []);
+
+  const postFormatHold = useCallback((hold: boolean) => {
+    try {
+      previewIframeRef.current?.contentWindow?.postMessage(
+        { type: "nela-hold-edit", hold },
+        "*"
+      );
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  const postFormatCommand = useCallback((command: FormatCommand) => {
+    try {
+      previewIframeRef.current?.contentWindow?.postMessage(
+        {
+          type: "nela-format",
+          cmd: command.cmd,
+          value: "value" in command ? command.value : undefined,
+        },
+        "*"
+      );
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  const showFormatBar = Boolean(
+    editOpen &&
+      selectedComponent &&
+      selectedComponent.role !== "image" &&
+      selectedComponent.role !== "chart" &&
+      !selectedComponent.hasImage
+  );
 
   // Keep in-deck library rail in sync with host selection (image only).
   useEffect(() => {
@@ -1072,37 +1109,45 @@ export default function ArtifactSidePanel({
                       }
                     />
                     {editOpen && selectedComponent ? (
-                      <div className="flex justify-center">
-                        <div
-                          className="inline-flex max-w-full items-center gap-2 rounded-full border border-neon/50 bg-void-800/95 px-3 py-1.5 text-[0.72rem] text-txt shadow-lg backdrop-blur"
-                          title={selectedComponent.selectorHint}
-                        >
-                          <span className="shrink-0 rounded-full bg-neon/15 px-2 py-0.5 font-medium uppercase tracking-wide text-neon">
-                            {selectedComponent.role}
-                          </span>
-                          <span className="min-w-0 truncate text-txt-muted">
-                            {selectedComponent.role === "image" ||
-                            selectedComponent.hasImage
-                              ? "Pick a library image"
-                              : "Edit in preview · Ctrl+Enter to save"}
-                          </span>
-                          <span className="min-w-0 truncate text-txt-muted/80 max-w-[140px]">
-                            {selectedComponent.textPreview ||
-                              selectedComponent.tagName}
-                          </span>
-                          <span className="shrink-0 text-txt-muted/70">
-                            slide {(selectedComponent.slideIndex ?? 0) + 1}
-                          </span>
-                          <button
-                            type="button"
-                            className="shrink-0 rounded-full p-0.5 text-txt-muted hover:bg-void-600 hover:text-txt"
-                            aria-label="Clear selection"
-                            title="Clear selection"
-                            onClick={() => clearComponentSelection()}
+                      <div className="flex flex-col items-center gap-2">
+                        <div className="flex justify-center">
+                          <div
+                            className="inline-flex max-w-full items-center gap-2 rounded-full border border-neon/50 bg-void-800/95 px-3 py-1.5 text-[0.72rem] text-txt shadow-lg backdrop-blur"
+                            title={selectedComponent.selectorHint}
                           >
-                            <X size={14} />
-                          </button>
+                            <span className="shrink-0 rounded-full bg-neon/15 px-2 py-0.5 font-medium uppercase tracking-wide text-neon">
+                              {selectedComponent.role}
+                            </span>
+                            <span className="min-w-0 truncate text-txt-muted">
+                              {selectedComponent.role === "image" ||
+                              selectedComponent.hasImage
+                                ? "Pick a library image"
+                                : "Edit in preview · Ctrl+Enter to save"}
+                            </span>
+                            <span className="min-w-0 truncate text-txt-muted/80 max-w-[140px]">
+                              {selectedComponent.textPreview ||
+                                selectedComponent.tagName}
+                            </span>
+                            <span className="shrink-0 text-txt-muted/70">
+                              slide {(selectedComponent.slideIndex ?? 0) + 1}
+                            </span>
+                            <button
+                              type="button"
+                              className="shrink-0 rounded-full p-0.5 text-txt-muted hover:bg-void-600 hover:text-txt"
+                              aria-label="Clear selection"
+                              title="Clear selection"
+                              onClick={() => clearComponentSelection()}
+                            >
+                              <X size={14} />
+                            </button>
+                          </div>
                         </div>
+                        <ArtifactPreviewFormatBar
+                          visible={showFormatBar}
+                          onHold={() => postFormatHold(true)}
+                          onRelease={() => postFormatHold(false)}
+                          onCommand={postFormatCommand}
+                        />
                       </div>
                     ) : null}
                   </div>

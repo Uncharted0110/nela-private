@@ -228,6 +228,10 @@ export function mergeWebSearchResults(
         )
       )
     ),
+    citationKind:
+      a.citationKind === "attached" && b.citationKind === "attached"
+        ? "attached"
+        : undefined,
     results: mergedHits,
     formatted_context: contexts.join("\n\n"),
     extracted_tables: tables.length > 0 ? tables : undefined,

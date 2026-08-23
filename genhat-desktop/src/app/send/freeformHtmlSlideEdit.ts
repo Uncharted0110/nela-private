@@ -8,7 +8,7 @@
  * `style="…huge…" class="slide"` and odd tag names.
  */
 const SLIDE_OPEN_SOURCE =
-  "<[a-zA-Z][\\w:-]*\\b(?=[^>]{0,500}\\bclass\\s*=\\s*[\"'][^\"']*\\bslide\\b)[^>]*>";
+  "<[a-zA-Z][\\w:-]*\\b(?=[^>]{0,500}(?:\\bclass\\s*=\\s*[\"'][^\"']*\\bslide\\b|\\bdata-nela-slide\\b|\\bdata-slide\\s*=))[^>]*>";
 
 function slideOpenRe(): RegExp {
   return new RegExp(SLIDE_OPEN_SOURCE, "gi");
@@ -16,7 +16,7 @@ function slideOpenRe(): RegExp {
 
 function findSlideStartsFallback(html: string): number[] {
   const starts: number[] = [];
-  const classRe = /\bclass\s*=\s*(["'])([^"']*\bslide\b[^"']*)\1/gi;
+  const classRe = /\bclass\s*=\s*(["'])([^"']*\b(?:slide|deck-slide|ppt-slide)\b[^"']*)\1/gi;
   let m: RegExpExecArray | null;
   while ((m = classRe.exec(html)) !== null) {
     // Walk back to the opening '<' of this tag.
@@ -24,6 +24,14 @@ function findSlideStartsFallback(html: string): number[] {
     while (i > 0 && html[i] !== "<") i -= 1;
     if (html[i] !== "<") continue;
     // Skip closing tags / comments.
+    if (html[i + 1] === "/" || html[i + 1] === "!") continue;
+    starts.push(i);
+  }
+  const dataRe = /\bdata-nela-slide\b|\bdata-slide\s*=/gi;
+  while ((m = dataRe.exec(html)) !== null) {
+    let i = m.index;
+    while (i > 0 && html[i] !== "<") i -= 1;
+    if (html[i] !== "<") continue;
     if (html[i + 1] === "/" || html[i + 1] === "!") continue;
     starts.push(i);
   }

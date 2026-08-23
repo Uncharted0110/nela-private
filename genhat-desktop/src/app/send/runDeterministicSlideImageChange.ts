@@ -85,7 +85,7 @@ export async function runDeterministicSlideImageChange(
     `Finding images for **${query}**…`
   );
 
-  let candidates;
+  let candidates: import("./slideImageCandidates").SlideImageCandidate[];
   try {
     candidates = await fetchSlideImageCandidates({
       query,

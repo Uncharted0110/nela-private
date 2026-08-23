@@ -144,10 +144,6 @@ export default function ArtifactPreviewFormatBar({
             defaultValue="#38bdf8"
             className="h-5 w-5 cursor-pointer rounded border-0 bg-transparent p-0"
             onMouseDown={hold}
-            onInput={(e) => {
-              const value = (e.target as HTMLInputElement).value;
-              run({ cmd: "foreColor", value });
-            }}
             onChange={(e) => {
               run({ cmd: "foreColor", value: e.target.value });
             }}

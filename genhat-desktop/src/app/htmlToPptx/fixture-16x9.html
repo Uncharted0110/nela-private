@@ -1,0 +1,33 @@
+<!-- Manual check: save as PPTX. Expect native text, gradient as a shape, SVG as a picture. -->
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <style>
+    html, body { margin: 0; background: #111111; }
+    .slide {
+      width: 1280px;
+      height: 720px;
+      position: relative;
+      box-sizing: border-box;
+      background: linear-gradient(180deg, #1e3a5f 0%, #0b1c2c 55%, #ffffff 55.1%);
+      font-family: Arial, sans-serif;
+      color: #ffffff;
+      padding: 48px 64px;
+    }
+    h1 { margin: 0; font-size: 42px; font-weight: 600; }
+    p { margin: 16px 0 0; font-size: 20px; color: #e8eef2; max-width: 640px; }
+    .diagram { position: absolute; right: 80px; top: 180px; width: 280px; height: 200px; }
+  </style>
+</head>
+<body>
+  <div class="slide">
+    <h1>Deck title</h1>
+    <p>Body copy on a 16:9 slide with an SVG diagram.</p>
+    <svg class="diagram" width="280" height="200" viewBox="0 0 280 200" data-nela-chart>
+      <rect x="0" y="0" width="280" height="200" fill="#ffffff" rx="8"/>
+      <polygon points="40,160 140,40 240,160" fill="#1e3a5f"/>
+    </svg>
+  </div>
+</body>
+</html>

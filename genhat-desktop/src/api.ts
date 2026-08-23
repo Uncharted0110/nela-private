@@ -1600,6 +1600,27 @@ export async function cloudStreamChat(
   return invoke<void>("cloud_chat_stream", { request });
 }
 
+export async function fileindexerGetSetupStatus(): Promise<
+  import("./types").FileIndexerSetupStatus
+> {
+  return invoke("fileindexer_get_setup_status");
+}
+
+export async function fileindexerListDefaultRoots(): Promise<string[]> {
+  return invoke<string[]>("fileindexer_list_default_roots");
+}
+
+export async function fileindexerSaveSetup(
+  mode: "default" | "custom",
+  roots: string[]
+): Promise<void> {
+  return invoke("fileindexer_save_setup", { mode, roots });
+}
+
+export async function fileindexerDownloadModel(): Promise<void> {
+  return invoke("fileindexer_download_model");
+}
+
 function convertFileSrc(filePath: string): string {
   return tauriConvertFileSrc(filePath);
 }

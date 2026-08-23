@@ -5,9 +5,10 @@ import { type PipelineStageKind } from "./ProgressSlate";
 import DiffPatchOverlay from "./DiffPatchOverlay";
 import GenerationProgressLabel from "./GenerationProgressLabel";
 import { Api } from "../api";
-import { downloadArtifactCopy, exportArtifactDeck } from "../app/artifactDownload";
+import { downloadArtifactCopy, exportArtifactDeck, exportArtifactDocx } from "../app/artifactDownload";
 import type { DeckExportFormat } from "../app/exportDeck";
 import { prepareArtifactHtmlPreview } from "../app/artifactHtmlPreview";
+import { isPresentationPreviewHtml } from "../app/presentationPreviewSelect";
 
 export interface InlineArtifactProps {
   artifactPath?: string | null;
@@ -16,7 +17,7 @@ export interface InlineArtifactProps {
   errorMessage?: string | null;
 }
 
-type ExportKind = DeckExportFormat | "html" | "copy";
+type ExportKind = DeckExportFormat | "html" | "copy" | "docx";
 
 const STAGE_LABELS: Record<PipelineStageKind, { label: string; desc: string; icon: string }> = {
   IntentLocked: { label: "Checking request", desc: "Understanding what you need…", icon: "🔒" },
@@ -46,6 +47,7 @@ export default function InlineArtifact({ artifactPath, artifactStage, errorMessa
   const [exporting, setExporting] = useState<ExportKind | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
   const [stageElapsedSec, setStageElapsedSec] = useState(0);
+  const [isPresentationHtml, setIsPresentationHtml] = useState(false);
 
   const [spreadsheetData, setSpreadsheetData] = useState<{ sheetName: string; rows: string[][] } | null>(null);
   const [loadingSpreadsheet, setLoadingSpreadsheet] = useState(false);
@@ -201,6 +203,7 @@ export default function InlineArtifact({ artifactPath, artifactStage, errorMessa
     const ext = currentPath.split(".").pop()?.toLowerCase() ?? "";
     if (ext !== "html" && ext !== "htm") {
       setArtifactHtml(null);
+      setIsPresentationHtml(false);
       return;
     }
 
@@ -210,11 +213,15 @@ export default function InlineArtifact({ artifactPath, artifactStage, errorMessa
       .then((html) => {
         if (cancelled) return;
         setArtifactHtml(prepareArtifactHtmlPreview(html));
+        setIsPresentationHtml(isPresentationPreviewHtml(html));
         setShowPreview(true);
       })
       .catch((err) => {
         console.error("Failed to load HTML artifact:", err);
-        if (!cancelled) setArtifactHtml(null);
+        if (!cancelled) {
+          setArtifactHtml(null);
+          setIsPresentationHtml(false);
+        }
       });
 
     return () => {
@@ -236,6 +243,8 @@ export default function InlineArtifact({ artifactPath, artifactStage, errorMessa
       try {
         if (kind === "html" || kind === "copy") {
           await downloadArtifactCopy(currentPath);
+        } else if (kind === "docx") {
+          await exportArtifactDocx(currentPath);
         } else {
           await exportArtifactDeck(currentPath, kind);
         }
@@ -419,26 +428,40 @@ export default function InlineArtifact({ artifactPath, artifactStage, errorMessa
               >
                 {isHtml && (
                   <>
+                    {isPresentationHtml ? (
+                      <>
+                        <button
+                          onClick={() => handleExport("pptx")}
+                          className="w-full flex items-center gap-2 px-3 py-2 text-[0.76rem] text-txt-secondary hover:bg-void-800 hover:text-txt transition-colors"
+                        >
+                          <Presentation size={14} className="text-neon" />
+                          <span>Download as PowerPoint</span>
+                        </button>
+                        <button
+                          onClick={() => handleExport("pdf")}
+                          className="w-full flex items-center gap-2 px-3 py-2 text-[0.76rem] text-txt-secondary hover:bg-void-800 hover:text-txt transition-colors border-t border-glass-border"
+                        >
+                          <FileType size={14} className="text-neon" />
+                          <span>Download as PDF</span>
+                        </button>
+                      </>
+                    ) : null}
+                    <button
+                      onClick={() => handleExport("docx")}
+                      className={
+                        "w-full flex items-center gap-2 px-3 py-2 text-[0.76rem] text-txt-secondary hover:bg-void-800 hover:text-txt transition-colors" +
+                        (isPresentationHtml ? " border-t border-glass-border" : "")
+                      }
+                    >
+                      <FileText size={14} className="text-neon" />
+                      <span>Download as Word</span>
+                    </button>
                     <button
                       onClick={() => handleExport("html")}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-[0.76rem] text-txt-secondary hover:bg-void-800 hover:text-txt transition-colors"
+                      className="w-full flex items-center gap-2 px-3 py-2 text-[0.76rem] text-txt-secondary hover:bg-void-800 hover:text-txt transition-colors border-t border-glass-border"
                     >
                       <FileCode size={14} className="text-neon" />
                       <span>Download as HTML</span>
-                    </button>
-                    <button
-                      onClick={() => handleExport("pdf")}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-[0.76rem] text-txt-secondary hover:bg-void-800 hover:text-txt transition-colors border-t border-glass-border"
-                    >
-                      <FileType size={14} className="text-neon" />
-                      <span>Download as PDF</span>
-                    </button>
-                    <button
-                      onClick={() => handleExport("pptx")}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-[0.76rem] text-txt-secondary hover:bg-void-800 hover:text-txt transition-colors border-t border-glass-border"
-                    >
-                      <Presentation size={14} className="text-neon" />
-                      <span>Download as PowerPoint</span>
                     </button>
                   </>
                 )}

@@ -472,6 +472,11 @@ fn main() {
             app_lib::commands::artifact::apply_diff_patch,
             app_lib::commands::artifact::write_artifact_copy,
             app_lib::commands::artifact::save_binary_file,
+            // FileIndexer install setup (Linux first-run wizard + shared config)
+            app_lib::commands::fileindexer_install::fileindexer_get_setup_status,
+            app_lib::commands::fileindexer_install::fileindexer_list_default_roots,
+            app_lib::commands::fileindexer_install::fileindexer_save_setup,
+            app_lib::commands::fileindexer_install::fileindexer_download_model,
         ])
         .build(tauri::generate_context!())
         .expect("error building tauri app")

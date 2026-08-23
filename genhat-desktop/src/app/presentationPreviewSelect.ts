@@ -4,6 +4,7 @@
  */
 
 import { isNelaPresentationDeckHtml } from "./artifactEdit";
+import { htmlLooksLikePresentation } from "./htmlToPptx/slideRoots";
 
 export const NELA_SELECT_STYLE_ID = "nela-comp-select-style";
 export const NELA_SELECT_SCRIPT_ID = "nela-comp-select-script";
@@ -44,13 +45,15 @@ export type ComponentTextEditMessage = {
   oldText: string;
   newText: string;
   newInnerHTML?: string;
+  /** Full style attribute after in-preview format (color, font, size). */
+  style?: string;
 };
 
-/** NELA shell or freeform deck with at least one `.slide`. */
+/** NELA shell or freeform deck with a slide root (`.slide` preferred). */
 export function isPresentationPreviewHtml(html: string): boolean {
   if (!html) return false;
   if (isNelaPresentationDeckHtml(html)) return true;
-  return /class\s*=\s*["'][^"']*\bslide\b/i.test(html);
+  return htmlLooksLikePresentation(html);
 }
 
 function injectInHead(html: string, chunk: string): string {
@@ -122,9 +125,9 @@ function selectionScriptBlock(): string {
   var SELECTED = "nela-comp-selected";
 
   function activeSlide(){
-    var a = document.querySelector(".slide.active");
+    var a = document.querySelector(".slide.active, [data-nela-slide].active, [data-slide].active");
     if (a) return a;
-    var slides = document.querySelectorAll(".slide-stage > .slide, .slide");
+    var slides = document.querySelectorAll(".slide-stage > .slide, .slide, [data-nela-slide], [data-slide], .deck-slide, .ppt-slide");
     return slides.length ? slides[0] : null;
   }
 
@@ -132,7 +135,7 @@ function selectionScriptBlock(): string {
     try {
       if (typeof currentSlide === "number" && currentSlide >= 0) return currentSlide;
     } catch (e) {}
-    var slides = document.querySelectorAll(".slide-stage > .slide, .slides-wrapper .slide, .slide");
+    var slides = document.querySelectorAll(".slide-stage > .slide, .slides-wrapper .slide, .slide, [data-nela-slide], [data-slide], .deck-slide, .ppt-slide");
     var cur = activeSlide();
     if (!cur) return 0;
     for (var i = 0; i < slides.length; i++) {
@@ -329,13 +332,76 @@ function selectionScriptBlock(): string {
     return role !== "image" && role !== "chart";
   }
 
-  var editState = null; // { el, oldText, oldHTML, role }
+  var editState = null; // { el, oldText, oldHTML, oldStyle, role }
+  var holdEdit = false;
+
+  function postTextCommit(el, role, oldText){
+    var payload = {
+      type: "nela-commit-text-edit",
+      slideIndex: activeSlideIndex(),
+      role: role,
+      tagName: (el.tagName || "").toLowerCase(),
+      selectorHint: selectorHintFor(el),
+      oldText: oldText,
+      newText: (el.innerText || el.textContent || "").replace(/\\s+/g, " ").trim(),
+      newInnerHTML: el.innerHTML,
+      style: el.getAttribute("style") || ""
+    };
+    var bi = bulletIndexFor(el);
+    if (typeof bi === "number") payload.bulletIndex = bi;
+    try {
+      parent.postMessage(payload, "*");
+    } catch (e) {}
+  }
+
+  function applyFormatCommand(cmd, value){
+    var el = (editState && editState.el) || document.querySelector("." + SELECTED);
+    if (!el) return;
+    if (cmd === "foreColor" && value) {
+      el.style.setProperty("color", value, "important");
+      el.style.setProperty("-webkit-text-fill-color", value, "important");
+      var clip = "";
+      try {
+        var cs = window.getComputedStyle(el);
+        clip = String((cs.backgroundClip || "") + " " + (cs.webkitBackgroundClip || "")).toLowerCase();
+      } catch (e) {}
+      if (clip.indexOf("text") >= 0) {
+        el.style.setProperty("background-image", "none", "important");
+      }
+    } else if (cmd === "fontName" && value) {
+      el.style.setProperty("font-family", value, "important");
+    } else if (cmd === "fontSizeDelta") {
+      var size = 16;
+      try {
+        size = parseFloat(window.getComputedStyle(el).fontSize) || 16;
+      } catch (e) {}
+      var next = Math.max(10, Math.min(96, size + (Number(value) || 0)));
+      el.style.setProperty("font-size", next + "px", "important");
+    } else if (cmd === "bold") {
+      var boldNow = false;
+      try {
+        var w = window.getComputedStyle(el).fontWeight;
+        boldNow = w === "bold" || w === "bolder" || parseInt(w, 10) >= 600;
+      } catch (e) {}
+      el.style.setProperty("font-weight", boldNow ? "400" : "700", "important");
+    } else if (cmd === "italic") {
+      var italicNow = false;
+      try {
+        italicNow = window.getComputedStyle(el).fontStyle === "italic";
+      } catch (e) {}
+      el.style.setProperty("font-style", italicNow ? "normal" : "italic", "important");
+    }
+    var role = editState ? editState.role : roleFor(el);
+    var oldText = editState ? editState.oldText : (el.innerText || el.textContent || "");
+    postTextCommit(el, role, oldText);
+  }
 
   function endContentEdit(commit){
     if (!editState) return;
     var el = editState.el;
     var oldText = editState.oldText;
     var oldHTML = editState.oldHTML;
+    var oldStyle = editState.oldStyle || "";
     var role = editState.role;
     editState = null;
     try {
@@ -345,29 +411,22 @@ function selectionScriptBlock(): string {
     } catch (e) {}
     if (!commit) {
       el.innerHTML = oldHTML;
+      if (oldStyle) el.setAttribute("style", oldStyle);
+      else el.removeAttribute("style");
       return;
     }
     var newText = (el.innerText || el.textContent || "").replace(/\\s+/g, " ").trim();
     var oldNorm = (oldText || "").replace(/\\s+/g, " ").trim();
-    if (newText === oldNorm) return;
-    var payload = {
-      type: "nela-commit-text-edit",
-      slideIndex: activeSlideIndex(),
-      role: role,
-      tagName: (el.tagName || "").toLowerCase(),
-      selectorHint: selectorHintFor(el),
-      oldText: oldText,
-      newText: newText,
-      newInnerHTML: el.innerHTML
-    };
-    var bi = bulletIndexFor(el);
-    if (typeof bi === "number") payload.bulletIndex = bi;
-    try {
-      parent.postMessage(payload, "*");
-    } catch (e) {}
+    var style = el.getAttribute("style") || "";
+    if (newText === oldNorm && el.innerHTML === oldHTML && style === oldStyle) return;
+    postTextCommit(el, role, oldText);
   }
 
   function onEditBlur(){
+    if (holdEdit) {
+      try { if (editState && editState.el) editState.el.focus(); } catch (e) {}
+      return;
+    }
     endContentEdit(true);
   }
 
@@ -414,6 +473,7 @@ function selectionScriptBlock(): string {
       el: el,
       oldText: (el.innerText || el.textContent || "").replace(/\\s+/g, " ").trim(),
       oldHTML: el.innerHTML,
+      oldStyle: el.getAttribute("style") || "",
       role: role
     };
     el.setAttribute("contenteditable", "true");
@@ -615,7 +675,7 @@ function selectionScriptBlock(): string {
     if (!slide) return;
     if (!slide.contains(ev.target)) {
       // Click outside slide content clears
-      if (!(ev.target && ev.target.closest && ev.target.closest(".slide"))) {
+      if (!(ev.target && ev.target.closest && ev.target.closest(".slide, [data-nela-slide], [data-slide], .deck-slide, .ppt-slide"))) {
         selectEl(null);
       }
       return;
@@ -649,6 +709,17 @@ function selectionScriptBlock(): string {
     }
     if (d.type === "nela-set-library-visible") {
       setLibraryOpen(!!d.open);
+      return;
+    }
+    if (d.type === "nela-hold-edit") {
+      holdEdit = !!d.hold;
+      if (holdEdit && editState && editState.el) {
+        try { editState.el.focus(); } catch (e) {}
+      }
+      return;
+    }
+    if (d.type === "nela-format") {
+      applyFormatCommand(d.cmd, d.value);
     }
   });
 })();

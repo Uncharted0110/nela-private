@@ -70,6 +70,7 @@ CRITICAL CONTENT RULES:
 - Keep CSS under ~80 lines. Prefer simple layouts over elaborate gradients.
 - Build a multi-slide deck with arrow-key / button navigation and a slide counter.
 - Mark each slide with class="slide". First slide must include class="slide active" so something is visible immediately.
+- Converter-friendly layout: each .slide is a 16:9 page (1280×720 or 1920×1080), box-sizing:border-box. Do not put a long scrolling document inside one slide. Size charts/SVG/canvas with explicit pixel width and height. Prefer solid fills or linear-gradient (radial gradients and CSS filters become images on export).
 - Complete creative freedom on colors/fonts — but content first, polish second.
 - Content must be RICH and specific. Prefer 6–10 slides unless the user asked for a count.
 - When the topic has statistics, include STAT slides (headline metric + supporting bullets).

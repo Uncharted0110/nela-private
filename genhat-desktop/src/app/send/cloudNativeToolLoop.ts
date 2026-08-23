@@ -864,6 +864,8 @@ export async function runCloudArtifactWebResearch(opts: {
   webDepth?: "snippets" | "full";
   /** When true, expose local Doc Graph search alongside web_search. */
   fileSearchEnabled?: boolean;
+  /** Filenames already on this turn — do not search the local library for them. */
+  attachedFileNames?: string[];
   /** Recent chat content the model should assess for relevance. */
   priorContent?: string;
   signal?: AbortSignal;
@@ -871,7 +873,9 @@ export async function runCloudArtifactWebResearch(opts: {
 }): Promise<WebSearchResult | null> {
   const webDepth = opts.webDepth ?? "snippets";
   const priorContent = opts.priorContent?.trim() ?? "";
-  const fileSearchEnabled = Boolean(opts.fileSearchEnabled);
+  const attachedNames = (opts.attachedFileNames ?? []).filter(Boolean);
+  const fileSearchEnabled =
+    Boolean(opts.fileSearchEnabled) && attachedNames.length === 0;
   const kind =
     opts.schemaId === "presentation_synthesis"
       ? "presentation"
@@ -883,7 +887,9 @@ export async function runCloudArtifactWebResearch(opts: {
 
   const localHint = fileSearchEnabled
     ? " You may optionally call search_knowledge_base with SHORT keyword queries if (and only if) the request clearly needs the user's indexed local files. Do not search local files for general travel / web topics. "
-    : " ";
+    : attachedNames.length > 0
+      ? ` The user already attached: ${attachedNames.join(", ")}. Those files will be loaded for the artifact. Do not call search_knowledge_base. Only web-search for public facts missing from the attachments. `
+      : " ";
 
   const researchOpts: CloudNativeToolLoopOptions = {
     messages: [

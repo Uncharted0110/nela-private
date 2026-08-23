@@ -5,6 +5,8 @@ edition = "2021"
 description = "Local filename + content + semantic file indexer (NELA sidecar)"
 publish = false
 
+[workspace]
+
 [lib]
 name = "file_indexer"
 path = "src/lib.rs"

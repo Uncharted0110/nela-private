@@ -11,7 +11,7 @@ export const WEB_SEARCH_TOOL: CloudToolDefinition = {
     name: "web_search",
     description:
       "Search the live public web (Tavily). Call this ONLY when you need current or external facts (news, prices, sports, flights, docs, travel). " +
-      "Do not call it for the user's local files — use search_knowledge_base instead. " +
+      "Do not call it for documents the user already attached to this message. " +
       "Pass a short keyword query (never the full user prompt) and a depth that matches how thorough the answer needs to be. " +
       "Follow-ups must stay on the prior topic (include place/product/entity from earlier turns).",
     parameters: {
@@ -88,7 +88,8 @@ export const SEARCH_KNOWLEDGE_BASE_TOOL: CloudToolDefinition = {
       "Searches the user's indexed local document graph (doc_graph) for relevant slides, sections, spreadsheets, notes, and files. " +
       "Uses hybrid BM25 + dense vector embeddings over a structural knowledge graph, then expands hits into Markdown chunk windows with source file paths. " +
       "Prefer a higher top_k (20–40) so graph/vector retrieval can surface multiple related chunks before expansion — low top_k under-uses the embedding graph. " +
-      "Call this for the user's own files, resumes, notes, PDFs, slides, or on-device documents. Do NOT use this for live public-web facts. " +
+      "Call this only for the user's indexed library when they did not already attach the relevant files. " +
+      "Do NOT call this when the needed documents are already attached to the current message. Do NOT use this for live public-web facts. " +
       "After results, cite matched files with inline [n] markers (clickable in the UI).",
     parameters: {
       type: "object",

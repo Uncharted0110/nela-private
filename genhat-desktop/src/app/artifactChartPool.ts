@@ -470,7 +470,7 @@ export function embedPoolChartsInHtml(
   const unused = pool.filter((e) => !usedIndices.has(e.index));
   if (unused.length) {
     let ui = 0;
-    const fillOnce = (match: string, _tag: string, _attrs: string, token: string) => {
+    const fillOnce = (match: string, _tag: string, _attrs: string, _token: string) => {
       // Skip if this token was already replaced with a real fragment.
       if (/echarts-host|nela-chart-panel/.test(match)) return match;
       const entry = unused[ui++];

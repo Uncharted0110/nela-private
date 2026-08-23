@@ -66,8 +66,8 @@ fn path_to_data_uri(path: &Path) -> Result<String, String> {
         _ => "image/png",
     };
     let data = std::fs::read(path).map_err(|e| format!("Failed to read image: {e}"))?;
-    if data.len() > 4 * 1024 * 1024 {
-        return Err("Image too large for artifact embedding (>4MB)".into());
+    if (data.len() > 400 * 1024) {
+        return Err("Image too large for artifact embedding (>400KB)".into());
     }
     Ok(format!("data:{mime};base64,{}", STANDARD.encode(&data)))
 }
@@ -128,8 +128,21 @@ pub async fn download_image_data_uri(url: String) -> Result<String, String> {
 }
 
 /// Extract embedded images/tables from a local document as data URIs for artifacts.
+/// Runs off the UI thread — PPTX media parse is CPU-heavy and must not block.
 #[tauri::command]
-pub fn extract_document_images(path: String, max_images: Option<u32>) -> Result<Vec<ArtifactImageAsset>, String> {
+pub async fn extract_document_images(
+    path: String,
+    max_images: Option<u32>,
+) -> Result<Vec<ArtifactImageAsset>, String> {
+    tokio::task::spawn_blocking(move || extract_document_images_sync(path, max_images))
+        .await
+        .map_err(|e| format!("Image extract failed: {e}"))?
+}
+
+fn extract_document_images_sync(
+    path: String,
+    max_images: Option<u32>,
+) -> Result<Vec<ArtifactImageAsset>, String> {
     let max = max_images.unwrap_or(8).min(12) as usize;
     let doc_path = Path::new(&path);
     if !doc_path.exists() {
@@ -142,7 +155,7 @@ pub fn extract_document_images(path: String, max_images: Option<u32>) -> Result<
         .unwrap_or("")
         .to_lowercase();
 
-    if !matches!(ext.as_str(), "pdf" | "docx" | "pptx" | "doc" | "ppt") {
+    if !matches!(ext.as_str(), "pdf" | "docx" | "doc") {
         return Ok(vec![]);
     }
 

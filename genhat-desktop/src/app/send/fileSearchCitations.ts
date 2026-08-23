@@ -143,7 +143,8 @@ export function attachedPathsToSearchResult(
   if (!results.length) return null;
   return {
     query,
-    queries: [query],
+    queries: [],
+    citationKind: "attached",
     results,
     formatted_context: "",
   };
