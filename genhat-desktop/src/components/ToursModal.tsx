@@ -34,24 +34,59 @@ export default function ToursModal({ isOpen, onClose }: { isOpen: boolean; onClo
     });
   };
 
-  const launchTour = (tourId: string) => {
-    handleClose();
+  const prepareTourContext = (tourId: string) => {
+    const switchMode = bindings.switchMode;
+    const closeProfile = bindings.closeProfile;
 
-    if (tourId === "podcast") {
-      const switchMode = bindings.switchMode;
+    if (typeof closeProfile === "function") {
+      (closeProfile as () => void)();
+    }
+
+    if (tourId === "getting-started" || tourId === "documents") {
       if (typeof switchMode === "function") {
-        (switchMode as (mode: string) => void)("podcast");
+        (switchMode as (mode: string) => void)("text");
       }
-
-      void waitForTourTarget('[data-tour="podcast-header"]').then(() => {
-        startTour(tourId, { source: "help" });
-      });
       return;
     }
 
-    window.setTimeout(() => {
-      startTour(tourId, { source: "help" });
-    }, 30);
+    if (tourId === "podcast") {
+      if (typeof switchMode === "function") {
+        (switchMode as (mode: string) => void)("podcast");
+      }
+      return;
+    }
+
+    if (tourId === "mindmaps") {
+      if (typeof switchMode === "function") {
+        (switchMode as (mode: string) => void)("mindmap");
+      }
+      return;
+    }
+
+    if (tourId === "audio-tts") {
+      if (typeof switchMode === "function") {
+        (switchMode as (mode: string) => void)("audio");
+      }
+    }
+  };
+
+  const launchTour = (tourId: string) => {
+    handleClose();
+    prepareTourContext(tourId);
+
+    const start = () => startTour(tourId, { source: "help" });
+
+    if (tourId === "podcast") {
+      void waitForTourTarget('[data-tour="podcast-header"]').then(start);
+      return;
+    }
+
+    if (tourId === "getting-started") {
+      void waitForTourTarget('[data-tour="sidebar-nav"]').then(start);
+      return;
+    }
+
+    window.setTimeout(start, 40);
   };
 
   if (!isOpen) return null;
@@ -91,7 +126,7 @@ export default function ToursModal({ isOpen, onClose }: { isOpen: boolean; onClo
           {activeTab === "tours" && (
             <>
               <p className="tours-modal-subtitle">
-                Pick a tour. You can run them anytime.
+                Pick a guided tour. Spotlight steps dim the app and highlight each control — run them anytime.
               </p>
 
               <div className="tours-list">
@@ -101,6 +136,9 @@ export default function ToursModal({ isOpen, onClose }: { isOpen: boolean; onClo
                     <div key={t.id} className="tours-item">
                       <div className="tours-item-main">
                         <div className="tours-item-name">{t.name}</div>
+                        {t.description ? (
+                          <div className="tours-item-description">{t.description}</div>
+                        ) : null}
                         <div className="tours-item-meta">
                           <span>{t.steps.length} steps</span>
                           {done && <span className="tours-item-done">Completed</span>}
@@ -108,6 +146,7 @@ export default function ToursModal({ isOpen, onClose }: { isOpen: boolean; onClo
                       </div>
                       <div className="tours-item-actions">
                         <button
+                          type="button"
                           className="tours-btn primary"
                           onClick={() => launchTour(t.id)}
                         >
@@ -120,7 +159,7 @@ export default function ToursModal({ isOpen, onClose }: { isOpen: boolean; onClo
               </div>
 
               <div className="tours-footer">
-                <button className="tours-btn ghost" onClick={resetTourProgress}>
+                <button type="button" className="tours-btn ghost" onClick={resetTourProgress}>
                   Reset tour progress
                 </button>
               </div>

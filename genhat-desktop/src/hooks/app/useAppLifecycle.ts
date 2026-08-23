@@ -90,6 +90,8 @@ export function useAppLifecycle() {
       openSettings: () => useUIStore.getState().setSettingsOpen(true),
       openTours: () => useUIStore.getState().setToursOpen(true),
       openDocPanel: () => useUIStore.getState().setDocPanelOpen(true),
+      openProfile: () => useUIStore.getState().setProfileOpen(true),
+      closeProfile: () => useUIStore.getState().setProfileOpen(false),
       switchMode: (mode: ChatMode) => {
         const chatModeStore = useChatModeStore.getState();
         const uiStore = useUIStore.getState();

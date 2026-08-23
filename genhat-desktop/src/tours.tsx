@@ -14,73 +14,209 @@ const openDocPanelFromBindings = () => (bindings: Record<string, unknown>) => {
   }
 };
 
+const closeProfileFromBindings = () => (bindings: Record<string, unknown>) => {
+  const closeProfile = bindings.closeProfile;
+  if (typeof closeProfile === "function") {
+    (closeProfile as () => void)();
+  }
+};
+
+const prepareTextChatTour = (bindings: Record<string, unknown>) => {
+  switchModeFromBindings("text")(bindings);
+  closeProfileFromBindings()(bindings);
+};
+
 export const TOURS: TourDefinition[] = [
   {
     id: "getting-started",
-    name: "Getting Started (Overview)",
-    version: 3,
+    name: "Getting Started",
+    description:
+      "Private vs Cloud, profile setup, Fast · Smart · Deep tiers, workspaces, chat, documents, and Help Center.",
+    version: 4,
     steps: [
       {
-        id: "privacy",
-        title: "Private or Cloud — you choose",
+        id: "welcome",
+        title: "Welcome to NELA",
         body: (
           <span>
-            Private mode keeps chat and library inference on this device. Switch to Cloud in the top bar when you want NELA Cloud — prompts (and chat attachments in Cloud) then leave this computer.
+            This quick tour highlights the essentials — Private vs Cloud, your profile, intelligence
+            tiers, and everyday chat workflows. Use <strong>Next</strong> to continue or{" "}
+            <strong>Skip</strong> anytime.
+          </span>
+        ),
+        target: '[data-tour="sidebar-nav"]',
+        centerTooltip: true,
+        spotlight: false,
+      },
+      {
+        id: "private-cloud",
+        title: "Private or Cloud",
+        body: (
+          <span>
+            <strong>Private</strong> keeps inference on this device. <strong>Cloud</strong> routes
+            prompts through NELA Cloud for stronger models — sign in from your profile when you
+            switch.
           </span>
         ),
         target: '[data-tour="privacy-indicator"]',
         placement: "bottom",
+        onBeforeStep: prepareTextChatTour,
+      },
+      {
+        id: "profile",
+        title: "Profile & sign-in",
+        body: (
+          <span>
+            Open your profile to sign in, link NELA Cloud, manage billing, and finish Cloud setup.
+            Cloud mode may prompt you here automatically until setup is complete.
+          </span>
+        ),
+        target: '[data-tour="sidebar-profile"]',
+        placement: "right",
+        onBeforeStep: closeProfileFromBindings(),
+      },
+      {
+        id: "intelligence",
+        title: "Fast · Smart · Deep",
+        body: (
+          <span>
+            Choose how the model thinks: <strong>Fast</strong> for quick replies,{" "}
+            <strong>Smart</strong> for balanced quality, <strong>Deep</strong> for harder reasoning.
+            In Private mode you can also pick a specific local model.
+          </span>
+        ),
+        target: '[data-tour="intelligence-mode"]',
+        placement: "bottom",
+        onBeforeStep: prepareTextChatTour,
       },
       {
         id: "workspaces",
-        title: "Create a private space",
+        title: "Organize with workspaces",
         body: (
           <span>
-            Workspaces keep each project&apos;s documents and chats separate and organized.
+            Each workspace keeps its own chats and document library separate — ideal for different
+            clients, courses, or projects.
           </span>
         ),
         target: '[data-tour="workspace-selector"]',
         placement: "bottom",
+        onBeforeStep: prepareTextChatTour,
+      },
+      {
+        id: "sidebar",
+        title: "Sidebar shortcuts",
+        body: (
+          <span>
+            Jump between <strong>Chats</strong>, saved <strong>Audio</strong>,{" "}
+            <strong>Mindmaps</strong>, and the <strong>Playground</strong> pipeline builder from
+            the left rail.
+          </span>
+        ),
+        target: '[data-tour="sidebar-chats"]',
+        placement: "right",
+        onBeforeStep: prepareTextChatTour,
+      },
+      {
+        id: "chat-tabs",
+        title: "Multiple conversations",
+        body: (
+          <span>
+            Open several chats at once with tabs. Drag to reorder, close when done, or start a fresh
+            thread with the <strong>+</strong> tab.
+          </span>
+        ),
+        target: '[data-tour="chat-tabs"]',
+        placement: "bottom",
+        onBeforeStep: prepareTextChatTour,
       },
       {
         id: "attach",
-        title: "Add your documents",
+        title: "Add documents",
         body: (
           <span>
-            Add PDFs, Word files, and more to your library — indexed on this device. In Cloud mode, files attached to a chat are sent to NELA Cloud for that conversation.
+            Use <strong>+</strong> to attach files or folders to your library (indexed locally in
+            Private mode). In Cloud mode, chat attachments are sent with that conversation.
           </span>
         ),
         target: '[data-tour="attach-button"]',
         placement: "top",
+        onBeforeStep: prepareTextChatTour,
       },
       {
         id: "chat-input",
         title: "Ask in plain language",
         body: (
           <span>
-            Type a question and press Enter. NELA answers using your documents and shows you its sources.
+            Type a question and press Enter. NELA answers using your documents when relevant and
+            shows sources you can verify.
           </span>
         ),
         target: '[data-tour="chat-input"]',
         placement: "top",
+        onBeforeStep: prepareTextChatTour,
+      },
+      {
+        id: "tools",
+        title: "Tools & toggles",
+        body: (
+          <span>
+            The wrench menu toggles <strong>Library search</strong>, <strong>Web search</strong>,{" "}
+            <strong>File indexer</strong>, and extended thinking — tune what the model can use per
+            message.
+          </span>
+        ),
+        target: '[data-tour="tools-button"]',
+        placement: "top",
+        onBeforeStep: prepareTextChatTour,
       },
       {
         id: "sources",
-        title: "Check the sources",
+        title: "Document library",
         body: (
           <span>
-            Every answer lists the documents it came from, so you can verify it.
+            Uploaded files appear here. Watch ingestion status, open previews, and confirm which
+            sources grounded each answer.
           </span>
         ),
         target: '[data-tour="kb-sidebar"]',
         placement: "left",
-        onBeforeStep: openDocPanelFromBindings(),
+        onBeforeStep: (bindings) => {
+          prepareTextChatTour(bindings);
+          openDocPanelFromBindings()(bindings);
+        },
+      },
+      {
+        id: "settings",
+        title: "Models & settings",
+        body: (
+          <span>
+            Download optional local models, adjust runtime parameters, and configure advanced
+            options from Settings.
+          </span>
+        ),
+        target: '[data-tour="sidebar-settings"]',
+        placement: "right",
+        onBeforeStep: prepareTextChatTour,
+      },
+      {
+        id: "help",
+        title: "Help Center anytime",
+        body: (
+          <span>
+            Re-run this tour or read the full guide from the <strong>Help</strong> button. Tours
+            stay available whenever you need a refresher.
+          </span>
+        ),
+        target: '[data-tour="sidebar-help-tours"]',
+        placement: "right",
+        onBeforeStep: prepareTextChatTour,
       },
     ],
   },
   {
     id: "models",
     name: "Models & Downloads",
+    description: "Switch models and manage downloads from Settings.",
     version: 1,
     steps: [
       {
@@ -102,6 +238,7 @@ export const TOURS: TourDefinition[] = [
   {
     id: "mindmaps",
     name: "Mindmaps",
+    description: "Generate and revisit visual mindmaps from a topic.",
     version: 1,
     steps: [
       {
@@ -133,6 +270,7 @@ export const TOURS: TourDefinition[] = [
   {
     id: "podcast",
     name: "Podcast Studio",
+    description: "Turn documents into a two-speaker podcast script and audio.",
     version: 1,
     steps: [
       {
@@ -172,6 +310,7 @@ export const TOURS: TourDefinition[] = [
   {
     id: "documents",
     name: "Documents (RAG)",
+    description: "Build a local knowledge base and query your files.",
     version: 1,
     steps: [
       {
@@ -206,6 +345,7 @@ export const TOURS: TourDefinition[] = [
   {
     id: "audio-tts",
     name: "Audio Generation",
+    description: "Convert text to speech and manage saved clips.",
     version: 1,
     steps: [
       {

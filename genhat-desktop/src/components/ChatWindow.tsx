@@ -759,6 +759,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
                 title="Tools"
                 aria-label="Tools"
                 disabled={isLoading}
+                data-tour="tools-button"
               >
                 <Wrench size={16} strokeWidth={1.9} />
               </button>
@@ -1009,6 +1010,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
               title="Tools"
               aria-label="Tools"
               disabled={isLoading}
+              data-tour="tools-button"
             >
               <Wrench size={16} strokeWidth={1.9} />
             </button>

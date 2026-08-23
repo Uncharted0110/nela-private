@@ -20,7 +20,10 @@ export type TourStep = {
   body: React.ReactNode;
   target: TourTarget;
   placement?: TourPlacement;
+  /** When true, tooltip is centered on screen (welcome / summary steps). */
   centerTooltip?: boolean;
+  /** When false, dim the full app with no element cutout. Default true. */
+  spotlight?: boolean;
   isAvailable?: (bindings: TourBindings) => boolean;
   onBeforeStep?: (bindings: TourBindings) => void | Promise<void>;
 };
@@ -28,6 +31,8 @@ export type TourStep = {
 export type TourDefinition = {
   id: string;
   name: string;
+  /** Short blurb shown in Help Center tour list. */
+  description?: string;
   version: number;
   steps: TourStep[];
 };

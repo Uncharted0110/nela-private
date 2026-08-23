@@ -122,8 +122,8 @@ Mindmaps summarize ideas as a tree structure.
 
 ## 11. Help Options
 
-- **Tours**: guided step-by-step walkthroughs.
+- **Tours** (Help Center → Tours): guided spotlight walkthroughs. Start with **Getting Started** for Private vs Cloud, profile sign-in, Fast · Smart · Deep tiers, workspaces, chat, documents, and settings.
 - **Help Guide** (this document): quick reference whenever needed.
 - **Cloud settings** / Profile: sign-in, plan, and credits.
 
-If you are ever unsure, start with a tour, then use this guide as your lookup reference.
+If you are ever unsure, start with the Getting Started tour, then use this guide as your lookup reference.

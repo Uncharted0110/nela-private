@@ -23,7 +23,7 @@ import { useUIStore } from "./stores/uiStore";
 import { useDownloadStore } from "./stores/downloadStore";
 import { useChatModeStore } from "./stores/chatModeStore";
 import { useDocGraphStore } from "./stores/docGraphStore";
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import "./App.css";
 import { fileindexerGetSetupStatus } from "./api";
 import type { FileIndexerSetupStatus } from "./types";
@@ -31,7 +31,7 @@ import type { FileIndexerSetupStatus } from "./types";
 function App() {
   const { theme, setTheme } = useTheme();
   useAppLifecycle();
-  const { startTour } = useTour();
+  const { startTour, status, isTourCompleted } = useTour();
 
   const hydrateDocGraph = useDocGraphStore((s) => s.hydrate);
   const docGraphIndexOpen = useDocGraphStore((s) => s.indexOpen);
@@ -121,14 +121,57 @@ function App() {
 
   const startTourFromStartup = () => {
     setSuppressStartupModal(true);
-    startTour("getting-started", {
-      source: "startup",
-      onExit: () => setSuppressStartupModal(false),
-      onComplete: () => setSuppressStartupModal(false),
-    });
+
+    const launch = () => {
+      startTour("getting-started", {
+        source: "startup",
+        onExit: () => setSuppressStartupModal(false),
+        onComplete: () => setSuppressStartupModal(false),
+      });
+    };
+
+    if (activeWorkspace) {
+      window.setTimeout(launch, 400);
+      return;
+    }
+
+    void (async () => {
+      if (canContinueStartupWorkspace && startupContinueWorkspace) {
+        await handleStartupAction(() => switchWorkspaceById(startupContinueWorkspace.id));
+      } else {
+        await handleStartupAction(createNewWorkspace);
+      }
+      window.setTimeout(launch, 900);
+    })();
   };
 
+  const autoTourStartedRef = useRef(false);
   const showFileIndexerSetup = Boolean(fileIndexerSetup?.showWizard);
+
+  // First workspace open: auto-launch Getting Started if not completed yet.
+  useEffect(() => {
+    if (!activeWorkspace || autoTourStartedRef.current) return;
+    if (showFileIndexerSetup || docGraphIndexOpen) return;
+    if (suppressStartupModal) return;
+    if (status === "running") return;
+    if (isTourCompleted("getting-started")) return;
+
+    autoTourStartedRef.current = true;
+    const timer = window.setTimeout(() => {
+      startTour("getting-started", { source: "startup" });
+    }, 900);
+
+    return () => window.clearTimeout(timer);
+  }, [
+    activeWorkspace,
+    showFileIndexerSetup,
+    docGraphIndexOpen,
+    suppressStartupModal,
+    status,
+    isTourCompleted,
+    startTour,
+  ]);
+
   const showStartupModal =
     !activeWorkspace && !suppressStartupModal && !docGraphIndexOpen && !showFileIndexerSetup;
 
