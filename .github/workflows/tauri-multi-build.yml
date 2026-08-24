@@ -6,7 +6,6 @@ on:
       version:
         description: "Release version tag (e.g. v0.1.0)"
         required: true
-        default: "v0.1.0"
       release_name:
         description: "Release title"
         required: false
@@ -93,6 +92,10 @@ jobs:
             librsvg2-dev \
             libasound2-dev \
             pkg-config
+
+      - name: Fetch llama.cpp release binaries
+        working-directory: genhat-desktop
+        run: npm run prepare:llama
 
       # Build Tauri
       - name: Build Tauri App

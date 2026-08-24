@@ -10,6 +10,7 @@
     "preview": "vite preview",
     "prepare:sidecars": "node scripts/prepare-sidecars.mjs",
     "prepare:sidecars:release": "node scripts/prepare-sidecars.mjs --release",
+    "prepare:llama": "node scripts/fetch-llama-binaries.mjs",
     "tauri:dev": "npm run prepare:sidecars && tauri dev",
     "tauri:build": "npm run prepare:sidecars:release && tauri build"
   },

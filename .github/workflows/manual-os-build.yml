@@ -6,7 +6,6 @@ on:
       runner_os:
         description: Choose the GitHub runner OS version
         required: true
-        default: macos-14
         type: choice
         options:
           - macos-13
@@ -80,6 +79,10 @@ jobs:
             librsvg2-dev \
             libasound2-dev \
             pkg-config
+
+      - name: Fetch llama.cpp release binaries
+        working-directory: genhat-desktop
+        run: npm run prepare:llama
 
       - name: Build Tauri app
         working-directory: genhat-desktop

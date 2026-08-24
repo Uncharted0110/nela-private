@@ -66,7 +66,7 @@ function clampTooltipToViewport(
   // Approximate anchor from transform — re-center if near edges.
   let left = pos.left;
   let top = pos.top;
-  let transform = pos.transform;
+  const transform = pos.transform;
 
   if (transform.includes("-50%")) {
     left = clamp(left, margin + tooltipWidth / 2, vw - margin - tooltipWidth / 2);
@@ -146,7 +146,6 @@ export default function TourOverlay() {
   // Measure tooltip and clamp within viewport.
   useLayoutEffect(() => {
     if (status !== "running" || !activeStep || !activeTour) {
-      setTooltipPos(null);
       return;
     }
 
