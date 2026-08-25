@@ -20,7 +20,7 @@ jobs:
         include:
           - os: windows-latest
             os_label: Windows
-            bundles: msi,nsis
+            bundles: nsis
           - os: ubuntu-latest
             os_label: Linux
             bundles: deb
@@ -33,14 +33,10 @@ jobs:
     env:
       NODE_VERSION: 24
 
-    permissions:
-      contents: write
-
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # Setup Node
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -50,7 +46,6 @@ jobs:
         run: npm install
         working-directory: genhat-desktop
 
-      # Setup Rust
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
@@ -60,7 +55,6 @@ jobs:
           RELEASE_VERSION: ${{ inputs.version }}
         run: node scripts/set-release-version.mjs
 
-      # Ensure model directories have placeholder files so Tauri glob resources resolve in CI
       - name: Ensure model placeholders
         shell: bash
         run: |
@@ -86,7 +80,6 @@ jobs:
             models/LiquidAI-VLM/.placeholder \
             models/parakeet/.placeholder
 
-      # Linux System Dependencies
       - name: Install Linux Dependencies
         if: matrix.os == 'ubuntu-latest'
         run: |
@@ -103,106 +96,133 @@ jobs:
         working-directory: genhat-desktop
         run: npm run prepare:llama
 
-      # Build Tauri
       - name: Build Tauri App
         run: npx tauri build --bundles ${{ matrix.bundles }}
         working-directory: genhat-desktop
 
-      # Locate Build Artifacts (Windows) — only GenHat .msi and .exe installers
-      - name: Locate Build Artifacts (Windows)
+      - name: Stage installers (Windows)
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
           $bundleDir = Join-Path $env:GITHUB_WORKSPACE "genhat-desktop/src-tauri/target/release/bundle"
-          $files = Get-ChildItem -Path $bundleDir -Recurse -Include "*.msi","*.exe" -ErrorAction SilentlyContinue |
+          $outDir = Join-Path $env:GITHUB_WORKSPACE "dist-artifacts"
+          New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+          $files = Get-ChildItem -Path $bundleDir -Recurse -Include "*.exe" -ErrorAction SilentlyContinue |
             Where-Object { $_.Name -like "NELA*" }
           if (-not $files) { Write-Error "No NELA installers found in $bundleDir"; exit 1 }
-          $paths = ($files | ForEach-Object { $_.FullName }) -join "`n"
-          echo "ARTIFACT_PATHS<<EOF" >> $env:GITHUB_ENV
-          echo $paths >> $env:GITHUB_ENV
-          echo "EOF" >> $env:GITHUB_ENV
+          foreach ($f in $files) {
+            Copy-Item -Force $f.FullName (Join-Path $outDir $f.Name)
+          }
+          Get-ChildItem $outDir | ForEach-Object { $_.FullName }
 
-      # Locate Build Artifacts (Linux) — .AppImage and .deb
-      - name: Locate Build Artifacts (Linux)
+      - name: Stage installers (Linux)
         if: matrix.os == 'ubuntu-latest'
         run: |
           BUNDLE_DIR="genhat-desktop/src-tauri/target/release/bundle"
-          FILES=$(find "$BUNDLE_DIR" -type f \( -name "*.AppImage" -o -name "*.deb" \))
-          if [ -z "$FILES" ]; then echo "No Linux installers found in $BUNDLE_DIR"; exit 1; fi
-          echo "ARTIFACT_PATHS<<EOF" >> $GITHUB_ENV
-          echo "$FILES" >> $GITHUB_ENV
-          echo "EOF" >> $GITHUB_ENV
+          OUT_DIR="dist-artifacts"
+          mkdir -p "$OUT_DIR"
+          mapfile -t FILES < <(find "$BUNDLE_DIR" -type f -name "*.deb")
+          if [ "${#FILES[@]}" -eq 0 ]; then
+            echo "No .deb installers found in $BUNDLE_DIR"
+            exit 1
+          fi
+          for f in "${FILES[@]}"; do
+            cp -f "$f" "$OUT_DIR/"
+          done
+          ls -la "$OUT_DIR"
 
-      - name: Locate Build Artifacts (macOS)
+      - name: Stage installers (macOS)
         if: matrix.os == 'macos-latest'
         run: |
           BUNDLE_DIR="genhat-desktop/src-tauri/target/release/bundle"
+          OUT_DIR="dist-artifacts"
+          mkdir -p "$OUT_DIR"
 
-          # Collect .dmg files
-          DMG_FILES=$(find "$BUNDLE_DIR" -type f -name "*.dmg" -print)
+          while IFS= read -r dmg; do
+            [ -n "$dmg" ] && cp -f "$dmg" "$OUT_DIR/"
+          done < <(find "$BUNDLE_DIR" -type f -name "*.dmg" -print)
 
-          # Find .app bundles and zip them so they can be uploaded as files
-          APP_DIRS=$(find "$BUNDLE_DIR" -type d -name "*.app" -print)
-          ZIP_FILES=""
-          for app in $APP_DIRS; do
-            ZIP="${app}.zip"
-            rm -f "$ZIP"
-            ditto -c -k --keepParent "$app" "$ZIP"
-            if [ -z "$ZIP_FILES" ]; then
-              ZIP_FILES="$ZIP"
-            else
-              ZIP_FILES="$ZIP_FILES"$'\n'"$ZIP"
-            fi
-          done
+          while IFS= read -r app; do
+            [ -z "$app" ] && continue
+            ZIP_NAME="$(basename "$app").zip"
+            ZIP_PATH="$OUT_DIR/$ZIP_NAME"
+            rm -f "$ZIP_PATH"
+            ditto -c -k --keepParent "$app" "$ZIP_PATH"
+          done < <(find "$BUNDLE_DIR" -type d -name "*.app" -print)
 
-          FILES=""
-          if [ -n "$DMG_FILES" ]; then FILES="$DMG_FILES"; fi
-          if [ -n "$ZIP_FILES" ]; then
-            if [ -z "$FILES" ]; then FILES="$ZIP_FILES"; else FILES="$FILES"$'\n'"$ZIP_FILES"; fi
-          fi
-
-          if [ -z "$FILES" ]; then
+          if [ -z "$(ls -A "$OUT_DIR" 2>/dev/null)" ]; then
             echo "No macOS installers found in $BUNDLE_DIR"
             exit 1
           fi
+          ls -la "$OUT_DIR"
 
-          echo "ARTIFACT_PATHS<<EOF" >> $GITHUB_ENV
-          echo "$FILES" >> $GITHUB_ENV
-          echo "EOF" >> $GITHUB_ENV
+      - name: Upload OS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nela-${{ matrix.os_label }}
+          path: dist-artifacts/*
+          if-no-files-found: error
 
-      # Upload to a per-OS GitHub Release
-      - name: Upload to GitHub Release
+  release:
+    name: Create unified GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Normalize release tag
+        id: tag
+        run: |
+          RAW="${{ inputs.version }}"
+          RAW="${RAW#v}"
+          TAG="v${RAW}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Using release tag: $TAG"
+
+      - name: Download all OS artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          pattern: nela-*
+          merge-multiple: true
+
+      - name: List release assets
+        run: |
+          echo "Assets to publish:"
+          find release-assets -type f | sort
+          test -n "$(find release-assets -type f | head -1)" || {
+            echo "No artifacts downloaded"
+            exit 1
+          }
+
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ inputs.version }}-${{ matrix.os_label }}
-          name: "${{ inputs.release_name }} — ${{ matrix.os_label }}"
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: ${{ inputs.release_name }} ${{ steps.tag.outputs.tag }}
           draft: false
           prerelease: false
-          files: ${{ env.ARTIFACT_PATHS }}
-          
+          files: release-assets/*
+          fail_on_unmatched_files: true
+          make_latest: true
+
   trigger-vercel-deploy:
     name: Trigger Vercel Deploy
-    needs: build # This ensures it waits for the OS matrix builds to finish successfully
+    needs: release
     runs-on: ubuntu-latest
     steps:
       - name: Call Vercel Deploy Hook with Retries
         run: |
-          # Loop 4 times total (1 initial attempt + 3 retries)
           for i in 1 2 3 4; do
             echo "Attempt $i to trigger Vercel..."
-            
-            # -f: Fail on HTTP errors
-            # -sS: Silent progress bar, but show errors if it fails
             if curl -f -sS -X POST "${{ secrets.VERCEL_DEPLOY_HOOK }}"; then
               echo -e "\nSuccessfully triggered Vercel deploy!"
               exit 0
             fi
-            
             if [ $i -lt 4 ]; then
               echo "Attempt $i failed. Retrying in 10 seconds..."
               sleep 10
             fi
           done
-          
           echo "All attempts to trigger Vercel failed."
           exit 1
