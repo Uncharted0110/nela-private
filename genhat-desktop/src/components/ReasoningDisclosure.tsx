@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useMemo } from "react";
+import { windowThinkingForUi } from "../app/thinkingUiWindow";
 import "./ReasoningDisclosure.css";
 
 interface ReasoningDisclosureProps {
@@ -9,12 +10,15 @@ interface ReasoningDisclosureProps {
 
 /**
  * Cursor-style faded reasoning dropdown: live while streaming, collapsed when done.
+ * Only the last THINKING_UI_MAX_CHARS are mounted in the DOM to avoid freezes.
  */
 export default function ReasoningDisclosure({
   thinking,
   streaming = false,
 }: ReasoningDisclosureProps) {
   const trimmed = thinking.trim();
+  const display = useMemo(() => windowThinkingForUi(trimmed), [trimmed]);
+  const truncated = display !== trimmed && trimmed.length > 0;
   const [expanded, setExpanded] = useState(streaming);
   const [prevStreaming, setPrevStreaming] = useState(streaming);
   const bodyRef = useRef<HTMLPreElement>(null);
@@ -28,7 +32,7 @@ export default function ReasoningDisclosure({
     const el = bodyRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
-  }, [thinking, streaming, expanded]);
+  }, [display, streaming, expanded]);
 
   if (!trimmed) return null;
 
@@ -63,8 +67,13 @@ export default function ReasoningDisclosure({
         <div
           className={`reasoning-disclosure__body${streaming ? "" : " reasoning-disclosure__body--complete"}`}
         >
+          {truncated ? (
+            <p className="reasoning-disclosure__truncated" aria-hidden>
+              Showing latest thinking…
+            </p>
+          ) : null}
           <pre ref={bodyRef} className="reasoning-disclosure__text">
-            {trimmed}
+            {display}
           </pre>
         </div>
       ) : null}

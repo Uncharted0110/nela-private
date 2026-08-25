@@ -78,6 +78,15 @@
   line-height: 1.45;
   color: var(--color-txt-muted);
   opacity: 0.78;
+  /* Contain layout work for huge pre text */
+  contain: content;
+}
+
+.reasoning-disclosure__truncated {
+  margin: 0 0 0.35rem;
+  font-size: 0.65rem;
+  color: var(--color-txt-muted);
+  opacity: 0.65;
 }
 
 @keyframes reasoning-pulse {

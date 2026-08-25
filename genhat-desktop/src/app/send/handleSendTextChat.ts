@@ -2,6 +2,7 @@ import { Api } from "../../api";
 import type { ChatMessage, WebSearchResult } from "../../types";
 import { friendlyErrorFromUnknown } from "../friendlyError";
 import { createStreamChunkFlusher, createLatestValueFlusher, createThrottledFlusher } from "../streamUiBatch";
+import { windowThinkingForUi } from "../thinkingUiWindow";
 import {
   CONTEXT_COMPACTION_KEEP_RECENT,
   CONTEXT_COMPACTION_THRESHOLD,
@@ -496,7 +497,7 @@ export async function handleSendTextChat(
 
   const onThinking = (thinkingChunk: string) => {
     fullThinking += thinkingChunk;
-    thinkingFlusher.push(fullThinking);
+    thinkingFlusher.push(windowThinkingForUi(fullThinking));
   };
 
   // Tool loop when web, knowledge-base, and/or auto-artifact chart prep is needed.

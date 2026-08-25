@@ -2,6 +2,7 @@ import { Api } from "../../api";
 import type { ChatMessage } from "../../types";
 import { friendlyError } from "../friendlyError";
 import { createStreamChunkFlusher, createLatestValueFlusher } from "../streamUiBatch";
+import { windowThinkingForUi } from "../thinkingUiWindow";
 import {
   CONTEXT_COMPACTION_KEEP_RECENT,
   CONTEXT_COMPACTION_THRESHOLD,
@@ -108,7 +109,7 @@ export async function handleSendDirectDocs(
       },
       (thinkingChunk) => {
         fullThinking += thinkingChunk;
-        thinkingFlusher.push(fullThinking);
+        thinkingFlusher.push(windowThinkingForUi(fullThinking));
       },
       () => {
         chunkFlusher.flushNow();

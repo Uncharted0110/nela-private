@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useRef, memo, useCallback } from "react";
+import React, { useState, useEffect, useRef, memo, useCallback, useMemo } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { X, Wrench } from "lucide-react";
 import MarkdownRenderer from "./MarkdownRenderer";
 import type { ChatMessage, MediaAsset, IngestionStatus, ChatMode, ChatSession } from "../types";
@@ -156,7 +157,9 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
   const toolsMenuRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const highlightMirrorRef = useRef<HTMLDivElement>(null);
+  const messagesParentRef = useRef<HTMLDivElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
+  const stickToBottomRef = useRef(true);
 
   /** Tracks the number of messages that have already been rendered and animated.
    *  Only messages at index >= this value get the entrance animation.
@@ -167,12 +170,51 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
     setPrevMsgCount(messages.length);
   }, [messages.length]);
 
+  /** O(n) previous-user lookup for retry (avoids O(n²) scan inside the list). */
+  const retryTextByIndex = useMemo(() => {
+    const out: Array<string | null> = new Array(messages.length);
+    let lastUser: string | null = null;
+    for (let i = 0; i < messages.length; i++) {
+      const m = messages[i];
+      out[i] = m.role === "assistant" ? lastUser : null;
+      if (m.role === "user" && m.content.trim()) {
+        lastUser = m.content;
+      }
+    }
+    return out;
+  }, [messages]);
+
+  const rowVirtualizer = useVirtualizer({
+    count: messages.length,
+    getScrollElement: () => messagesParentRef.current,
+    estimateSize: () => 180,
+    overscan: 5,
+    getItemKey: (index) => messages[index]?.id ?? `msg-${index}`,
+  });
+  const virtualTotalSize = rowVirtualizer.getTotalSize();
+
+  // Track whether the user is near the bottom so we don't yank scroll while they read up.
   useEffect(() => {
-    // During token streaming, smooth scroll queues fight each other and push the
-    // live bubble out of view — use instant stick-to-bottom instead.
-    const behavior: ScrollBehavior = streamingContent ? "auto" : "smooth";
-    endRef.current?.scrollIntoView({ behavior, block: "end" });
-  }, [messages.length, streamingContent]);
+    const el = messagesParentRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+      stickToBottomRef.current = distance < 140;
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, []);
+
+  useEffect(() => {
+    // Follow the live bubble while tokens stream. While only thinking/loading,
+    // respect the user if they scrolled up to read history.
+    if (!streamingContent && !stickToBottomRef.current) return;
+    const el = messagesParentRef.current;
+    if (!el) return;
+    requestAnimationFrame(() => {
+      el.scrollTop = el.scrollHeight;
+    });
+  }, [messages.length, streamingContent, streamingThinking, isLoading, virtualTotalSize]);
 
   // Close composer menus while a response is generating.
   if (isLoading && (showAttachMenu || showToolsMenu)) {
@@ -801,51 +843,72 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
   // ─── Normal Chat State ───
   return (
     <div className="h-full flex-1 flex flex-col min-h-0">
-      <div className="messages-area flex-1 overflow-y-auto px-6 py-4">
-        {messages.map((msg, idx) => {
-          let retryText: string | null = null;
-          for (let i = idx - 1; i >= 0; i--) {
-            const prior = messages[i];
-            if (prior?.role === "user" && prior.content.trim()) {
-              retryText = prior.content;
-              break;
-            }
-          }
-          const isLast = idx === messages.length - 1;
-          return (
-            <ChatMessageItem
-              key={msg.id ?? `msg-${idx}`}
-              msg={msg}
-              idx={idx}
-              isNew={idx >= prevMsgCount}
-              isLast={isLast}
-              advanced={advanced}
-              mediaForMsg={mediaAssets[idx]}
-              liveToolStatus={isLast ? liveToolStatus : null}
-              sessionId={session?.id}
-              sessionArtifactPath={session?.artifactPath}
-              sessionArtifactPanelOpen={session?.artifactPanelOpen}
-              sessionStreamingArtifactTitle={
-                isLast ? session?.streamingArtifactTitle : undefined
-              }
-              sessionStreamingArtifactType={
-                isLast ? session?.streamingArtifactType : msg.streamingArtifactType
-              }
-              hasLiveStreamBody={
-                isLast &&
-                Boolean(
-                  session?.streamingArtifactHtml || session?.streamingArtifactCsv
-                )
-              }
-              retryText={retryText}
-              isLoading={isLoading}
-              onSend={onSend}
-              onRetry={onRetry}
-              saveAudioToSidebar={saveAudioToSidebar}
-              onOpenPreview={onOpenPreview}
-            />
-          );
-        })}
+      <div
+        ref={messagesParentRef}
+        className="messages-area flex-1 overflow-y-auto px-6 py-4"
+      >
+        <div
+          style={{
+            height: `${rowVirtualizer.getTotalSize()}px`,
+            width: "100%",
+            position: "relative",
+          }}
+        >
+          {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+            const idx = virtualRow.index;
+            const msg = messages[idx];
+            if (!msg) return null;
+            const isLast = idx === messages.length - 1;
+            return (
+              <div
+                key={virtualRow.key}
+                data-index={idx}
+                ref={rowVirtualizer.measureElement}
+                style={{
+                  position: "absolute",
+                  top: 0,
+                  left: 0,
+                  width: "100%",
+                  transform: `translateY(${virtualRow.start}px)`,
+                }}
+              >
+                <ChatMessageItem
+                  msg={msg}
+                  idx={idx}
+                  isNew={idx >= prevMsgCount}
+                  isLast={isLast}
+                  advanced={advanced}
+                  mediaForMsg={mediaAssets[idx]}
+                  liveToolStatus={isLast ? liveToolStatus : null}
+                  sessionId={session?.id}
+                  sessionArtifactPath={session?.artifactPath}
+                  sessionArtifactPanelOpen={session?.artifactPanelOpen}
+                  sessionStreamingArtifactTitle={
+                    isLast ? session?.streamingArtifactTitle : undefined
+                  }
+                  sessionStreamingArtifactType={
+                    isLast
+                      ? session?.streamingArtifactType
+                      : msg.streamingArtifactType
+                  }
+                  hasLiveStreamBody={
+                    isLast &&
+                    Boolean(
+                      session?.streamingArtifactHtml ||
+                        session?.streamingArtifactCsv
+                    )
+                  }
+                  retryText={retryTextByIndex[idx] ?? null}
+                  isLoading={isLoading}
+                  onSend={onSend}
+                  onRetry={onRetry}
+                  saveAudioToSidebar={saveAudioToSidebar}
+                  onOpenPreview={onOpenPreview}
+                />
+              </div>
+            );
+          })}
+        </div>
 
         {isLoading &&
           !messages.some(
