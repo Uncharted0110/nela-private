@@ -1209,7 +1209,7 @@ impl ProcessManager {
         let results = futures_util::future::join_all(warm_tasks).await;
 
         // If any pre-warm failed, unpin everything and return the error.
-        let mut errors: Vec<String> = results.into_iter().filter_map(|r| r.err()).collect();
+        let errors: Vec<String> = results.into_iter().filter_map(|r| r.err()).collect();
         if !errors.is_empty() {
             let mut reserved = self.reserved_model_ids.write().await;
             for id in &model_ids {

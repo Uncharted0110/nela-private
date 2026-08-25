@@ -262,7 +262,7 @@ fn build_ort_session_with_fallback(
             ]);
 
         match coreml_attempt {
-            Ok(builder) => match builder.commit_from_file(model_path) {
+            Ok(mut builder) => match builder.commit_from_file(model_path) {
                 Ok(session) => {
                     log::info!(
                         "[Parakeet] {model_label} using CoreML EP (intra={}, inter={})",

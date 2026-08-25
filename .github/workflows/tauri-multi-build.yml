@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Release version tag (e.g. v0.1.0)"
+        description: "Release version (e.g. v0.2.0 or 0.2.0). Applied to tauri.conf / package.json / Cargo.toml before build."
         required: true
       release_name:
         description: "Release title"
@@ -53,6 +53,12 @@ jobs:
       # Setup Rust
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Apply workflow version to Tauri package
+        working-directory: genhat-desktop
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: node scripts/set-release-version.mjs
 
       # Ensure model directories have placeholder files so Tauri glob resources resolve in CI
       - name: Ensure model placeholders

@@ -81,7 +81,7 @@ fn build_classifier_session(model_path: &Path) -> Result<Session, String> {
             ]);
 
         match coreml_attempt {
-            Ok(builder) => match builder.commit_from_file(model_path) {
+            Ok(mut builder) => match builder.commit_from_file(model_path) {
                 Ok(session) => {
                     log::info!(
                         "[OnnxClassifier] ORT session using CoreML EP (intra={}, inter={})",

@@ -66,7 +66,7 @@ fn path_to_data_uri(path: &Path) -> Result<String, String> {
         _ => "image/png",
     };
     let data = std::fs::read(path).map_err(|e| format!("Failed to read image: {e}"))?;
-    if (data.len() > 400 * 1024) {
+    if data.len() > 400 * 1024 {
         return Err("Image too large for artifact embedding (>400KB)".into());
     }
     Ok(format!("data:{mime};base64,{}", STANDARD.encode(&data)))

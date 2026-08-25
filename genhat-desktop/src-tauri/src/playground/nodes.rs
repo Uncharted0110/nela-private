@@ -6,7 +6,7 @@ use crate::registry::types::{TaskRequest, TaskResponse, TaskType};
 use crate::router::TaskRouter;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tauri::{Emitter, Manager};
+use tauri::Manager;
 
 /// Mutable execution context passed between nodes.
 pub struct RunContext {
