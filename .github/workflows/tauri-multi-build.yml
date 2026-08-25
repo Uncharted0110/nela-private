@@ -211,11 +211,21 @@ jobs:
     needs: release
     runs-on: ubuntu-latest
     steps:
+      # Redeploys the NELA-Webpage Vercel project so /download picks up the new release.
+      # Setup:
+      # 1. Vercel → NELA-Webpage project → Settings → Git → Deploy Hooks → Create Hook
+      # 2. Add the hook URL as repo secret VERCEL_DEPLOY_HOOK on nela-local/nela-private
       - name: Call Vercel Deploy Hook with Retries
+        env:
+          VERCEL_DEPLOY_HOOK: ${{ secrets.VERCEL_DEPLOY_HOOK }}
         run: |
+          if [ -z "$VERCEL_DEPLOY_HOOK" ]; then
+            echo "VERCEL_DEPLOY_HOOK secret is not set on this repo. Skipping."
+            exit 0
+          fi
           for i in 1 2 3 4; do
             echo "Attempt $i to trigger Vercel..."
-            if curl -f -sS -X POST "${{ secrets.VERCEL_DEPLOY_HOOK }}"; then
+            if curl -f -sS -X POST "$VERCEL_DEPLOY_HOOK"; then
               echo -e "\nSuccessfully triggered Vercel deploy!"
               exit 0
             fi
