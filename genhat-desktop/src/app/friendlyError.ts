@@ -11,8 +11,16 @@ export function friendlyError(raw: string | undefined | null): string {
 
   const lower = text.toLowerCase();
 
-  // Already friendly (from Rust cloud client / COPY) — pass through first sentence.
+  // Already one of our classified / COPY lines — keep the full next-step text.
+  const classifiedPassthrough = classifyArtifactFailure(text);
+  if (classifiedPassthrough && isOurArtifactCopy(text)) {
+    return classifiedPassthrough;
+  }
   if (looksAlreadyFriendly(lower) && !looksTechnical(text)) {
+    // Prefer full message when it already includes a next step.
+    if (hasNextStep(lower) && text.length < 320) {
+      return text;
+    }
     const firstSentence = text.split(/(?<=\.)\s+/)[0] ?? text;
     if (!looksTechnical(firstSentence)) return ensureNextStep(firstSentence);
   }
@@ -165,21 +173,8 @@ export function friendlyError(raw: string | undefined | null): string {
     return COPY.errorBilling;
   }
 
-  if (
-    lower.includes("generated html") ||
-    lower.includes("presentation html") ||
-    lower.includes("missing body") ||
-    lower.includes("multi-slide deck") ||
-    lower.includes("too little visible content") ||
-    lower.includes("styles without slide") ||
-    lower.includes("couldn't finish the presentation") ||
-    lower.includes("artifact") ||
-    lower.includes("spreadsheet") ||
-    lower.includes("workbook") ||
-    lower.includes("csv")
-  ) {
-    return COPY.errorArtifact;
-  }
+  const artifactMsg = classifyArtifactFailure(text);
+  if (artifactMsg) return artifactMsg;
 
   if (
     lower.includes("quota") ||
@@ -228,12 +223,136 @@ export function friendlyError(raw: string | undefined | null): string {
   return COPY.errorGeneric;
 }
 
+/**
+ * Map artifact/HTML/CSV failure strings to specific user-facing copy.
+ * Returns null when the text is not an artifact failure (e.g. chat that
+ * merely mentions the word "artifact").
+ */
+export function classifyArtifactFailure(
+  raw: string | undefined | null
+): string | null {
+  const text = (raw ?? "").trim();
+  if (!text) return null;
+  const lower = text.toLowerCase();
+
+  if (isOurArtifactCopy(text)) {
+    return text;
+  }
+
+  // Spreadsheet / CSV first (more specific than generic truncated).
+  if (
+    lower.includes("streamed csv") ||
+    lower.includes("spreadsheet plan") ||
+    lower.includes("excel sheet") ||
+    (lower.includes("workbook") &&
+      (lower.includes("empty") ||
+        lower.includes("fail") ||
+        lower.includes("truncat") ||
+        lower.includes("invalid") ||
+        lower.includes("parse"))) ||
+    (lower.includes("csv") &&
+      (lower.includes("empty") ||
+        lower.includes("header") ||
+        lower.includes("fail") ||
+        lower.includes("truncat") ||
+        lower.includes("invalid") ||
+        lower.includes("no rows")))
+  ) {
+    return COPY.errorArtifactSpreadsheet;
+  }
+
+  // Preview ready but save/validation failed.
+  if (
+    lower.includes("preview is ready but saving failed") ||
+    lower.includes("couldn't save the file") ||
+    lower.includes("saving failed") ||
+    (lower.includes("save") &&
+      lower.includes("fail") &&
+      (lower.includes("html") ||
+        lower.includes("file") ||
+        lower.includes("artifact") ||
+        lower.includes("preview")))
+  ) {
+    return COPY.errorArtifactSave;
+  }
+
+  // Truncated / cut off mid-generation.
+  if (
+    lower.includes("truncated") ||
+    lower.includes("cut off") ||
+    lower.includes("styles without slide") ||
+    lower.includes("couldn't finish the presentation") ||
+    lower.includes("output limit") ||
+    lower.includes("larger output") ||
+    (lower.includes("generated html") && lower.includes("empty or truncated")) ||
+    (lower.includes("presentation html") &&
+      (lower.includes("truncated") || lower.includes("looks truncated")))
+  ) {
+    return COPY.errorArtifactTruncated;
+  }
+
+  // Empty / almost no usable content.
+  if (
+    lower.includes("almost no visible content") ||
+    lower.includes("too little visible content") ||
+    lower.includes("missing body content") ||
+    lower.includes("does not look like a multi-slide") ||
+    (lower.includes("generated html") &&
+      (lower.includes("empty") || lower.includes("no visible"))) ||
+    (lower.includes("presentation html") && lower.includes("too little"))
+  ) {
+    return COPY.errorArtifactEmpty;
+  }
+
+  // Explicit artifact pipeline failures (not mere mention of the word).
+  if (
+    lower.includes("generated html") ||
+    lower.includes("presentation html") ||
+    lower.includes("nela-artifact") ||
+    lower.includes("streamed artifact") ||
+    lower.includes("artifact save") ||
+    lower.includes("couldn't finish that file") ||
+    lower.includes("couldn't finish the file") ||
+    lower.includes("model returned an empty") ||
+    lower.includes("model did not return valid")
+  ) {
+    return COPY.errorArtifact;
+  }
+
+  return null;
+}
+
 /** Convenience for catch blocks. */
 export function friendlyErrorFromUnknown(err: unknown): string {
   if (err instanceof DOMException && err.name === "AbortError") {
     return COPY.errorCancelled;
   }
   return friendlyError(err instanceof Error ? err.message : String(err));
+}
+
+/**
+ * Banner text for an Error-stage artifact message.
+ * Short classified errors show once; long optimistic prose gets a truncated banner
+ * instead of remapping the whole essay via `includes("artifact")`.
+ */
+export function artifactErrorBannerText(content: string | undefined | null): string {
+  const t = (content ?? "").trim();
+  if (!t) return COPY.errorArtifact;
+  if (t.length < 280 && !/\n\n/.test(t)) {
+    return classifyArtifactFailure(t) ?? friendlyError(t);
+  }
+  // Long model prose left on an Error stage (legacy / edge) → honest truncated banner.
+  return COPY.errorArtifactTruncated;
+}
+
+function isOurArtifactCopy(text: string): boolean {
+  return (
+    text === COPY.errorArtifact ||
+    text === COPY.errorArtifactTruncated ||
+    text === COPY.errorArtifactEmpty ||
+    text === COPY.errorArtifactSave ||
+    text === COPY.errorArtifactSpreadsheet
+  );
 }
 
 function looksAlreadyFriendly(lower: string): boolean {
@@ -247,6 +366,9 @@ function looksAlreadyFriendly(lower: string): boolean {
     lower.startsWith("an account with that email") ||
     lower.startsWith("that sign-in") ||
     lower.startsWith("that took too long") ||
+    lower.startsWith("that file was cut off") ||
+    lower.startsWith("i couldn't build usable") ||
+    lower.startsWith("a preview is ready") ||
     lower.startsWith("too many requests") ||
     lower.startsWith("nela cloud is having") ||
     lower.startsWith("nela cloud is busy") ||
@@ -264,10 +386,10 @@ function looksAlreadyFriendly(lower: string): boolean {
   );
 }
 
-function ensureNextStep(message: string): string {
-  const lower = message.toLowerCase();
-  if (
+function hasNextStep(lower: string): boolean {
+  return (
     lower.includes("try again") ||
+    lower.includes("ask me") ||
     lower.includes("sign in") ||
     lower.includes("check ") ||
     lower.includes("upgrade") ||
@@ -275,8 +397,15 @@ function ensureNextStep(message: string): string {
     lower.includes("open ") ||
     lower.includes("wait ") ||
     lower.includes("choose ") ||
-    lower.includes("close other")
-  ) {
+    lower.includes("close other") ||
+    lower.includes("continue") ||
+    lower.includes("review it")
+  );
+}
+
+function ensureNextStep(message: string): string {
+  const lower = message.toLowerCase();
+  if (hasNextStep(lower)) {
     return message;
   }
   return `${message.replace(/\.*\s*$/, "")}. Please try again.`;

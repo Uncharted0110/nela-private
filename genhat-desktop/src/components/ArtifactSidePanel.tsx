@@ -411,7 +411,7 @@ export default function ArtifactSidePanel({
     throttleRef.current = setTimeout(() => {
       throttleRef.current = null;
       apply();
-    }, 250);
+    }, 450);
 
     return undefined;
   }, [effectiveHtml, type, savedPath]);

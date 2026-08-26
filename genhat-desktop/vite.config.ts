@@ -10,4 +10,27 @@ export default defineConfig({
       ignored: ['**/src-tauri/**'],
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes("node_modules/echarts") || id.includes("echarts-for-react")) {
+            return "echarts";
+          }
+          if (id.includes("node_modules/pdfjs-dist")) {
+            return "pdfjs";
+          }
+          if (id.includes("node_modules/@xyflow")) {
+            return "xyflow";
+          }
+          if (id.includes("node_modules/docx-preview") || id.includes("node_modules/docx")) {
+            return "docx";
+          }
+          if (id.includes("node_modules/katex")) {
+            return "katex";
+          }
+        },
+      },
+    },
+  },
 })

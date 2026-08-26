@@ -11,6 +11,7 @@ import {
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { useAuthStore } from "../stores/authStore";
 import { useCloudStore } from "../stores/cloudStore";
+import { useUIStore } from "../stores/uiStore";
 import { PRESET_AVATARS } from "../assets/avatars";
 import type { AvatarSource } from "../types";
 import { isPremiumAccount } from "../app/premiumAccess";
@@ -49,6 +50,8 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) => {
   const refreshProfile = useAuthStore((s) => s.refreshProfile);
   const refreshEntitlement = useCloudStore((s) => s.refreshEntitlement);
   const entitlement = useCloudStore((s) => s.entitlement);
+  const performanceMode = useUIStore((s) => s.performanceMode);
+  const setPerformanceMode = useUIStore((s) => s.setPerformanceMode);
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -311,6 +314,23 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) => {
                   disabled={loading}
                   autoComplete="email"
                 />
+              </label>
+
+              <label className="profile-field">
+                <span>Performance</span>
+                <select
+                  value={performanceMode}
+                  onChange={(e) =>
+                    setPerformanceMode(
+                      e.target.value as "auto" | "low" | "full"
+                    )
+                  }
+                  disabled={loading}
+                >
+                  <option value="auto">Auto (detect low-end device)</option>
+                  <option value="low">Low (faster on weak PCs)</option>
+                  <option value="full">Full visual effects</option>
+                </select>
               </label>
 
               {error && <p className="profile-error">{error}</p>}

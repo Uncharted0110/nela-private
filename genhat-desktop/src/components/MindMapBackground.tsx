@@ -10,8 +10,32 @@ const PARTICLE_COLOR = "rgba(0, 213, 255, 0.89)";
 const PARTICLE_DISTANCE = 40;
 const PARTICLE_RADIUS = 2;
 const MOUSE_RADIUS = 100;
-const MAX_PARTICLES = 3200;
-const TARGET_FPS = 45;
+const MAX_PARTICLES_FULL = 3200;
+const MAX_PARTICLES_LOW = 600;
+const TARGET_FPS_FULL = 45;
+const TARGET_FPS_LOW = 24;
+
+function maxParticlesForDevice(): number {
+  try {
+    if (document.documentElement.dataset.nelaPerf === "low") {
+      return MAX_PARTICLES_LOW;
+    }
+  } catch {
+    /* ignore */
+  }
+  return MAX_PARTICLES_FULL;
+}
+
+function targetFpsForDevice(): number {
+  try {
+    if (document.documentElement.dataset.nelaPerf === "low") {
+      return TARGET_FPS_LOW;
+    }
+  } catch {
+    /* ignore */
+  }
+  return TARGET_FPS_FULL;
+}
 
 interface Particle {
   x: number;
@@ -56,7 +80,7 @@ const MindMapBackground: React.FC<MindMapBackgroundProps> = ({ width, height }) 
         x < w;
         x += PARTICLE_DISTANCE
       ) {
-        if (count >= MAX_PARTICLES) {
+        if (count >= maxParticlesForDevice()) {
           reachedCap = true;
           break;
         }
@@ -80,7 +104,7 @@ const MindMapBackground: React.FC<MindMapBackgroundProps> = ({ width, height }) 
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    const minInterval = 1000 / TARGET_FPS;
+    const minInterval = 1000 / targetFpsForDevice();
     if (ts - lastFrameTimeRef.current < minInterval) {
       animationRef.current = requestAnimationFrame(animate);
       return;

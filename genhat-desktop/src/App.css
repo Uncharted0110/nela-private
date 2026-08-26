@@ -241,6 +241,36 @@
   cursor: not-allowed;
 }
 
+/* ── Low-end / performance mode (data-nela-perf="low" on <html>) ─────────── */
+html[data-nela-perf="low"] .backdrop-blur-xl,
+html[data-nela-perf="low"] .backdrop-blur-lg,
+html[data-nela-perf="low"] .backdrop-blur-md,
+html[data-nela-perf="low"] .backdrop-blur-sm,
+html[data-nela-perf="low"] .backdrop-blur,
+html[data-nela-perf="low"] [class*="backdrop-blur"] {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+html[data-nela-perf="low"] .animate-pulse,
+html[data-nela-perf="low"] .animate-spin,
+html[data-nela-perf="low"] .nela-orb,
+html[data-nela-perf="low"] .mode-banner-border-flow {
+  animation: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .backdrop-blur-xl,
+  .backdrop-blur-lg,
+  .backdrop-blur-md,
+  .backdrop-blur-sm,
+  .backdrop-blur,
+  [class*="backdrop-blur"] {
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+}
+
 
 /* ══════════════════════════════════════════════════════════════════════════════
    SIDEBAR UNDERGLOW EFFECTS

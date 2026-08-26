@@ -2,6 +2,11 @@ import { create } from "zustand";
 import type { AppModalKind } from "../components/AppModal";
 import type { ImportModelProfile } from "../types";
 import { friendlyError } from "../app/friendlyError";
+import {
+  getStoredPerformanceMode,
+  setStoredPerformanceMode,
+  type PerformanceMode,
+} from "../app/performanceMode";
 
 export let modalResolve: ((value: boolean) => void) | null = null;
 
@@ -35,6 +40,8 @@ interface UIState {
   pdfViewerData: { data: string; title: string } | null;
   pdfLoading: boolean;
   docViewerFile: { filePath: string; title: string } | null;
+  /** auto | low | full — drives data-nela-perf on <html>. */
+  performanceMode: "auto" | "low" | "full";
 }
 
 interface UIActions {
@@ -60,6 +67,7 @@ interface UIActions {
   setPdfViewerData: (data: { data: string; title: string } | null) => void;
   setPdfLoading: (loading: boolean) => void;
   setDocViewerFile: (file: { filePath: string; title: string } | null) => void;
+  setPerformanceMode: (mode: "auto" | "low" | "full") => void;
   showModal: (
     kind: AppModalKind,
     title: string,
@@ -107,6 +115,7 @@ export const useUIStore = create<UIState & UIActions>((set, get) => ({
   pdfViewerData: null,
   pdfLoading: false,
   docViewerFile: null,
+  performanceMode: getStoredPerformanceMode(),
 
   setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
   setProfileOpen: (profileOpen) => set({ profileOpen }),
@@ -116,6 +125,10 @@ export const useUIStore = create<UIState & UIActions>((set, get) => ({
     set({ suppressStartupModal }),
   setHfModalOpen: (hfModalOpen) => set({ hfModalOpen }),
   setHfModalPreset: (hfModalPreset) => set({ hfModalPreset }),
+  setPerformanceMode: (performanceMode: PerformanceMode) => {
+    setStoredPerformanceMode(performanceMode);
+    set({ performanceMode });
+  },
 
   setAppModal: (modal) =>
     set((state) => ({

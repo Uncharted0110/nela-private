@@ -80,13 +80,19 @@ import {
   continuedArtifactFollowup,
   defaultArtifactFollowup,
   defaultArtifactIntro,
+  failedArtifactSaveFollowup,
+  previewReadySoftFollowup,
   truncatedArtifactFollowup,
 } from "../artifactChatCopy";
-import { friendlyErrorFromUnknown } from "../friendlyError";
+import {
+  classifyArtifactFailure,
+  friendlyErrorFromUnknown,
+} from "../friendlyError";
+import { COPY } from "../copy";
+import { isPreviewableHtmlDocument } from "../artifactHtmlOutput";
 import { saveStreamedArtifact } from "../streamArtifactSave";
 import { completeTruncatedPresentationHtml } from "../presentationHtmlCompleteness";
 import {
-  createStreamChunkFlusher,
   createThrottledFlusher,
 } from "../streamUiBatch";
 import {
@@ -1120,9 +1126,10 @@ SOURCE + USER-BRIEF RULES (mandatory):
     let streamedArtifactFilename = "";
 
     let csvPanelOpened = false;
+    let htmlPanelOpened = false;
     const pushArtifactSession = () => {
+      const store = useArtifactStreamStore.getState();
       if (streamedArtifactType === "text/csv") {
-        const store = useArtifactStreamStore.getState();
         if (!csvPanelOpened) {
           store.begin({
             sessionId: sid,
@@ -1165,6 +1172,16 @@ SOURCE + USER-BRIEF RULES (mandatory):
         });
         return;
       }
+      if (!htmlPanelOpened) {
+        store.begin({
+          sessionId: sid,
+          type: "text/html",
+          title: streamedArtifactTitle,
+        });
+      }
+      store.setHtml(streamedArtifactBody, streamedArtifactTitle);
+      if (htmlPanelOpened) return;
+      htmlPanelOpened = true;
       ctx.updateSession(sid, (prev) => {
         const updated = [...prev.messages];
         const idx = updated
@@ -1193,13 +1210,12 @@ SOURCE + USER-BRIEF RULES (mandatory):
           streamingArtifactType: streamedArtifactType,
           streamingArtifactTitle: streamedArtifactTitle || undefined,
           messages: updated,
-          streamingArtifactHtml: streamedArtifactBody,
         };
       });
     };
     const artifactUiFlusher = cloudSpreadsheetFreeform
       ? createThrottledFlusher(pushArtifactSession, 280)
-      : createStreamChunkFlusher(pushArtifactSession);
+      : createThrottledFlusher(pushArtifactSession, 450);
 
     const applyStreamEmit = (emit: {
       chatDelta: string;
@@ -1217,7 +1233,7 @@ SOURCE + USER-BRIEF RULES (mandatory):
         streamedArtifactBody += emit.artifactDelta;
         updateArtifactMsg("WritingCode");
         // Batch panel updates to one paint/frame — avoids freezing the UI.
-        artifactUiFlusher.push("1");
+        artifactUiFlusher.push();
       } else if (emit.chatDelta.trim() && streamParser) {
         const intro = stripPartialArtifactTags(
           streamParser.chatBeforeArtifact
@@ -1431,7 +1447,10 @@ SOURCE + USER-BRIEF RULES (mandatory):
                     asPresentation,
                   });
                 const followup = deckStillIncomplete
-                  ? truncatedArtifactFollowup({ asPresentation })
+                  ? truncatedArtifactFollowup({
+                      asPresentation,
+                      type: streamedArtifactType,
+                    })
                   : deckContinued
                     ? continuedArtifactFollowup({ asPresentation })
                     : safeFollowup ||
@@ -1505,6 +1524,140 @@ SOURCE + USER-BRIEF RULES (mandatory):
                     streamedArtifactBody = body;
                   }
                   console.error("Streamed artifact save failed:", streamErr);
+
+                  const previewableHtml =
+                    streamedArtifactType === "text/html" &&
+                    schemaId !== "presentation_synthesis" &&
+                    isPreviewableHtmlDocument(body);
+
+                  if (previewableHtml) {
+                    // Soft success: working preview must not become a red Error bubble.
+                    try {
+                      const retry = await saveStreamedArtifact({
+                        type: streamedArtifactType,
+                        rawBody: body,
+                        topic: text,
+                        title: streamedArtifactTitle || undefined,
+                        filename: streamedArtifactFilename || undefined,
+                        asPresentation: false,
+                        relaxValidation: true,
+                        imagePool: imagePool.length ? imagePool : undefined,
+                        chartPool: chartPool.length ? chartPool : undefined,
+                      });
+                      const filename =
+                        retry.path.split(/[/\\]/).pop() ?? "artifact";
+                      const title =
+                        streamedArtifactTitle ||
+                        filename.replace(/\.(html?|xlsx|csv)$/i, "");
+                      const prose =
+                        safeIntro ||
+                        defaultArtifactIntro({
+                          title,
+                          type: streamedArtifactType,
+                          asPresentation: false,
+                        });
+                      ctx.updateSession(sid, (prev) => {
+                        const updated = [...prev.messages];
+                        const idx = updated
+                          .map((m, i) => ({ m, i }))
+                          .reverse()
+                          .find(
+                            ({ m }) =>
+                              m.role === "assistant" &&
+                              m.artifactStage !== undefined
+                          )?.i;
+                        if (idx !== undefined && updated[idx]) {
+                          updated[idx] = {
+                            ...updated[idx]!,
+                            content: prose,
+                            artifactFollowup:
+                              safeFollowup ||
+                              defaultArtifactFollowup({
+                                type: streamedArtifactType,
+                              }),
+                            artifactStage: "LivePreview",
+                            artifactPath: retry.path,
+                            artifactUseSidePanel: true,
+                            artifactTitle: title,
+                            streamingArtifactType: streamedArtifactType,
+                          };
+                        }
+                        useArtifactStreamStore.getState().clear();
+                        return {
+                          loading: false,
+                          artifactStreamActive: true,
+                          artifactPanelOpen: true,
+                          artifactStage: "LivePreview",
+                          artifactPath: retry.path,
+                          streamingArtifactType: streamedArtifactType,
+                          streamingArtifactTitle: title,
+                          messages: updated,
+                          streamingArtifactCsv: undefined,
+                          streamingArtifactHtml: streamedArtifactBody,
+                        };
+                      });
+                      useChatModeStore.getState().setLiveToolStatus(null);
+                      return;
+                    } catch (retryErr) {
+                      console.warn(
+                        "Relaxed artifact save failed; keeping preview:",
+                        retryErr
+                      );
+                      const title = streamedArtifactTitle || "Artifact";
+                      const prose =
+                        safeIntro ||
+                        defaultArtifactIntro({
+                          title,
+                          type: streamedArtifactType,
+                        });
+                      ctx.updateSession(sid, (prev) => {
+                        const updated = [...prev.messages];
+                        const idx = updated
+                          .map((m, i) => ({ m, i }))
+                          .reverse()
+                          .find(
+                            ({ m }) =>
+                              m.role === "assistant" &&
+                              m.artifactStage !== undefined
+                          )?.i;
+                        if (idx !== undefined && updated[idx]) {
+                          updated[idx] = {
+                            ...updated[idx]!,
+                            content: prose,
+                            artifactFollowup: previewReadySoftFollowup({
+                              type: streamedArtifactType,
+                              saved: false,
+                            }),
+                            artifactStage: "LivePreview",
+                            artifactUseSidePanel: true,
+                            artifactTitle: title,
+                            streamingArtifactType: streamedArtifactType,
+                          };
+                        }
+                        return {
+                          loading: false,
+                          artifactStreamActive: true,
+                          artifactPanelOpen: true,
+                          artifactStage: "LivePreview",
+                          streamingArtifactType: streamedArtifactType,
+                          streamingArtifactTitle: title,
+                          messages: updated,
+                          streamingArtifactHtml: streamedArtifactBody,
+                          streamingArtifactCsv: undefined,
+                        };
+                      });
+                      useChatModeStore.getState().setLiveToolStatus(null);
+                      return;
+                    }
+                  }
+
+                  const rawMsg = msg || String(streamErr);
+                  const classified =
+                    classifyArtifactFailure(rawMsg) ||
+                    classifyArtifactFailure(
+                      `Preview is ready but saving failed: ${rawMsg}`
+                    ) ||
+                    COPY.errorArtifactSave;
                   ctx.updateSession(sid, {
                     loading: false,
                     artifactStreamActive: true,
@@ -1518,10 +1671,29 @@ SOURCE + USER-BRIEF RULES (mandatory):
                   updateArtifactMsg(
                     "Error",
                     null,
-                    friendlyErrorFromUnknown(
-                      msg ? `Preview is ready but saving failed: ${msg}` : streamErr
-                    )
+                    classified
                   );
+                  // Attach recovery follow-up on the error message.
+                  ctx.updateSession(sid, (prev) => {
+                    const updated = [...prev.messages];
+                    const idx = updated
+                      .map((m, i) => ({ m, i }))
+                      .reverse()
+                      .find(
+                        ({ m }) =>
+                          m.role === "assistant" && m.artifactStage === "Error"
+                      )?.i;
+                    if (idx !== undefined && updated[idx]) {
+                      updated[idx] = {
+                        ...updated[idx]!,
+                        artifactFollowup: failedArtifactSaveFollowup({
+                          type: streamedArtifactType,
+                          asPresentation: schemaId === "presentation_synthesis",
+                        }),
+                      };
+                    }
+                    return { messages: updated };
+                  });
                   return;
                 } else {
                   throw streamErr;

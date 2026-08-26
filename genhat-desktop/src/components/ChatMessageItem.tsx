@@ -8,7 +8,7 @@ import ArtifactChip from "./ArtifactChip";
 import { Api } from "../api";
 import type { ChatMessage, EntitlementResponse, MediaAsset } from "../types";
 import { COPY } from "../app/copy";
-import { friendlyError } from "../app/friendlyError";
+import { artifactErrorBannerText } from "../app/friendlyError";
 import { SlashHighlightedText } from "./SlashHighlightedText";
 import GenerationProgressLabel from "./GenerationProgressLabel";
 import WebSearchDisclosure from "./WebSearchDisclosure";
@@ -380,6 +380,25 @@ function ChatMessageItemInner({
                                 msg.content?.trim() && !looksLikeArtifactDump(msg.content)
                                   ? scrubChatArtifactProtocol(msg.content)
                                   : "";
+                              const previewAlive =
+                                Boolean(hasLiveStreamBody) ||
+                                Boolean(msg.artifactPath) ||
+                                stage === "LivePreview";
+                              // Working preview + Error stage = soft warning, not a dead failure.
+                              const softPreviewWarning =
+                                stage === "Error" &&
+                                previewAlive &&
+                                (hasLiveStreamBody || Boolean(msg.artifactPath));
+                              const errorBanner =
+                                stage === "Error"
+                                  ? softPreviewWarning
+                                    ? COPY.errorArtifactSave
+                                    : artifactErrorBannerText(msg.content)
+                                  : null;
+                              // Keep model intro when the page actually rendered.
+                              const showIntroMarkdown =
+                                Boolean(safeContent) &&
+                                (stage !== "Error" || softPreviewWarning);
                               const chipTitle =
                                 msg.artifactTitle ||
                                 sessionStreamingArtifactTitle ||
@@ -393,18 +412,22 @@ function ChatMessageItemInner({
                                 "text/html";
                               const panelOpen = Boolean(
                                 sessionArtifactPanelOpen === true &&
-                                  msg.artifactPath &&
-                                  sessionArtifactPath === msg.artifactPath
+                                  ((msg.artifactPath &&
+                                    sessionArtifactPath === msg.artifactPath) ||
+                                    (!msg.artifactPath &&
+                                      hasLiveStreamBody &&
+                                      isLast))
                               );
                               const showChip =
                                 Boolean(msg.artifactPath) ||
                                 (isLast && hasLiveStreamBody) ||
                                 stage === "LivePreview" ||
-                                stage === "WritingCode";
+                                stage === "WritingCode" ||
+                                softPreviewWarning;
 
                               return (
                                 <>
-                                  {generating && !safeContent && (
+                                  {generating && !safeContent && !errorBanner && (
                                     <div className="space-y-2">
                                       {liveToolStatus && isLast && (
                                         <div className="web-search-live" role="status">
@@ -428,32 +451,40 @@ function ChatMessageItemInner({
                                       )}
                                     </div>
                                   )}
-                                  {safeContent ? (
+                                  {showIntroMarkdown ? (
                                     <MarkdownRenderer
                                       content={safeContent}
                                       sources={msg.webSearchResult?.results}
                                     />
                                   ) : null}
-                                  {msg.artifactStage === "Error" && (
-                                    <div className="mt-2 text-[0.85rem] text-red-300/90">
-                                      {friendlyError(msg.content)}
-                                      <button
-                                        type="button"
-                                        className="mt-2 block text-[0.78rem] text-neon hover:text-neon-hover underline-offset-2 hover:underline"
-                                        onClick={runRetry}
-                                        disabled={!canRetry}
-                                      >
-                                        {COPY.retry}
-                                      </button>
+                                  {errorBanner && (
+                                    <div
+                                      className={`mt-2 text-[0.85rem] ${
+                                        softPreviewWarning
+                                          ? "text-amber-200/90"
+                                          : "text-red-300/90"
+                                      }`}
+                                    >
+                                      {errorBanner}
+                                      {!softPreviewWarning && (
+                                        <button
+                                          type="button"
+                                          className="mt-2 block text-[0.78rem] text-neon hover:text-neon-hover underline-offset-2 hover:underline"
+                                          onClick={runRetry}
+                                          disabled={!canRetry}
+                                        >
+                                          {COPY.retry}
+                                        </button>
+                                      )}
                                     </div>
                                   )}
-                                  {showChip && msg.artifactStage !== "Error" && (
+                                  {showChip && (
                                     <ArtifactChip
                                       title={chipTitle}
                                       type={chipType}
                                       path={msg.artifactPath}
                                       panelOpen={panelOpen}
-                                      loading={generating || !msg.artifactPath}
+                                      loading={generating || (!msg.artifactPath && !hasLiveStreamBody)}
                                       onTogglePanel={() => {
                                         if (!sessionId) return;
                                         const path = msg.artifactPath;
@@ -490,8 +521,7 @@ function ChatMessageItemInner({
                                       }}
                                     />
                                   )}
-                                  {msg.artifactFollowup?.trim() &&
-                                    msg.artifactStage !== "Error" && (
+                                  {msg.artifactFollowup?.trim() && (
                                       <div className="mt-3">
                                         <MarkdownRenderer
                                           content={scrubChatArtifactProtocol(
@@ -507,10 +537,12 @@ function ChatMessageItemInner({
                           </>
                         ) : (
                           <>
-                            <MarkdownRenderer
-                              content={scrubChatArtifactProtocol(msg.content)}
-                              sources={msg.webSearchResult?.results}
-                            />
+                            {msg.artifactStage !== "Error" && (
+                              <MarkdownRenderer
+                                content={scrubChatArtifactProtocol(msg.content)}
+                                sources={msg.webSearchResult?.results}
+                              />
+                            )}
                             {mediaForMsg && mediaForMsg.length > 0 && <MediaGallery assets={mediaForMsg} />}
                             {(msg.artifactPath || msg.artifactStage) && (
                               <div className="mt-3">
@@ -518,8 +550,22 @@ function ChatMessageItemInner({
                                   key={`artifact-${idx}-${msg.artifactPath ?? "pending"}`}
                                   artifactPath={msg.artifactPath}
                                   artifactStage={msg.artifactStage as PipelineStageKind | null | undefined}
-                                  errorMessage={msg.artifactStage === "Error" ? friendlyError(msg.content) : undefined}
+                                  errorMessage={
+                                    msg.artifactStage === "Error"
+                                      ? artifactErrorBannerText(msg.content)
+                                      : undefined
+                                  }
                                 />
+                                {msg.artifactFollowup?.trim() && (
+                                  <div className="mt-3">
+                                    <MarkdownRenderer
+                                      content={scrubChatArtifactProtocol(
+                                        msg.artifactFollowup
+                                      )}
+                                      sources={msg.webSearchResult?.results}
+                                    />
+                                  </div>
+                                )}
                                 {msg.artifactStage === "Error" && (
                                   <button
                                     type="button"

@@ -48,7 +48,7 @@ export default function AppMainTopBar({
   const modeSub = isCloud ? COPY.modeCloudSub : COPY.modePrivateSub;
 
   return (
-    <header className="app-main-topbar min-h-14 py-2 flex items-center justify-between px-6 border-b border-glass-border bg-void-800/80 backdrop-blur-xl shrink-0 z-40">
+    <header className="app-main-topbar min-h-14 py-2 flex items-center justify-between px-6 border-b border-glass-border bg-void-800 shrink-0 z-40">
       <div className="flex flex-col items-start gap-1.5">
         <div
           className="inline-flex items-center gap-1.5 text-[0.78rem] font-medium text-txt-secondary"

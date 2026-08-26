@@ -30,7 +30,7 @@ export async function handleSendDirectDocs(
     ctx.generalIntervalRef.current = setInterval(() => {
       const elapsed = Math.floor((Date.now() - directStartTime) / 100) / 10;
       ctx.setGeneralElapsedTime(elapsed);
-    }, 100);
+    }, 500);
 
     const contextWindowTokens = ctx.getContextWindowTokens(ctx.selectedModel);
     const maxTotalChars = Math.max(

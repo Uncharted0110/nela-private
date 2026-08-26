@@ -73,7 +73,7 @@ const SidebarNav: React.FC<SidebarNavProps> = ({
 
   return (
     <nav
-      className="relative flex flex-col gap-2 py-4 w-14 min-w-14 bg-void-800/80 backdrop-blur-xl items-center"
+      className="relative flex flex-col gap-2 py-4 w-14 min-w-14 bg-void-800 items-center"
       data-tour="sidebar-nav"
     >
       <button

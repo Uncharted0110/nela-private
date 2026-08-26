@@ -6,7 +6,7 @@ interface PlaygroundSidebarProps {
 
 export default function PlaygroundSidebar({ onOpen }: PlaygroundSidebarProps) {
   return (
-    <aside className="w-[280px] min-w-[280px] border-r border-glass-border bg-void-800/80 backdrop-blur-xl flex flex-col">
+    <aside className="w-[280px] min-w-[280px] border-r border-glass-border bg-void-800 flex flex-col">
       <div className="h-10 px-4 flex items-center shrink-0">
         <span className="text-2xl font-semibold mt-2 text-txt">Playground</span>
       </div>

@@ -2,6 +2,7 @@ import { listen } from "@tauri-apps/api/event";
 import { Api } from "../../api";
 import { friendlyError } from "../friendlyError";
 import { withNelaIdentity } from "../nelaSystemPrompt";
+import { createStreamChunkFlusher } from "../streamUiBatch";
 import type { SendHandlerContext } from "./types";
 
 export async function handleSendVision(
@@ -21,7 +22,7 @@ export async function handleSendVision(
     ctx.generalIntervalRef.current = setInterval(() => {
       const elapsed = Math.floor((Date.now() - startTime) / 100) / 10;
       ctx.setGeneralElapsedTime(elapsed);
-    }, 100);
+    }, 500);
 
     ctx.visionUnlistenRef.current?.();
     ctx.visionUnlistenRef.current = null;
@@ -29,10 +30,18 @@ export async function handleSendVision(
     let visionResponse = "";
     let firstTokenTimeMs: number | null = null;
 
+    const chunkFlusher = createStreamChunkFlusher((batched) => {
+      visionResponse += batched;
+      ctx.updateSession(sid, {
+        streamingContent: visionResponse,
+      });
+    });
+
     const unlisten = await listen<{ chunk: string; done: boolean }>(
       "vision-stream",
       (event) => {
         if (event.payload.done) {
+          chunkFlusher.flushNow();
           if (ctx.generalIntervalRef.current) clearInterval(ctx.generalIntervalRef.current);
           const totalTime = Math.floor((Date.now() - startTime) / 100) / 10;
           const timeToFirstToken =
@@ -68,10 +77,7 @@ export async function handleSendVision(
           if (firstTokenTimeMs === null) {
             firstTokenTimeMs = Date.now();
           }
-          visionResponse += event.payload.chunk;
-          ctx.updateSession(sid, (prev) => ({
-            streamingContent: prev.streamingContent + event.payload.chunk,
-          }));
+          chunkFlusher.push(event.payload.chunk);
         }
       }
     );

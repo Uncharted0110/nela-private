@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { lazy, Suspense, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
@@ -11,8 +11,11 @@ import { openPath } from "@tauri-apps/plugin-opener";
 import { Api } from "../api";
 import type { SearchHit } from "../types";
 import { SourceCitation } from "./SourceCitation";
-import { ChartViewer } from "./ChartViewer";
 import { tryParseChartPayload } from "../prompts/chartPrompt";
+
+const ChartViewer = lazy(() =>
+  import("./ChartViewer").then((m) => ({ default: m.ChartViewer }))
+);
 
 interface MarkdownRendererProps {
   content: string;
@@ -242,11 +245,19 @@ function buildMarkdownComponents(sources?: SearchHit[] | null): Components {
         const chart = tryParseChartPayload(codeString);
         if (chart) {
           return (
-            <ChartViewer
-              option={chart.option}
-              title={chart.title}
-              height="400px"
-            />
+            <Suspense
+              fallback={
+                <div className="chart-viewer chart-viewer--loading text-txt-muted text-sm p-4">
+                  Loading chart…
+                </div>
+              }
+            >
+              <ChartViewer
+                option={chart.option}
+                title={chart.title}
+                height="400px"
+              />
+            </Suspense>
           );
         }
       }

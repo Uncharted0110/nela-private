@@ -18,7 +18,7 @@ export async function handleSendTts(
     ctx.ttsIntervalRef.current = setInterval(() => {
       const elapsed = Math.floor((Date.now() - startTime) / 100) / 10;
       ctx.setTtsElapsedTime(elapsed);
-    }, 100);
+    }, 500);
 
     const audioUrl = await Api.generateSpeech(text, {
       voice: ctx.ttsVoice,

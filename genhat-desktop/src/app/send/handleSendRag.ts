@@ -29,7 +29,7 @@ export async function handleSendRag(
     ctx.generalIntervalRef.current = setInterval(() => {
       const elapsed = Math.floor((Date.now() - ragStartTime) / 100) / 10;
       ctx.setGeneralElapsedTime(elapsed);
-    }, 100);
+    }, 500);
 
     const setup = await Api.queryRagStream(text);
     ctx.updateSession(sid, { ragResult: { answer: "", sources: setup.sources } });

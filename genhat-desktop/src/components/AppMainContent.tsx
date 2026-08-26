@@ -59,8 +59,16 @@ export default function AppMainContent({ networkActive: networkActiveProp }: App
 
   // ── Store subscriptions ───────────────────────────────────────────────────
   const activeSessionId = useSessionStore(s => s.activeSessionId);
+  // Shallow field pick: streaming HTML no longer lives on the session during
+  // generation (artifactStreamStore), so chat chrome does not rebuild per HTML token.
   const activeSession = useSessionStore(
-    (s) => s.sessions.find((session) => session.id === s.activeSessionId) ?? null
+    useShallow((s) => {
+      const session = s.sessions.find((x) => x.id === s.activeSessionId) ?? null;
+      if (!session) return null;
+      return {
+        ...session,
+      };
+    })
   );
   // useShallow required: map/filter always returns a new array; without it
   // useSyncExternalStore sees a changed snapshot every read → white-screen loop.

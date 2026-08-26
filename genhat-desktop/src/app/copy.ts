@@ -154,6 +154,18 @@ export const COPY = {
     "We couldn't complete billing. Check your payment details on the website and try again.",
   errorArtifact:
     "We couldn't finish that file. Try again, or ask for a simpler version.",
+  /** Generation stopped mid-file (token limit / incomplete HTML). */
+  errorArtifactTruncated:
+    "That file was cut off before it finished. Ask me to continue, or try a shorter version (fewer slides or sections).",
+  /** Almost no usable content in the generated file. */
+  errorArtifactEmpty:
+    "I couldn't build usable content for that file. Try again with a clearer brief — for example, a 5-slide pitch with one chart, or a simple budget sheet.",
+  /** Preview exists in the panel but disk save / validation failed. */
+  errorArtifactSave:
+    "A preview is ready in the panel, but we couldn't save the file. You can still review it there, or try again.",
+  /** Spreadsheet / CSV specific failure. */
+  errorArtifactSpreadsheet:
+    "We couldn't finish that spreadsheet. Try a simpler table layout, or ask again with fewer sheets.",
   errorWebSearch:
     "Web search didn't work just now. Try again, or continue without live sources.",
   errorFileLoad:

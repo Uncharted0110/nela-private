@@ -40,6 +40,13 @@ function App() {
     void hydrateDocGraph();
   }, [hydrateDocGraph]);
 
+  useEffect(() => {
+    // Apply low-end / performance DOM flags before first paint of heavy chrome.
+    void import("./app/performanceMode").then(({ applyPerformanceDom }) => {
+      applyPerformanceDom();
+    });
+  }, []);
+
   const toggleTheme = () => setTheme(theme === "neon" ? "professional" : "neon");
 
   const workspaces = useWorkspaceStore((s) => s.workspaces);

@@ -26,7 +26,7 @@ export default function ChatHistorySidebar() {
   const activeWorkspace = useWorkspaceStore((s) => s.activeWorkspace);
 
   return (
-    <aside className="w-[280px] min-w-[280px] border-r border-glass-border bg-void-800/80 backdrop-blur-xl flex flex-col">
+    <aside className="w-[280px] min-w-[280px] border-r border-glass-border bg-void-800 flex flex-col">
       <div className="h-10 px-4 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-2 text-txt">
           <span className="text-2xl font-semibold mt-2">Chats</span>

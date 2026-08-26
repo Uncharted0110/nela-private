@@ -7,12 +7,15 @@ import type {
 import PodcastTab from "./PodcastTab";
 import ChatWindow from "./ChatWindow";
 import MindMapOverlay from "./MindMapOverlay";
-import PdfViewer from "./PdfViewer";
-import DocumentViewer from "./DocumentViewer";
-import PlaygroundMode from "./PlaygroundMode";
 import ArtifactSidePanel from "./ArtifactSidePanel";
+import { lazy, Suspense } from "react";
 import { useSessionStore } from "../stores/sessionStore";
+import { useArtifactStreamStore } from "../stores/artifactStreamStore";
 import { handlePreviewArtifactEdit } from "../app/sessionSendActions";
+
+const PdfViewer = lazy(() => import("./PdfViewer"));
+const DocumentViewer = lazy(() => import("./DocumentViewer"));
+const PlaygroundMode = lazy(() => import("./PlaygroundMode"));
 
 
 interface ModeOption {
@@ -129,13 +132,23 @@ export default function AppMainContentArea({
   generalGenerationTime = null,
 }: AppMainContentAreaProps) {
   const updateSession = useSessionStore((s) => s.updateSession);
-  const hasArtifactBody = Boolean(
-    activeSession?.streamingArtifactHtml || activeSession?.streamingArtifactCsv
+  const liveStreamHtml = useArtifactStreamStore((s) =>
+    s.active && s.type === "text/html" ? s.html : ""
   );
+  const liveStreamCsv = useArtifactStreamStore((s) =>
+    s.active && s.type === "text/csv" ? s.csv : ""
+  );
+  const liveStreamActive = useArtifactStreamStore((s) => s.active);
+  const panelHtml =
+    liveStreamHtml || activeSession?.streamingArtifactHtml || "";
+  const panelCsv =
+    liveStreamCsv || activeSession?.streamingArtifactCsv || "";
+  const hasArtifactBody = Boolean(panelHtml || panelCsv);
   const showArtifactPanel = Boolean(
     activeSession &&
       activeSession.artifactPanelOpen === true &&
       (activeSession.artifactStreamActive ||
+        liveStreamActive ||
         hasArtifactBody ||
         (activeSession.artifactStage === "LivePreview" &&
           activeSession.artifactPath))
@@ -152,7 +165,15 @@ export default function AppMainContentArea({
   return (
     <>
       {chatMode === "playground" ? (
-        <PlaygroundMode onNavigateBack={onExitPlayground} />
+        <Suspense
+          fallback={
+            <div className="flex-1 flex items-center justify-center text-txt-muted text-sm">
+              Loading playground…
+            </div>
+          }
+        >
+          <PlaygroundMode onNavigateBack={onExitPlayground} />
+        </Suspense>
       ) : chatMode === "podcast" ? (
         <PodcastTab
           hasDocuments={ragDocs.length > 0}
@@ -229,11 +250,11 @@ export default function AppMainContentArea({
                 ? "text/csv"
                 : "text/html")
             }
-            html={activeSession.streamingArtifactHtml}
-            csv={activeSession.streamingArtifactCsv}
+            html={panelHtml || undefined}
+            csv={panelCsv || undefined}
             savedPath={activeSession.artifactPath ?? null}
             streamActive={
-              Boolean(activeSession.artifactStreamActive) &&
+              (Boolean(activeSession.artifactStreamActive) || liveStreamActive) &&
               activeSession.artifactStage !== "LivePreview" &&
               !activeSession.artifactPath
             }
@@ -262,20 +283,24 @@ export default function AppMainContentArea({
       )}
 
       {pdfViewerData && (
-        <PdfViewer
-          pdfData={pdfViewerData.data}
-          title={pdfViewerData.title}
-          onClose={onClosePdfViewer}
-        />
+        <Suspense fallback={null}>
+          <PdfViewer
+            pdfData={pdfViewerData.data}
+            title={pdfViewerData.title}
+            onClose={onClosePdfViewer}
+          />
+        </Suspense>
       )}
 
       {docViewerFile && (
-        <DocumentViewer
-          key={docViewerFile.filePath}
-          filePath={docViewerFile.filePath}
-          title={docViewerFile.title}
-          onClose={onCloseDocViewer}
-        />
+        <Suspense fallback={null}>
+          <DocumentViewer
+            key={docViewerFile.filePath}
+            filePath={docViewerFile.filePath}
+            title={docViewerFile.title}
+            onClose={onCloseDocViewer}
+          />
+        </Suspense>
       )}
     </>
   );

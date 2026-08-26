@@ -27,6 +27,7 @@ import {
   parsePresentationHtmlArtifactOutput,
   looksLikeHtmlPageJsonPlan,
   looksLikePresentationJsonPlan,
+  isPreviewableHtmlDocument,
 } from "./artifactHtmlOutput";
 import type { NelaArtifactMime } from "./streamArtifactParser";
 import { applyThemeFromPrompt } from "./send/freeformHtmlThemeEdit";
@@ -64,6 +65,8 @@ export async function saveStreamedHtmlArtifact(input: {
   topic: string;
   filename?: string;
   asPresentation?: boolean;
+  /** Skip strict visible-text thresholds when the page still previews. */
+  relaxValidation?: boolean;
   imagePool?: ImagePoolEntry[];
   chartPool?: ChartPoolEntry[];
 }): Promise<ArtifactResult> {
@@ -94,7 +97,24 @@ export async function saveStreamedHtmlArtifact(input: {
   if (looksLikeHtmlPageJsonPlan(input.rawBody)) {
     throw new Error("MODEL_RETURNED_JSON_HTML_PLAN");
   }
-  const parsed = parseHtmlArtifactOutput(input.rawBody, input.topic);
+  let parsed: ReturnType<typeof parseHtmlArtifactOutput>;
+  try {
+    parsed = parseHtmlArtifactOutput(input.rawBody, input.topic, {
+      relaxValidation: input.relaxValidation,
+    });
+  } catch (err) {
+    // Strict validation rejected a page that still previews (script-heavy tools).
+    if (
+      !input.relaxValidation &&
+      isPreviewableHtmlDocument(input.rawBody)
+    ) {
+      parsed = parseHtmlArtifactOutput(input.rawBody, input.topic, {
+        relaxValidation: true,
+      });
+    } else {
+      throw err;
+    }
+  }
   const themed = withThemeOverride(embed(parsed.html), input.topic);
   const outputName = deriveArtifactFilename({
     llmName: input.filename || extractWorkbookFilename(input.rawBody),
@@ -174,6 +194,7 @@ export async function saveStreamedArtifact(input: {
   title?: string;
   filename?: string;
   asPresentation?: boolean;
+  relaxValidation?: boolean;
   imagePool?: ImagePoolEntry[];
   chartPool?: ChartPoolEntry[];
 }): Promise<ArtifactResult> {
@@ -190,6 +211,7 @@ export async function saveStreamedArtifact(input: {
     topic: input.topic,
     filename: input.filename,
     asPresentation: input.asPresentation,
+    relaxValidation: input.relaxValidation,
     imagePool: input.imagePool,
     chartPool: input.chartPool,
   });

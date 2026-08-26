@@ -191,6 +191,30 @@ ${out}
   return out;
 }
 
+/**
+ * True when streamed HTML is rich enough to show a working side-panel preview,
+ * even if strict validation (visible-text thresholds, etc.) would reject a save.
+ * Interactive tools (dashboards, explorers) are often script-heavy with less
+ * plain text — preview can still be fully usable.
+ */
+export function isPreviewableHtmlDocument(html: string): boolean {
+  const trimmed = (html ?? "").trim();
+  if (trimmed.length < 280) return false;
+  const hasShell =
+    /<!DOCTYPE\s+html/i.test(trimmed) ||
+    /<html[\s>]/i.test(trimmed) ||
+    /<body[\s>]/i.test(trimmed);
+  const hasUi =
+    /<(?:div|main|section|canvas|svg|table|form|button|input|select)[\s>]/i.test(
+      trimmed
+    );
+  if (!hasShell && !hasUi) return false;
+  // Script-heavy interactive pages count as previewable when substantial.
+  if (/<script[\s>]/i.test(trimmed) && trimmed.length >= 800) return true;
+  if (visibleTextLength(trimmed) >= 40) return true;
+  return trimmed.length >= 1200 && hasUi;
+}
+
 function extractTitleFromHtml(html: string): string | null {
   const m = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
   if (!m?.[1]) return null;
@@ -231,14 +255,14 @@ export function validateHtmlArtifact(html: string): void {
   const trimmed = html.trim();
   if (trimmed.length < MIN_HTML_CHARS) {
     throw new Error(
-      "Generated HTML was empty or truncated. Try again, shorten the prompt, or use a model with a larger output limit."
+      "Generated HTML was empty or truncated (output limit or incomplete page)."
     );
   }
 
   const visible = visibleTextLength(trimmed);
   if (visible < MIN_VISIBLE_TEXT_CHARS) {
     throw new Error(
-      "Generated HTML has almost no visible content. Try again with a more capable model."
+      "Generated HTML has almost no visible content."
     );
   }
 
@@ -248,7 +272,7 @@ export function validateHtmlArtifact(html: string): void {
     !/<(?:div|section|article|header)[\s>]/i.test(trimmed)
   ) {
     throw new Error(
-      "Generated HTML is missing body content. Try again."
+      "Generated HTML is missing body content."
     );
   }
 }
@@ -258,17 +282,17 @@ export function validatePresentationHtmlArtifact(html: string): void {
   const trimmed = html.trim();
   if (trimmed.length < MIN_PRESENTATION_HTML_CHARS) {
     throw new Error(
-      "Presentation HTML looks truncated. Try again with a larger output limit."
+      "Presentation HTML looks truncated (needs a larger output limit or fewer slides)."
     );
   }
   if (visibleTextLength(trimmed) < MIN_PRESENTATION_VISIBLE_CHARS) {
     throw new Error(
-      "Presentation has too little visible content. Try again and ask for denser slides."
+      "Presentation has too little visible content."
     );
   }
   if (isShellOnlyOrTruncatedPresentationHtml(trimmed)) {
     throw new Error(
-      "Presentation HTML was truncated (styles without slide content). Try again."
+      "Presentation HTML was truncated (styles without slide content)."
     );
   }
   // Prefer multi-slide markers, but allow rich freeform HTML without them
@@ -276,7 +300,7 @@ export function validatePresentationHtmlArtifact(html: string): void {
   const slides = countSlideMarkers(trimmed);
   if (slides < 2 && visibleTextLength(trimmed) < 900) {
     throw new Error(
-      "Presentation HTML does not look like a multi-slide deck. Try again."
+      "Presentation HTML does not look like a multi-slide deck."
     );
   }
 }
@@ -328,7 +352,8 @@ export function looksLikeHtmlPageJsonPlan(raw: string): boolean {
 
 export function parseHtmlArtifactOutput(
   raw: string,
-  topic: string
+  topic: string,
+  options?: { relaxValidation?: boolean }
 ): { html: string; output_name: string; title: string } {
   if (looksLikeHtmlPageJsonPlan(raw)) {
     throw new Error("MODEL_RETURNED_JSON_HTML_PLAN");
@@ -338,7 +363,13 @@ export function parseHtmlArtifactOutput(
   // Same shell repair as presentations — models often emit <head>/<h1> fragments
   // without a <body>, which used to fail validation as "missing body content".
   const html = lightRepairPresentationHtml(extracted, topic);
-  validateHtmlArtifact(html);
+  if (options?.relaxValidation) {
+    if (!isPreviewableHtmlDocument(html)) {
+      validateHtmlArtifact(html);
+    }
+  } else {
+    validateHtmlArtifact(html);
+  }
 
   const fromTitle = extractTitleFromHtml(html);
   const title = fromTitle || topic.trim().slice(0, 120) || "Generated Page";

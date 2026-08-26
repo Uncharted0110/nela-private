@@ -17,6 +17,7 @@ import { SlashHighlightedText } from "./SlashHighlightedText";
 import type { GenerationProgressMode } from "../app/generationProgress";
 import { useCloudStore } from "../stores/cloudStore";
 import { useChatModeStore } from "../stores/chatModeStore";
+import { useArtifactStreamStore } from "../stores/artifactStreamStore";
 import ChatMessageItem, { GenerationTimer } from "./ChatMessageItem";
 import ReasoningDisclosure from "./ReasoningDisclosure";
 import { scrubChatArtifactProtocol } from "../app/streamArtifactParser";
@@ -144,6 +145,9 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
   const liveToolStatus = useChatModeStore((s) => s.liveToolStatus);
   const attachmentMetaByPath = useChatModeStore((s) => s.attachmentMetaByPath);
   const pdfEngineByPath = useChatModeStore((s) => s.pdfEngineByPath);
+  const liveStreamHasBody = useArtifactStreamStore(
+    (s) => s.active && Boolean(s.html || s.csv)
+  );
   const modeChatBorderClass =
     preferredMode !== "local" ? "mode-chat-border--cloud" : "mode-chat-border--private";
   const [inputObj, setInputObj] = useState("");
@@ -894,7 +898,8 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
                   hasLiveStreamBody={
                     isLast &&
                     Boolean(
-                      session?.streamingArtifactHtml ||
+                      liveStreamHasBody ||
+                        session?.streamingArtifactHtml ||
                         session?.streamingArtifactCsv
                     )
                   }

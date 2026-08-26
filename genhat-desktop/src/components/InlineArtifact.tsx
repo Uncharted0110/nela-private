@@ -73,7 +73,7 @@ export default function InlineArtifact({ artifactPath, artifactStage, errorMessa
     const started = Date.now();
     const tick = () => setStageElapsedSec((Date.now() - started) / 1000);
     tick();
-    const interval = setInterval(tick, 100);
+    const interval = setInterval(tick, 500);
     return () => clearInterval(interval);
   }, [stage]);
 

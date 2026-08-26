@@ -1,6 +1,5 @@
 import { Api } from "../../api";
 import type { ChatMessage, WebSearchResult } from "../../types";
-import { friendlyErrorFromUnknown } from "../friendlyError";
 import { createStreamChunkFlusher, createLatestValueFlusher, createThrottledFlusher } from "../streamUiBatch";
 import { windowThinkingForUi } from "../thinkingUiWindow";
 import {
@@ -21,7 +20,15 @@ import { canAutoStreamArtifacts } from "../cloudPresentationMode";
 import {
   defaultArtifactFollowup,
   defaultArtifactIntro,
+  failedArtifactSaveFollowup,
+  previewReadySoftFollowup,
 } from "../artifactChatCopy";
+import { COPY } from "../copy";
+import {
+  classifyArtifactFailure,
+  friendlyErrorFromUnknown,
+} from "../friendlyError";
+import { isPreviewableHtmlDocument } from "../artifactHtmlOutput";
 import { StreamArtifactParser, scrubChatArtifactProtocol, stripPartialArtifactTags } from "../streamArtifactParser";
 import { saveStreamedArtifact } from "../streamArtifactSave";
 import {
@@ -78,7 +85,7 @@ export async function handleSendTextChat(
   ctx.generalIntervalRef.current = setInterval(() => {
     const elapsed = Math.floor((Date.now() - chatStartTime) / 100) / 10;
     ctx.setGeneralElapsedTime(elapsed);
-  }, 100);
+  }, 500);
 
   let fullResponse = "";
   let fullThinking = "";
@@ -208,9 +215,10 @@ export async function handleSendTextChat(
   let artifactClosed = false;
 
   let csvPanelOpened = false;
+  let htmlPanelOpened = false;
   const pushArtifactSession = () => {
+    const store = useArtifactStreamStore.getState();
     if (streamedArtifactType === "text/csv") {
-      const store = useArtifactStreamStore.getState();
       if (!csvPanelOpened) {
         store.begin({
           sessionId: sid,
@@ -229,20 +237,31 @@ export async function handleSendTextChat(
       });
       return;
     }
+    // HTML: keep the live body in the side store so token updates do not
+    // rebuild the whole chat tree / iframe every animation frame.
+    if (!htmlPanelOpened) {
+      store.begin({
+        sessionId: sid,
+        type: "text/html",
+        title: streamedArtifactTitle,
+      });
+    }
+    store.setHtml(streamedArtifactBody, streamedArtifactTitle);
+    if (htmlPanelOpened) return;
+    htmlPanelOpened = true;
     ctx.updateSession(sid, {
       artifactStreamActive: true,
       artifactPanelOpen: true,
       streamingArtifactType: streamedArtifactType,
       streamingArtifactTitle: streamedArtifactTitle || undefined,
-      streamingArtifactHtml: streamedArtifactBody,
     });
   };
   const csvUiFlusher = createThrottledFlusher(pushArtifactSession, 280);
-  const htmlUiFlusher = createStreamChunkFlusher(pushArtifactSession);
+  const htmlUiFlusher = createThrottledFlusher(pushArtifactSession, 450);
   const artifactUiFlusher = {
-    push: (chunk: string) => {
+    push: () => {
       if (streamedArtifactType === "text/csv") csvUiFlusher.push();
-      else htmlUiFlusher.push(chunk);
+      else htmlUiFlusher.push();
     },
     flushNow: () => {
       csvUiFlusher.flushNow();
@@ -275,7 +294,7 @@ export async function handleSendTextChat(
     }
     if (emit.artifactDelta) {
       streamedArtifactBody += emit.artifactDelta;
-      artifactUiFlusher.push("1");
+      artifactUiFlusher.push();
     }
   };
   const finishOk = async (
@@ -307,6 +326,9 @@ export async function handleSendTextChat(
 
     let artifactPath: string | null = null;
     let artifactStage: string | null = null;
+    let artifactSaveFailure: string | null = null;
+    /** Preview works; disk save skipped or soft — keep success UX (intro + chip). */
+    let previewSoftSuccess = false;
     const body =
       streamedArtifactType === "text/csv"
         ? rawModelOutput.trim() || streamedArtifactBody.trim()
@@ -344,6 +366,42 @@ export async function handleSendTextChat(
         useArtifactStreamStore.getState().clear();
       } catch (saveErr) {
         console.warn("Auto artifact save failed:", saveErr);
+        const previewableHtml =
+          streamedArtifactType === "text/html" &&
+          !asPresentation &&
+          isPreviewableHtmlDocument(body);
+
+        if (previewableHtml) {
+          // Retry with relaxed validation — common for script-heavy interactive pages.
+          try {
+            const saved = await saveStreamedArtifact({
+              type: streamedArtifactType,
+              rawBody: body,
+              topic: text,
+              title: streamedArtifactTitle || undefined,
+              filename: streamedArtifactFilename || undefined,
+              asPresentation,
+              relaxValidation: true,
+              chartPool: chartPool.list(),
+            });
+            artifactPath = saved.path;
+            artifactStage = "LivePreview";
+            useArtifactStreamStore.getState().clear();
+          } catch (retryErr) {
+            console.warn("Relaxed artifact save failed; keeping preview:", retryErr);
+            // Soft success: panel already has a working preview — do not Error the bubble.
+            artifactStage = "LivePreview";
+            previewSoftSuccess = true;
+          }
+        } else {
+          const raw =
+            saveErr instanceof Error ? saveErr.message : String(saveErr);
+          artifactSaveFailure =
+            classifyArtifactFailure(raw) ||
+            classifyArtifactFailure(`Preview is ready but saving failed: ${raw}`) ||
+            COPY.errorArtifactSave;
+          artifactStage = "Error";
+        }
       }
     }
 
@@ -380,7 +438,11 @@ export async function handleSendTextChat(
       intro = scrubChatArtifactProtocol(intro);
 
       // Prefer real model prose; never leave an artifact with an empty bubble.
-      if (body && !intro) {
+      // On hard save failure, replace optimistic intros with classified error.
+      // Soft preview success keeps the model intro and shows a recovery follow-up.
+      if (artifactSaveFailure) {
+        intro = artifactSaveFailure;
+      } else if (body && !intro) {
         intro = defaultArtifactIntro({
           title,
           type: wordDeliverable ? "docx" : streamedArtifactType,
@@ -388,7 +450,18 @@ export async function handleSendTextChat(
         });
       }
       let followup = followupFromModel;
-      if (body && !followup) {
+      if (artifactSaveFailure) {
+        followup = failedArtifactSaveFollowup({
+          type: streamedArtifactType,
+          asPresentation,
+        });
+      } else if (previewSoftSuccess) {
+        followup = previewReadySoftFollowup({
+          type: streamedArtifactType,
+          asPresentation,
+          saved: false,
+        });
+      } else if (body && !followup) {
         followup = defaultArtifactFollowup({
           type: wordDeliverable ? "docx" : streamedArtifactType,
           asPresentation,
@@ -406,6 +479,11 @@ export async function handleSendTextChat(
       const filename = artifactPath
         ? artifactPath.split(/[/\\]/).pop()?.replace(/\.(html?|xlsx|csv)$/i, "")
         : undefined;
+      const resolvedStage = (artifactStage ??
+        (body && !artifactPath ? "Error" : undefined)) as
+        | "LivePreview"
+        | "Error"
+        | undefined;
       return {
         messages: [
           ...prev.messages,
@@ -431,11 +509,7 @@ export async function handleSendTextChat(
             ...(artifactPath || body
               ? {
                   artifactPath: artifactPath ?? undefined,
-                  artifactStage: (artifactStage ??
-                    (body ? "Error" : undefined)) as
-                    | "LivePreview"
-                    | "Error"
-                    | undefined,
+                  artifactStage: resolvedStage,
                   artifactUseSidePanel: true,
                   artifactTitle: title || filename || "Artifact",
                   streamingArtifactType: streamedArtifactType,
@@ -446,13 +520,16 @@ export async function handleSendTextChat(
         streamingContent: "",
         loading: false,
         artifactPath: artifactPath ?? prev.artifactPath,
-        artifactStage: artifactStage ?? prev.artifactStage,
+        artifactStage: resolvedStage ?? prev.artifactStage,
         artifactPanelOpen: body ? true : prev.artifactPanelOpen,
         artifactStreamActive: Boolean(body),
         streamingArtifactCsv: undefined,
         ...(body && streamedArtifactType === "text/html"
           ? { streamingArtifactHtml: streamedArtifactBody }
           : { streamingArtifactHtml: undefined }),
+        ...(body && streamedArtifactType === "text/csv"
+          ? { streamingArtifactCsv: streamedArtifactBody }
+          : {}),
         streamingArtifactType: body ? streamedArtifactType : undefined,
         streamingArtifactTitle: title || filename || undefined,
       };

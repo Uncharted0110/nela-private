@@ -24,7 +24,7 @@ export async function handleSendMindmap(
     ctx.generalIntervalRef.current = setInterval(() => {
       const elapsed = Math.floor((Date.now() - startTime) / 100) / 10;
       ctx.setGeneralElapsedTime(elapsed);
-    }, 100);
+    }, 500);
 
     let generatedFrom: "documents" | "model" = "model";
     let sourceCount = 0;
