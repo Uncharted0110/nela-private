@@ -49,7 +49,8 @@ function ensureExtension(path: string, ext: string): string {
 
 /**
  * Copy the artifact to a user-chosen path.
- * Slide decks default to PowerPoint; documents also offer Word.
+ * Slide decks default to PowerPoint; ordinary HTML pages default to .html
+ * (Word is offered as an optional export, not the default).
  */
 export async function downloadArtifactCopy(sourcePath: string): Promise<string | null> {
   const ext = extensionOf(sourcePath) || "bin";
@@ -95,13 +96,13 @@ async function downloadPresentationArtifact(
     filters: [
       { name: "PowerPoint Presentation", extensions: ["pptx"] },
       { name: "PDF Document", extensions: ["pdf"] },
-      { name: "Word Document", extensions: ["docx"] },
       { name: "HTML Document", extensions: ["html"] },
+      { name: "Word Document", extensions: ["docx"] },
     ],
   });
   if (!targetPath) return null;
 
-  let format: DeckExportFormat | "html" | "docx" = "html";
+  let format: DeckExportFormat | "html" | "docx" = "pptx";
   const picked = extensionOf(targetPath);
   if (picked === "pptx" || picked === "ppt") format = "pptx";
   else if (picked === "pdf") format = "pdf";
@@ -130,24 +131,25 @@ async function downloadHtmlDocumentArtifact(
 ): Promise<string | null> {
   const base = documentExportBaseName(html, sourcePath);
   const targetPath = await save({
-    defaultPath: `${base}.docx`,
+    defaultPath: `${base}.html`,
     filters: [
-      { name: "Word Document", extensions: ["docx"] },
       { name: "HTML Document", extensions: ["html"] },
+      { name: "Word Document", extensions: ["docx"] },
     ],
   });
   if (!targetPath) return null;
 
   const picked = extensionOf(targetPath);
-  if (picked === "html" || picked === "htm") {
-    const finalPath = ensureExtension(targetPath, "html");
-    await Api.copyFileToPath(sourcePath, finalPath);
+  // Explicit Word choice only — never force .docx on plain webpage downloads.
+  if (picked === "docx" || picked === "doc") {
+    const finalPath = ensureExtension(targetPath, "docx");
+    const base64 = await htmlToDocxBase64(html);
+    await Api.saveBinaryFile(finalPath, base64);
     return finalPath;
   }
 
-  const finalPath = ensureExtension(targetPath, "docx");
-  const base64 = await htmlToDocxBase64(html);
-  await Api.saveBinaryFile(finalPath, base64);
+  const finalPath = ensureExtension(targetPath, "html");
+  await Api.copyFileToPath(sourcePath, finalPath);
   return finalPath;
 }
 
