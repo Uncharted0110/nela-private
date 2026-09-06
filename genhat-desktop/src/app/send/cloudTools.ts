@@ -371,6 +371,40 @@ export const GMAIL_SEND_TOOL: CloudToolDefinition = {
   },
 };
 
+/** Desktop-hosted Gmail read — host always confirms before fetching mail. */
+export const GMAIL_READ_TOOL: CloudToolDefinition = {
+  type: "function",
+  function: {
+    name: "gmail_read",
+    description:
+      "Fetch recent messages from the user's connected Gmail inbox so you can summarize or answer questions about them. " +
+      "The user MUST approve each read in the NELA app before any message content is fetched. " +
+      "Use when the user asks about their latest email, inbox, or to summarize mail. " +
+      "Default to max_results=1 for “latest email”. Never invent email content — only use the tool result. " +
+      "If ok=false or needsReauth=true, tell the user to reconnect Gmail with read permission.",
+    parameters: {
+      type: "object",
+      properties: {
+        max_results: {
+          type: "number",
+          description: "How many recent messages to fetch (1–5). Default 1.",
+        },
+        query: {
+          type: "string",
+          description:
+            "Optional Gmail search query (same syntax as Gmail search). Default in:inbox.",
+        },
+        purpose: {
+          type: "string",
+          description:
+            "Short plain-language reason shown on the allow card (e.g. “Summarize your latest email”).",
+        },
+      },
+      required: [],
+    },
+  },
+};
+
 export function buildCloudChatTools(options?: {
   webEnabled?: boolean;
   fileSearchEnabled?: boolean;
@@ -388,7 +422,9 @@ export function buildCloudChatTools(options?: {
   if (options?.chartEnabled) tools.push(RENDER_CHART_TOOL);
   if (options?.mcpEnabled) tools.push(...MCP_CLOUD_TOOLS);
   if (options?.askFollowUpEnabled !== false) tools.push(ASK_FOLLOWUP_TOOL);
-  if (options?.gmailEnabled) tools.push(GMAIL_SEND_TOOL);
+  if (options?.gmailEnabled) {
+    tools.push(GMAIL_SEND_TOOL, GMAIL_READ_TOOL);
+  }
   return tools;
 }
 

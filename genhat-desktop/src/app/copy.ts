@@ -38,6 +38,11 @@ export const COPY = {
   attachCloudDestination: "Cloud",
   attachScannedPdf: "Scanned PDF (OCR)",
 
+  // Connectors (chat "+" menu)
+  connectorsMenuTitle: "Connectors",
+  connectorsMenuHint: "Google Drive and other cloud apps — sync into Search my files.",
+  connectProviderHint: "Connect and sync into Search my files.",
+
   // Knowledge base (was: Knowledge Base / chunks / phaseN / ingesting)
   libraryTitle: "Document Library",
   libraryEmpty: "No documents yet. Use \u201CAdd documents\u201D to get started.",

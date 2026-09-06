@@ -1,4 +1,7 @@
-//! Shared Google connector OAuth (PKCE). Gmail now; Drive later.
+//! Shared Google connector OAuth client (Desktop / PKCE).
+//!
+//! Used by Gmail and Google Drive (`connect_flow = "desktop_pkce"`).
+//! Optional cloud OAuth broker remains for legacy / server-side exchange.
 //!
 //! Distinct from NELA Cloud website login. Tokens stay on-device.
 //! End users never configure client IDs — NELA ships one Desktop client.

@@ -32,6 +32,7 @@ import type {
   AvatarSource,
   GmailStatus,
   GmailSendResult,
+  GmailReadResult,
 } from "./types";
 import {
   llamaContextKey,
@@ -1432,6 +1433,16 @@ export const Api = {
       bcc: input.bcc ?? null,
     });
   },
+
+  async gmailRead(input?: {
+    maxResults?: number;
+    query?: string;
+  }): Promise<GmailReadResult> {
+    return invoke<GmailReadResult>("gmail_read", {
+      maxResults: input?.maxResults ?? null,
+      query: input?.query ?? null,
+    });
+  },
 };
 
 // ── Playground / Pipeline commands ─────────────────────────────────────────────
@@ -1649,6 +1660,117 @@ export async function fileindexerSaveSetup(
 
 export async function fileindexerDownloadModel(): Promise<void> {
   return invoke("fileindexer_download_model");
+}
+
+// ── Cloud storage connectors (File Indexer mirrors) ─────────────────────────
+
+export async function connectorsListProviders(): Promise<
+  import("./types").ConnectorProviderInfo[]
+> {
+  return invoke("connectors_list_providers");
+}
+
+export async function connectorsListConnections(): Promise<
+  import("./types").ConnectorConnection[]
+> {
+  return invoke("connectors_list_connections");
+}
+
+export async function connectorsListIndexedRoots(): Promise<
+  import("./types").ConnectorIndexedRoot[]
+> {
+  return invoke("connectors_list_indexed_roots");
+}
+
+export async function connectorsOauthStart(
+  provider: string
+): Promise<import("./types").ConnectorOAuthStart> {
+  return invoke("connectors_oauth_start", { provider });
+}
+
+export async function connectorsOauthPoll(
+  sessionId: string,
+  provider: string
+): Promise<import("./types").ConnectorOAuthPoll> {
+  return invoke("connectors_oauth_poll", { sessionId, provider });
+}
+
+export async function connectorsAccountConnect(
+  provider: string
+): Promise<import("./types").ConnectorConnection> {
+  return invoke("connectors_account_connect", { provider });
+}
+
+export async function connectorsAccountDisconnect(provider: string): Promise<void> {
+  return invoke("connectors_account_disconnect", { provider });
+}
+
+export async function connectorsDisconnect(
+  connectionId: string,
+  wipeMirror = true
+): Promise<void> {
+  return invoke("connectors_disconnect", { connectionId, wipeMirror });
+}
+
+export async function connectorsListChildren(
+  connectionId: string,
+  parentId?: string | null
+): Promise<import("./types").ConnectorRemoteEntry[]> {
+  return invoke("connectors_list_children", {
+    connectionId,
+    parentId: parentId ?? null,
+  });
+}
+
+export async function connectorsAddIndexedFolder(
+  connectionId: string,
+  remoteFolderId?: string | null,
+  remoteFolderName?: string | null
+): Promise<import("./types").ConnectorSyncReport> {
+  return invoke("connectors_add_indexed_folder", {
+    connectionId,
+    remoteFolderId: remoteFolderId ?? null,
+    remoteFolderName: remoteFolderName ?? null,
+  });
+}
+
+export async function connectorsSyncNow(
+  connectionId: string
+): Promise<import("./types").ConnectorSyncReport> {
+  return invoke("connectors_sync_now", { connectionId });
+}
+
+export async function connectorsFetchFile(
+  connectionId: string,
+  remoteId: string
+): Promise<string> {
+  return invoke("connectors_fetch_file", { connectionId, remoteId });
+}
+
+export async function connectorsCreateFile(
+  connectionId: string,
+  name: string,
+  localSourcePath: string,
+  parentId?: string | null
+): Promise<import("./types").ConnectorRemoteEntry> {
+  return invoke("connectors_create_file", {
+    connectionId,
+    parentId: parentId ?? null,
+    name,
+    localSourcePath,
+  });
+}
+
+export async function connectorsUpdateFile(
+  connectionId: string,
+  remoteId: string,
+  localSourcePath: string
+): Promise<import("./types").ConnectorRemoteEntry> {
+  return invoke("connectors_update_file", {
+    connectionId,
+    remoteId,
+    localSourcePath,
+  });
 }
 
 function convertFileSrc(filePath: string): string {

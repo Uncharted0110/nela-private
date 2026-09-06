@@ -545,6 +545,18 @@ async function executeToolCall(
     };
   }
 
+  if (name === "gmail_read") {
+    const { executeGmailRead } = await import("./gmailRead");
+    const result = await executeGmailRead(args, {
+      signal: opts.signal,
+      onStatus: opts.onToolStatus,
+    });
+    return {
+      content: JSON.stringify(result),
+      webSearchResult,
+    };
+  }
+
   return {
     content: `Unknown tool: ${name}`,
     webSearchResult,
@@ -695,7 +707,9 @@ export async function runCloudNativeToolLoop(
   );
   const hasRenderChart = tools.some((t) => t.function.name === "render_chart");
   const hasAskFollowUp = tools.some((t) => t.function.name === "ask_followup");
-  const hasGmail = tools.some((t) => t.function.name === "gmail_send");
+  const hasGmail = tools.some(
+    (t) => t.function.name === "gmail_send" || t.function.name === "gmail_read"
+  );
   if (hasWebSearch || hasFileSearch || hasRenderChart || hasAskFollowUp || hasGmail) {
     const parts: string[] = [];
     if (hasWebSearch) {
@@ -737,7 +751,12 @@ export async function runCloudNativeToolLoop(
           "The user will confirm the draft in the app before anything is sent. " +
           "Never claim an email was sent until the tool result has sent=true. " +
           "If they cancel, say it was not sent. " +
-          "Do not add a NELA logo or “sent using nela” line — NELA appends that footer."
+          "Do not add a NELA logo or “sent using nela” line — NELA appends that footer. " +
+          "You can read mail with gmail_read (optional max_results 1–5, query, purpose). " +
+          "For “latest email / summarize my email”, call gmail_read with max_results=1. " +
+          "The user must Allow once before any message is fetched. " +
+          "Summarize only from the tool result; never invent inbox contents. " +
+          "If needsReauth or ok=false, ask them to Disconnect and Connect Gmail again for read access."
       );
     } else {
       const lastUser = [...messages]
@@ -749,8 +768,8 @@ export async function runCloudNativeToolLoop(
       if (looksLikeEmailRequest(lastUserText)) {
         useGmailConnectPromptStore.getState().show();
         parts.push(
-          "Gmail is not connected. Tell the user to tap Connect Gmail on the card in chat. " +
-            "Never claim mail was sent."
+          "Gmail is not connected. Tell the user to tap Connect Gmail on the card in chat " +
+            "(or Settings → Connections). Never claim mail was sent or read."
         );
       }
     }

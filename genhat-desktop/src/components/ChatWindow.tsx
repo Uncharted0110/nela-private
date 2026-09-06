@@ -18,10 +18,13 @@ import type { GenerationProgressMode } from "../app/generationProgress";
 import { useCloudStore } from "../stores/cloudStore";
 import { useChatModeStore } from "../stores/chatModeStore";
 import { useArtifactStreamStore } from "../stores/artifactStreamStore";
+import { useConnectorStore } from "../stores/connectorStore";
 import ChatMessageItem, { GenerationTimer } from "./ChatMessageItem";
 import GmailSendConfirmCard from "./GmailSendConfirmCard";
+import GmailReadConfirmCard from "./GmailReadConfirmCard";
 import GmailConnectCard from "./GmailConnectCard";
 import { useGmailSendConfirmStore } from "../stores/gmailSendConfirmStore";
+import { useGmailReadConfirmStore } from "../stores/gmailReadConfirmStore";
 import { useGmailConnectPromptStore } from "../stores/gmailConnectPromptStore";
 import ReasoningDisclosure from "./ReasoningDisclosure";
 import { scrubChatArtifactProtocol } from "../app/streamArtifactParser";
@@ -149,11 +152,19 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
   const liveToolStatus = useChatModeStore((s) => s.liveToolStatus);
   const attachmentMetaByPath = useChatModeStore((s) => s.attachmentMetaByPath);
   const pdfEngineByPath = useChatModeStore((s) => s.pdfEngineByPath);
+  const openConnectorsModal = useConnectorStore((s) => s.openModal);
+  const refreshConnectors = useConnectorStore((s) => s.refresh);
   const liveStreamHasBody = useArtifactStreamStore(
     (s) => s.active && Boolean(s.html || s.csv)
   );
   const gmailConfirmPending = useGmailSendConfirmStore((s) => s.pending);
+  const gmailReadConfirmPending = useGmailReadConfirmStore((s) => s.pending);
   const gmailConnectPrompt = useGmailConnectPromptStore((s) => s.visible);
+
+  useEffect(() => {
+    void refreshConnectors();
+  }, [refreshConnectors]);
+
   const modeChatBorderClass =
     preferredMode !== "local" ? "mode-chat-border--cloud" : "mode-chat-border--private";
   const [inputObj, setInputObj] = useState("");
@@ -218,13 +229,13 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
   useEffect(() => {
     // Follow the live bubble while tokens stream. While only thinking/loading,
     // respect the user if they scrolled up to read history.
-    if (!streamingContent && !gmailConfirmPending && !gmailConnectPrompt && !stickToBottomRef.current) return;
+    if (!streamingContent && !gmailConfirmPending && !gmailReadConfirmPending && !gmailConnectPrompt && !stickToBottomRef.current) return;
     const el = messagesParentRef.current;
     if (!el) return;
     requestAnimationFrame(() => {
       el.scrollTop = el.scrollHeight;
     });
-  }, [messages.length, streamingContent, streamingThinking, isLoading, virtualTotalSize, gmailConfirmPending, gmailConnectPrompt]);
+  }, [messages.length, streamingContent, streamingThinking, isLoading, virtualTotalSize, gmailConfirmPending, gmailReadConfirmPending, gmailConnectPrompt]);
 
   // Close composer menus while a response is generating.
   if (isLoading && (showAttachMenu || showToolsMenu)) {
@@ -544,17 +555,42 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
       </>
     );
 
+    const connectorsSection = (
+      <button
+        className="w-full flex items-center gap-2.5 py-2 px-3 rounded-lg text-sm text-txt-secondary bg-transparent border-none cursor-pointer transition-all duration-150 hover:bg-glass-hover hover:text-txt"
+        onClick={() => {
+          void refreshConnectors();
+          openConnectorsModal();
+          setShowAttachMenu(false);
+        }}
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z" />
+        </svg>
+        <div className="flex flex-col items-start">
+          <span className="font-medium">{COPY.connectorsMenuTitle}</span>
+          <span className="text-[0.78rem] text-txt-muted">{COPY.connectorsMenuHint}</span>
+        </div>
+      </button>
+    );
+
     if (chatMode === "text") {
       const showLibrary = !advanced || ragEnabled;
       return (
         <>
           {attachToChatButton}
           {showLibrary ? libraryButtons : null}
+          {connectorsSection}
         </>
       );
     }
 
-    return libraryButtons;
+    return (
+      <>
+        {libraryButtons}
+        {connectorsSection}
+      </>
+    );
   };
 
   const attachButtonLabel =
@@ -923,6 +959,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
 
         <GmailConnectCard />
         <GmailSendConfirmCard />
+        <GmailReadConfirmCard />
 
         {isLoading &&
           !messages.some(

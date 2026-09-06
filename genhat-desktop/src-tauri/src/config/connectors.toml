@@ -1,0 +1,110 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# NELA Connector Catalog
+# ═══════════════════════════════════════════════════════════════════════════════
+# Add a new [[connector]] entry to register a connector in the app UI.
+#
+# status:
+#   available    — shown as Connect (requires a Rust backend registered for `id`)
+#   coming_soon  — shown as Soon (no backend required)
+#   disabled     — hidden from the UI
+#
+# capabilities (informational + future gating):
+#   browse | sync | fetch | create | update | send
+#
+# auth_kind: oauth2 | api_key | none
+# connect_flow:
+#   cloud_broker  — OAuth via nela-backend start/poll (Drive today)
+#   desktop_pkce  — on-device PKCE loopback (Gmail today)
+#   none          — no OAuth
+#
+# show_in_attach_menu: if true, appears under the chat "+" menu
+#
+# To ship a real connector:
+#   1. Add [[connector]] here with status = "available"
+#   2. Add providers/<id>.rs implementing ConnectorBackend
+#   3. Call register_backend(...) in providers/mod.rs::register_all()
+#
+# To announce a future connector: only step 1 with status = "coming_soon".
+# ═══════════════════════════════════════════════════════════════════════════════
+
+[[connector]]
+id = "gdrive"
+display_name = "Google Drive"
+category = "storage"
+status = "available"
+auth_kind = "oauth2"
+oauth = "google"
+connect_flow = "desktop_pkce"
+capabilities = ["browse", "sync", "fetch", "create", "update"]
+description = "Sync Drive folders into File Indexer for Search my files."
+show_in_attach_menu = true
+
+[[connector]]
+id = "gmail"
+display_name = "Gmail"
+category = "communication"
+status = "available"
+auth_kind = "oauth2"
+oauth = "google"
+connect_flow = "desktop_pkce"
+capabilities = ["send", "read"]
+description = "Send email from chat and read recent messages you approve. Sign-in uses on-device Google PKCE."
+show_in_attach_menu = false
+
+[[connector]]
+id = "dropbox"
+display_name = "Dropbox"
+category = "storage"
+status = "coming_soon"
+auth_kind = "oauth2"
+oauth = "dropbox"
+connect_flow = "cloud_broker"
+capabilities = ["browse", "sync", "fetch", "create", "update"]
+description = "Sync Dropbox folders into File Indexer."
+show_in_attach_menu = true
+
+[[connector]]
+id = "onedrive"
+display_name = "OneDrive"
+category = "storage"
+status = "coming_soon"
+auth_kind = "oauth2"
+oauth = "microsoft"
+connect_flow = "cloud_broker"
+capabilities = ["browse", "sync", "fetch", "create", "update"]
+description = "Sync OneDrive folders into File Indexer."
+show_in_attach_menu = true
+
+[[connector]]
+id = "local"
+display_name = "Local Folder"
+category = "storage"
+status = "coming_soon"
+auth_kind = "none"
+connect_flow = "none"
+capabilities = ["browse", "sync"]
+description = "Pin a local folder through the connectors UI."
+show_in_attach_menu = false
+
+[[connector]]
+id = "figma"
+display_name = "Figma"
+category = "design"
+status = "coming_soon"
+auth_kind = "oauth2"
+oauth = "figma"
+connect_flow = "cloud_broker"
+capabilities = ["browse", "fetch"]
+description = "Import Figma files and frames into NELA."
+show_in_attach_menu = true
+
+[[connector]]
+id = "tally"
+display_name = "Tally"
+category = "accounting"
+status = "coming_soon"
+auth_kind = "api_key"
+connect_flow = "none"
+capabilities = ["browse", "fetch"]
+description = "Connect Tally for accounting documents and reports."
+show_in_attach_menu = true

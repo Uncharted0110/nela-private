@@ -104,3 +104,17 @@ Before a wide release:
   `OPENROUTER_SWEEP_INTERVAL_MS` (default 6h), classifies free vs paid chat
   models, and refreshes the live catalog. Inspect with `GET /v1/models/catalog`
   or force with `POST /v1/models/sweep` (+ `MODELS_SWEEP_SECRET` in production).
+
+## Drive connectors (File Indexer)
+
+Desktop connectors sync remote folders (Google Drive first) into local mirrors under
+`{app_data}/connectors/mirrors/`, then register those paths as File Indexer roots.
+
+- **OAuth only on the API:** `POST /v1/connectors/oauth/start|poll|refresh` and
+  `GET /v1/connectors/oauth/callback`. No Drive file bytes go through NELA Cloud.
+- Env: reuse `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`, or set
+  `GOOGLE_CONNECTOR_CLIENT_ID` / `GOOGLE_CONNECTOR_CLIENT_SECRET` /
+  `GOOGLE_CONNECTOR_REDIRECT_URI` (`{PUBLIC_API_URL}/v1/connectors/oauth/callback`).
+- Add that redirect URI in Google Cloud Console for the OAuth client.
+- Desktop stores connector refresh tokens in `{app_data}/connectors/credentials.json`
+  (mode `0600`) — never in `nela_cloud_tokens.json`.

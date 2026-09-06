@@ -1,6 +1,8 @@
 //! Gmail connector Tauri commands.
 
-use crate::connectors::gmail::{self, GmailSendResult, GmailStatus};
+use crate::connectors::gmail::{
+    self, GmailReadResult, GmailSendResult, GmailStatus,
+};
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{AppHandle, Manager};
 use tauri_plugin_opener::OpenerExt;
@@ -72,4 +74,14 @@ pub async fn gmail_send(
         &body,
     )
     .await
+}
+
+#[tauri::command]
+pub async fn gmail_read(
+    app: AppHandle,
+    max_results: Option<u32>,
+    query: Option<String>,
+) -> Result<GmailReadResult, String> {
+    bind_app_data(&app)?;
+    gmail::read_messages(max_results, query).await
 }

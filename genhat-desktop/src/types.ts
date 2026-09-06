@@ -740,12 +740,32 @@ export interface DeviceStartResponse {
 export interface GmailStatus {
   connected: boolean;
   email?: string | null;
+  /** True when OAuth grant includes gmail.readonly. */
+  canRead?: boolean;
 }
 
 export interface GmailSendResult {
   sent: boolean;
   id?: string | null;
   reason?: string | null;
+}
+
+export interface GmailMessageSummary {
+  id: string;
+  threadId?: string | null;
+  from?: string | null;
+  to?: string | null;
+  subject?: string | null;
+  date?: string | null;
+  snippet?: string | null;
+  body?: string | null;
+}
+
+export interface GmailReadResult {
+  ok: boolean;
+  messages?: GmailMessageSummary[] | null;
+  reason?: string | null;
+  needsReauth?: boolean | null;
 }
 
 export interface DevicePollPendingResponse {
@@ -774,6 +794,7 @@ export interface EntitlementResponse {
     monthlyGrant: number;
     trialCredits?: number;
     trialExpiresAt?: string | null;
+    packExpiresAt?: string | null;
   };
   quota: {
     includedUsd: number;
@@ -914,4 +935,69 @@ export interface FileIndexerSetupStatus {
   modelPresent: boolean;
   modelDir: string;
 }
+
+export interface ConnectorProviderInfo {
+  id: string;
+  displayName: string;
+  available: boolean;
+  comingSoon: boolean;
+  category?: string;
+  description?: string;
+  capabilities?: string[];
+  showInAttachMenu?: boolean;
+  authKind?: string;
+  /** cloud_broker | desktop_pkce | none */
+  connectFlow?: string;
+}
+
+export type ConnectionStatus = "connected" | "needsReauth" | "syncing" | "error";
+
+export interface ConnectorConnection {
+  id: string;
+  providerId: string;
+  displayName: string;
+  accountEmail: string | null;
+  remoteFolderId: string | null;
+  remoteFolderName: string | null;
+  mirrorRoot: string | null;
+  lastSyncAt: string | null;
+  status: ConnectionStatus;
+}
+
+export interface ConnectorIndexedRoot {
+  connectionId: string;
+  providerId: string;
+  label: string;
+  mirrorRoot: string;
+  lastSyncAt: string | null;
+}
+
+export interface ConnectorRemoteEntry {
+  id: string;
+  name: string;
+  kind: "folder" | "file";
+  mimeType: string | null;
+  size: number | null;
+  modifiedAt: string | null;
+}
+
+export interface ConnectorSyncReport {
+  mirrorRoot: string;
+  fetched: number;
+  updated: number;
+  removed: number;
+}
+
+export interface ConnectorOAuthStart {
+  sessionId: string;
+  authUrl: string;
+  expiresIn: number;
+  interval: number;
+}
+
+export type ConnectorOAuthPoll =
+  | { status: "pending" }
+  | { status: "expired" }
+  | { status: "denied" }
+  | { status: "approved"; connection: ConnectorConnection };
 

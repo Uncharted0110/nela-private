@@ -63,6 +63,9 @@ fn main() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            // Connector catalog backends (driven by connectors.toml)
+            app_lib::connectors::init();
+
             // 1. Load model registry from embedded models.toml
             let registry = Arc::new(
                 ModelRegistry::load().expect("Failed to load model registry"),
@@ -483,6 +486,22 @@ fn main() {
             app_lib::commands::gmail::gmail_status,
             app_lib::commands::gmail::gmail_disconnect,
             app_lib::commands::gmail::gmail_send,
+            app_lib::commands::gmail::gmail_read,
+            // Cloud storage connectors (File Indexer mirrors)
+            app_lib::commands::connectors::connectors_list_providers,
+            app_lib::commands::connectors::connectors_list_connections,
+            app_lib::commands::connectors::connectors_list_indexed_roots,
+            app_lib::commands::connectors::connectors_oauth_start,
+            app_lib::commands::connectors::connectors_oauth_poll,
+            app_lib::commands::connectors::connectors_account_connect,
+            app_lib::commands::connectors::connectors_account_disconnect,
+            app_lib::commands::connectors::connectors_disconnect,
+            app_lib::commands::connectors::connectors_list_children,
+            app_lib::commands::connectors::connectors_add_indexed_folder,
+            app_lib::commands::connectors::connectors_sync_now,
+            app_lib::commands::connectors::connectors_fetch_file,
+            app_lib::commands::connectors::connectors_create_file,
+            app_lib::commands::connectors::connectors_update_file,
         ])
         .build(tauri::generate_context!())
         .expect("error building tauri app")

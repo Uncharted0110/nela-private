@@ -36,8 +36,8 @@ export default function GmailConnectCard() {
         </button>
       </div>
       <p className="gmail-confirm__hint">
-        Connect Gmail so NELA can send mail. You&apos;ll confirm every email
-        before it goes out.
+        Connect Gmail so NELA can send mail and read messages you approve.
+        You&apos;ll confirm every send and every inbox read.
       </p>
       {error ? <p className="gmail-confirm__error">{error}</p> : null}
       <div className="gmail-confirm__actions">

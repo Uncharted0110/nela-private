@@ -1,4 +1,4 @@
-//! Gmail connector: desktop PKCE OAuth (`gmail.send`) + MIME send.
+//! Gmail connector: desktop PKCE OAuth (`gmail.send` + `gmail.readonly`) + MIME send/read.
 //!
 //! Tokens live in `{app_data}/nela_gmail_tokens.json` (same pattern as Cloud).
 //! The OS keychain stores a compact refresh+email copy when it can.
@@ -28,12 +28,14 @@ pub fn set_app_data_dir(path: PathBuf) {
 fn app_data_dir() -> Option<PathBuf> {
     APP_DATA_DIR.lock().ok().and_then(|g| g.clone())
 }
-const GMAIL_SEND_SCOPE: &str = "https://www.googleapis.com/auth/gmail.send email";
+const GMAIL_SCOPES: &str = "https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/gmail.readonly email";
 const AUTH_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const REVOKE_URL: &str = "https://oauth2.googleapis.com/revoke";
 const USERINFO_URL: &str = "https://www.googleapis.com/oauth2/v2/userinfo";
 const SEND_URL: &str = "https://gmail.googleapis.com/gmail/v1/users/me/messages/send";
+const LIST_URL: &str = "https://gmail.googleapis.com/gmail/v1/users/me/messages";
+const READONLY_SCOPE: &str = "https://www.googleapis.com/auth/gmail.readonly";
 const OAUTH_TIMEOUT: Duration = Duration::from_secs(180);
 const MAX_BODY_CHARS: usize = 100_000;
 const MAX_RECIPIENTS: usize = 25;
@@ -56,6 +58,9 @@ struct StoredGmailTokens {
     access_token: Option<String>,
     expires_at: Option<u64>,
     email: Option<String>,
+    /// Space-separated OAuth scopes from the last token response (optional for older stores).
+    #[serde(default)]
+    scopes: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -63,6 +68,9 @@ struct StoredGmailTokens {
 pub struct GmailStatus {
     pub connected: bool,
     pub email: Option<String>,
+    /// True when the stored grant includes gmail.readonly.
+    #[serde(default)]
+    pub can_read: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -75,12 +83,39 @@ pub struct GmailSendResult {
     pub reason: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GmailMessageSummary {
+    pub id: String,
+    pub thread_id: Option<String>,
+    pub from: Option<String>,
+    pub to: Option<String>,
+    pub subject: Option<String>,
+    pub date: Option<String>,
+    pub snippet: Option<String>,
+    /// Plain-text body (truncated). Prefer this for summarization.
+    pub body: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GmailReadResult {
+    pub ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub messages: Option<Vec<GmailMessageSummary>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub needs_reauth: Option<bool>,
+}
+
 #[derive(Debug, Deserialize)]
 struct TokenResponse {
     access_token: Option<String>,
     refresh_token: Option<String>,
     expires_in: Option<u64>,
     id_token: Option<String>,
+    scope: Option<String>,
     error: Option<String>,
     error_description: Option<String>,
 }
@@ -162,6 +197,7 @@ fn write_keychain_store(store: &StoredGmailTokens) {
         access_token: None,
         expires_at: store.expires_at,
         email: store.email.clone(),
+        scopes: store.scopes.clone(),
     };
     if let (Ok(entry), Ok(raw)) = (keyring_entry(), serde_json::to_string(&compact)) {
         let _ = entry.set_password(&raw);
@@ -413,6 +449,7 @@ NELA_GOOGLE_CONNECTOR_CLIENT_SECRET to genhat-desktop/.env, then restart NELA."
         access_token: Some(access),
         expires_at,
         email,
+        scopes: tokens.scope,
     })
 }
 
@@ -450,6 +487,9 @@ async fn refresh_access(store: &StoredGmailTokens) -> Result<(String, u64), Stri
     let mut next = store.clone();
     next.access_token = Some(access.clone());
     next.expires_at = Some(expires_at);
+    if let Some(scope) = tokens.scope.filter(|s| !s.trim().is_empty()) {
+        next.scopes = Some(scope);
+    }
     let _ = write_store(&next);
     if let Ok(mut guard) = ACCESS_CACHE.lock() {
         *guard = Some(CachedAccess {
@@ -491,19 +531,35 @@ async fn access_token() -> Result<(String, Option<String>), String> {
     Ok((access, email))
 }
 
+fn store_can_read(store: &StoredGmailTokens) -> bool {
+    store
+        .scopes
+        .as_deref()
+        .unwrap_or("")
+        .split_whitespace()
+        .any(|s| s == READONLY_SCOPE || s.contains("gmail.readonly"))
+}
+
+fn status_from_store(store: &StoredGmailTokens) -> GmailStatus {
+    GmailStatus {
+        connected: true,
+        email: store.email.clone(),
+        can_read: store_can_read(store),
+    }
+}
+
 pub fn status() -> Result<GmailStatus, String> {
     if let Some(store) = read_store()? {
-        return Ok(GmailStatus {
-            connected: true,
-            email: store.email,
-        });
+        return Ok(status_from_store(&store));
     }
     if let Ok(guard) = ACCESS_CACHE.lock() {
         if let Some(cache) = guard.as_ref() {
             if cache.expires_at > now_unix() {
+                // Cache alone cannot prove readonly — treat as connected without read.
                 return Ok(GmailStatus {
                     connected: true,
                     email: cache.email.clone(),
+                    can_read: false,
                 });
             }
         }
@@ -511,6 +567,7 @@ pub fn status() -> Result<GmailStatus, String> {
     Ok(GmailStatus {
         connected: false,
         email: None,
+        can_read: false,
     })
 }
 
@@ -530,7 +587,7 @@ pub async fn connect(open_url: impl FnOnce(&str) -> Result<(), String>) -> Resul
         "{AUTH_URL}?client_id={}&redirect_uri={}&response_type=code&scope={}&code_challenge={}&code_challenge_method=S256&access_type=offline&prompt=consent&state={}",
         urlencoding::encode(&client_id),
         urlencoding::encode(&redirect_uri),
-        urlencoding::encode(GMAIL_SEND_SCOPE),
+        urlencoding::encode(GMAIL_SCOPES),
         urlencoding::encode(&challenge),
         urlencoding::encode(&state),
     );
@@ -541,10 +598,7 @@ pub async fn connect(open_url: impl FnOnce(&str) -> Result<(), String>) -> Resul
     let client = http_client()?;
     let store = exchange_code(&client, &client_id, &code, &verifier, &redirect_uri).await?;
     write_store(&store)?;
-    Ok(GmailStatus {
-        connected: true,
-        email: store.email,
-    })
+    Ok(status_from_store(&store))
 }
 
 pub async fn disconnect() -> Result<GmailStatus, String> {
@@ -562,6 +616,7 @@ pub async fn disconnect() -> Result<GmailStatus, String> {
     Ok(GmailStatus {
         connected: false,
         email: None,
+        can_read: false,
     })
 }
 
@@ -802,6 +857,275 @@ async fn send_with_token(
             error: None,
         });
     Ok((status, parsed))
+}
+
+const MAX_READ_MESSAGES: usize = 5;
+const MAX_BODY_CHARS_READ: usize = 12_000;
+
+fn decode_body_data(data: &str) -> Option<String> {
+    let cleaned: String = data.chars().filter(|c| !c.is_whitespace()).collect();
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(&cleaned)
+        .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(&cleaned))
+        .or_else(|_| base64::engine::general_purpose::STANDARD.decode(&cleaned))
+        .ok()?;
+    let text = String::from_utf8_lossy(&bytes).into_owned();
+    Some(text)
+}
+
+fn header_map(payload: &serde_json::Value) -> std::collections::HashMap<String, String> {
+    let mut out = std::collections::HashMap::new();
+    let Some(headers) = payload.get("headers").and_then(|h| h.as_array()) else {
+        return out;
+    };
+    for h in headers {
+        let name = h
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        let value = h.get("value").and_then(|v| v.as_str()).unwrap_or("");
+        if !name.is_empty() {
+            out.insert(name, value.to_string());
+        }
+    }
+    out
+}
+
+fn collect_plain_parts(payload: &serde_json::Value, out: &mut Vec<String>) {
+    let mime = payload
+        .get("mimeType")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if mime.starts_with("text/plain") {
+        if let Some(data) = payload
+            .get("body")
+            .and_then(|b| b.get("data"))
+            .and_then(|d| d.as_str())
+        {
+            if let Some(text) = decode_body_data(data) {
+                let trimmed = text.trim();
+                if !trimmed.is_empty() {
+                    out.push(trimmed.to_string());
+                }
+            }
+        }
+    }
+    if let Some(parts) = payload.get("parts").and_then(|p| p.as_array()) {
+        for part in parts {
+            collect_plain_parts(part, out);
+        }
+    }
+}
+
+fn strip_simple_html(html: &str) -> String {
+    let mut out = String::with_capacity(html.len());
+    let mut in_tag = false;
+    for ch in html.chars() {
+        match ch {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            _ if !in_tag => out.push(ch),
+            _ => {}
+        }
+    }
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn collect_html_parts(payload: &serde_json::Value, out: &mut Vec<String>) {
+    let mime = payload
+        .get("mimeType")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if mime.starts_with("text/html") {
+        if let Some(data) = payload
+            .get("body")
+            .and_then(|b| b.get("data"))
+            .and_then(|d| d.as_str())
+        {
+            if let Some(text) = decode_body_data(data) {
+                let stripped = strip_simple_html(&text);
+                if !stripped.is_empty() {
+                    out.push(stripped);
+                }
+            }
+        }
+    }
+    if let Some(parts) = payload.get("parts").and_then(|p| p.as_array()) {
+        for part in parts {
+            collect_html_parts(part, out);
+        }
+    }
+}
+
+fn extract_body(payload: &serde_json::Value) -> Option<String> {
+    let mut plain = Vec::new();
+    collect_plain_parts(payload, &mut plain);
+    if let Some(text) = plain.into_iter().next() {
+        return Some(truncate_chars(&text, MAX_BODY_CHARS_READ));
+    }
+    let mut html = Vec::new();
+    collect_html_parts(payload, &mut html);
+    html.into_iter()
+        .next()
+        .map(|t| truncate_chars(&t, MAX_BODY_CHARS_READ))
+}
+
+fn truncate_chars(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        return s.to_string();
+    }
+    let truncated: String = s.chars().take(max).collect();
+    format!("{truncated}…")
+}
+
+fn parse_message(raw: &serde_json::Value) -> Option<GmailMessageSummary> {
+    let id = raw.get("id")?.as_str()?.to_string();
+    let thread_id = raw
+        .get("threadId")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let snippet = raw
+        .get("snippet")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let payload = raw.get("payload")?;
+    let headers = header_map(payload);
+    Some(GmailMessageSummary {
+        id,
+        thread_id,
+        from: headers.get("from").cloned(),
+        to: headers.get("to").cloned(),
+        subject: headers.get("subject").cloned(),
+        date: headers.get("date").cloned(),
+        snippet,
+        body: extract_body(payload),
+    })
+}
+
+/// Fetch recent inbox messages (default latest one). Requires gmail.readonly.
+pub async fn read_messages(
+    max_results: Option<u32>,
+    query: Option<String>,
+) -> Result<GmailReadResult, String> {
+    let store = match read_store()? {
+        Some(s) => s,
+        None => {
+            return Ok(GmailReadResult {
+                ok: false,
+                messages: None,
+                reason: Some("Gmail is not connected.".into()),
+                needs_reauth: Some(true),
+            });
+        }
+    };
+    if !store_can_read(&store) {
+        return Ok(GmailReadResult {
+            ok: false,
+            messages: None,
+            reason: Some(
+                "Gmail is connected for send only. Disconnect and Connect again to allow reading mail."
+                    .into(),
+            ),
+            needs_reauth: Some(true),
+        });
+    }
+
+    let limit = max_results
+        .unwrap_or(1)
+        .clamp(1, MAX_READ_MESSAGES as u32) as usize;
+    let q = query
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "in:inbox".to_string());
+
+    let (token, _) = access_token().await?;
+    let client = http_client()?;
+    let list_url = format!(
+        "{LIST_URL}?maxResults={limit}&q={}",
+        urlencoding::encode(&q)
+    );
+    let list_resp = client
+        .get(&list_url)
+        .bearer_auth(&token)
+        .send()
+        .await
+        .map_err(|_| "Could not reach Gmail. Check your network and try again.".to_string())?;
+    let list_status = list_resp.status();
+    let list_body = list_resp.text().await.unwrap_or_default();
+    if list_status.as_u16() == 401 || list_status.as_u16() == 403 {
+        return Ok(GmailReadResult {
+            ok: false,
+            messages: None,
+            reason: Some(
+                "Gmail denied read access. Disconnect and Connect again to grant inbox read."
+                    .into(),
+            ),
+            needs_reauth: Some(true),
+        });
+    }
+    if !list_status.is_success() {
+        return Ok(GmailReadResult {
+            ok: false,
+            messages: None,
+            reason: Some(format!(
+                "Could not list mail (HTTP {}).",
+                list_status.as_u16()
+            )),
+            needs_reauth: None,
+        });
+    }
+    let list_json: serde_json::Value = serde_json::from_str(&list_body)
+        .map_err(|_| "Gmail returned an unexpected list response.".to_string())?;
+    let ids: Vec<String> = list_json
+        .get("messages")
+        .and_then(|m| m.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|m| m.get("id").and_then(|id| id.as_str()).map(|s| s.to_string()))
+                .take(limit)
+                .collect()
+        })
+        .unwrap_or_default();
+
+    if ids.is_empty() {
+        return Ok(GmailReadResult {
+            ok: true,
+            messages: Some(vec![]),
+            reason: Some("No messages matched.".into()),
+            needs_reauth: None,
+        });
+    }
+
+    let mut messages = Vec::with_capacity(ids.len());
+    for id in ids {
+        let url = format!("{LIST_URL}/{id}?format=full");
+        let resp = client
+            .get(&url)
+            .bearer_auth(&token)
+            .send()
+            .await
+            .map_err(|_| "Could not fetch a Gmail message.".to_string())?;
+        if !resp.status().is_success() {
+            continue;
+        }
+        let raw: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|_| "Gmail returned an unexpected message.".to_string())?;
+        if let Some(msg) = parse_message(&raw) {
+            messages.push(msg);
+        }
+    }
+
+    Ok(GmailReadResult {
+        ok: true,
+        messages: Some(messages),
+        reason: None,
+        needs_reauth: None,
+    })
 }
 
 pub async fn send_message(

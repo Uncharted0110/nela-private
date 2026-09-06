@@ -23,6 +23,7 @@ pub mod router;
 pub mod commands;
 pub mod auth;
 pub mod cloud;
+pub mod connectors;
 pub mod rag;
 pub mod doc_graph;
 pub mod workspace;
@@ -31,7 +32,6 @@ pub mod asr;
 pub mod podcast;
 pub mod system;
 pub mod playground;
-pub mod connectors;
 
 // ── Revamp modules ────────────────────────────────────────────────────────────
 pub mod governor;

@@ -2,6 +2,8 @@
 //!
 //! The model registry is defined in `models.toml` (embedded at compile time).
 //! Adding a new model requires only a new `[[models]]` entry in that file.
+//!
+//! Connectors are defined in `connectors.toml` — see `crate::connectors::catalog`.
 
 use crate::registry::types::{BackendKind, ModelDef, ModelKind, TaskType};
 use serde::Deserialize;

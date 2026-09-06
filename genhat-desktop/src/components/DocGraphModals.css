@@ -1,10 +1,12 @@
+/* Theme-aware DocGraph / File Indexer modals */
+
 .dg-overlay {
   position: fixed;
   inset: 0;
   z-index: 12000;
   display: grid;
   place-items: center;
-  background: rgba(6, 10, 18, 0.72);
+  background: var(--modal-overlay-bg);
   backdrop-filter: blur(8px);
 }
 
@@ -12,12 +14,12 @@
   width: min(640px, 94vw);
   max-height: 88vh;
   overflow: auto;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--color-glass-border);
   border-radius: 16px;
-  background: linear-gradient(165deg, #121826 0%, #0b1018 100%);
-  color: #e8eef7;
+  background: var(--modal-surface-solid);
+  color: var(--color-txt);
   padding: 1.35rem 1.4rem 1.2rem;
-  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.45);
+  box-shadow: var(--modal-shadow);
 }
 
 .dg-card.query {
@@ -29,16 +31,18 @@
   gap: 0.85rem;
   align-items: flex-start;
   margin-bottom: 1.1rem;
+  color: var(--color-txt);
 }
 
 .dg-header h2 {
   margin: 0;
   font-size: 1.15rem;
+  color: var(--color-txt);
 }
 
 .dg-header p {
   margin: 0.25rem 0 0;
-  color: #9aa7b8;
+  color: var(--color-txt-muted);
   font-size: 0.88rem;
 }
 
@@ -50,39 +54,40 @@
 }
 
 .dg-stat {
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--modal-border-subtle);
   border-radius: 10px;
   padding: 0.65rem 0.75rem;
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--modal-item-bg-subtle);
 }
 
 .dg-stat-label {
   font-size: 0.68rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: #8b98a8;
+  color: var(--color-txt-muted);
 }
 
 .dg-stat-value {
   margin-top: 0.2rem;
   font-size: 1rem;
   font-weight: 600;
+  color: var(--color-txt);
 }
 
 .dg-progress,
 .dg-report {
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--modal-border-subtle);
   border-radius: 12px;
   padding: 0.75rem 0.9rem;
   margin-bottom: 1rem;
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--modal-item-bg-subtle);
   font-size: 0.86rem;
-  color: #c5d0dc;
+  color: var(--color-txt-secondary);
 }
 
 .dg-progress strong,
 .dg-report strong {
-  color: #e8eef7;
+  color: var(--color-txt);
 }
 
 .dg-actions {
@@ -93,9 +98,9 @@
 }
 
 .dg-btn {
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(255, 255, 255, 0.06);
-  color: #e8eef7;
+  border: 1px solid var(--color-glass-border);
+  background: var(--modal-icon-btn-bg);
+  color: var(--color-txt);
   border-radius: 10px;
   padding: 0.55rem 0.9rem;
   font-size: 0.88rem;
@@ -105,20 +110,25 @@
   gap: 0.4rem;
 }
 
+.dg-btn:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--color-neon) 35%, var(--color-glass-border));
+}
+
 .dg-btn:disabled {
   opacity: 0.55;
   cursor: not-allowed;
 }
 
 .dg-btn.primary {
-  background: #2f6fed;
-  border-color: #2f6fed;
+  background: var(--modal-btn-primary-bg);
+  border-color: transparent;
+  color: var(--modal-btn-primary-text);
 }
 
 .dg-btn.danger {
-  background: rgba(220, 80, 80, 0.18);
-  border-color: rgba(220, 80, 80, 0.35);
-  color: #ffb4b4;
+  background: color-mix(in srgb, var(--color-danger) 14%, transparent);
+  border-color: color-mix(in srgb, var(--color-danger) 35%, var(--color-glass-border));
+  color: var(--color-danger);
 }
 
 .dg-btn.ghost {
@@ -127,13 +137,13 @@
 
 .dg-error {
   margin-top: 0.75rem;
-  color: #ff9b9b;
+  color: var(--color-danger);
   font-size: 0.85rem;
 }
 
 .dg-path {
   font-size: 0.78rem;
-  color: #8b98a8;
+  color: var(--color-txt-muted);
   word-break: break-all;
   margin-top: 0.35rem;
 }
@@ -147,26 +157,30 @@
 .dg-query-input {
   flex: 1;
   border-radius: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(0, 0, 0, 0.25);
-  color: #e8eef7;
+  border: 1px solid var(--color-glass-border);
+  background: var(--modal-item-bg);
+  color: var(--color-txt);
   padding: 0.65rem 0.8rem;
   font-size: 0.92rem;
+}
+
+.dg-query-input::placeholder {
+  color: var(--color-txt-muted);
 }
 
 .dg-preview-label {
   font-size: 0.72rem;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: #8b98a8;
+  color: var(--color-txt-muted);
   margin-bottom: 0.4rem;
 }
 
 .dg-preview {
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--color-glass-border);
   border-radius: 12px;
-  background: #070b12;
-  color: #d7e0ea;
+  background: var(--modal-panel-bg);
+  color: var(--color-txt-secondary);
   padding: 0.9rem 1rem;
   min-height: 220px;
   max-height: 48vh;
@@ -184,25 +198,25 @@
   width: 32px;
   height: 32px;
   border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(255, 255, 255, 0.05);
-  color: #d7e0ea;
+  border: 1px solid var(--color-glass-border);
+  background: var(--modal-icon-btn-bg);
+  color: var(--color-txt-secondary);
   cursor: pointer;
 }
 
 .dg-badge.ready {
-  color: #5ddea0;
-  border-color: rgba(93, 222, 160, 0.35);
+  color: var(--color-success);
+  border-color: color-mix(in srgb, var(--color-success) 35%, var(--color-glass-border));
 }
 
 .dg-badge.working {
-  color: #7eb6ff;
-  border-color: rgba(126, 182, 255, 0.35);
+  color: var(--color-neon);
+  border-color: color-mix(in srgb, var(--color-neon) 35%, var(--color-glass-border));
 }
 
 .dg-badge.error {
-  color: #ff9b9b;
-  border-color: rgba(255, 155, 155, 0.35);
+  color: var(--color-danger);
+  border-color: color-mix(in srgb, var(--color-danger) 35%, var(--color-glass-border));
 }
 
 .dg-spin {

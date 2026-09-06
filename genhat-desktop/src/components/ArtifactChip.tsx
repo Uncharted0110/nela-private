@@ -1,6 +1,17 @@
-import { useState } from "react";
-import { Download, FileCode, Table2, Presentation, PanelRightOpen, PanelRightClose, Loader2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import {
+  CloudUpload,
+  Download,
+  FileCode,
+  Table2,
+  Presentation,
+  PanelRightOpen,
+  PanelRightClose,
+  Loader2,
+} from "lucide-react";
 import { downloadArtifactCopy, looksLikePresentationTitle } from "../app/artifactDownload";
+import { useConnectorStore } from "../stores/connectorStore";
+import { friendlyErrorFromUnknown } from "../app/friendlyError";
 
 export interface ArtifactChipProps {
   title: string;
@@ -22,6 +33,16 @@ export default function ArtifactChip({
   onTogglePanel,
 }: ArtifactChipProps) {
   const [downloading, setDownloading] = useState(false);
+  const [savingDrive, setSavingDrive] = useState(false);
+  const connections = useConnectorStore((s) => s.connections);
+  const refresh = useConnectorStore((s) => s.refresh);
+  const saveLocalFile = useConnectorStore((s) => s.saveLocalFile);
+
+  useEffect(() => {
+    if (connections.length === 0) void refresh();
+  }, [connections.length, refresh]);
+
+  const driveConn = connections.find((c) => c.providerId === "gdrive");
   const isPresentation =
     type !== "text/csv" && looksLikePresentationTitle(title, path ?? undefined);
 
@@ -42,6 +63,27 @@ export default function ArtifactChip({
       console.warn("Artifact download failed:", err);
     } finally {
       setDownloading(false);
+    }
+  };
+
+  const onSaveToDrive = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!path || !driveConn || savingDrive) return;
+    setSavingDrive(true);
+    try {
+      const base =
+        title.trim().replace(/[^\w\- ]+/g, "").trim() ||
+        path.split(/[/\\]/).pop() ||
+        "artifact";
+      const ext = path.includes(".") ? path.slice(path.lastIndexOf(".")) : "";
+      const name = base.toLowerCase().endsWith(ext.toLowerCase())
+        ? base
+        : `${base}${ext}`;
+      await saveLocalFile(driveConn.id, path, name, driveConn.remoteFolderId);
+    } catch (err) {
+      console.warn("Save to Drive failed:", friendlyErrorFromUnknown(err));
+    } finally {
+      setSavingDrive(false);
     }
   };
 
@@ -79,6 +121,22 @@ export default function ArtifactChip({
           <PanelRightOpen size={15} className="text-txt-muted shrink-0" />
         )}
       </button>
+      {driveConn && (
+        <button
+          type="button"
+          onClick={onSaveToDrive}
+          disabled={!path || savingDrive || loading}
+          className="shrink-0 px-3 rounded-xl border border-white/10 bg-white/[0.04] hover:bg-white/[0.07] hover:border-neon/30 transition disabled:opacity-40 disabled:pointer-events-none text-txt-muted hover:text-neon"
+          title="Save to Google Drive"
+          aria-label="Save to Google Drive"
+        >
+          {savingDrive ? (
+            <Loader2 size={16} className="animate-spin" />
+          ) : (
+            <CloudUpload size={16} />
+          )}
+        </button>
+      )}
       <button
         type="button"
         onClick={onDownload}

@@ -2,6 +2,7 @@ import { FolderSearch, Loader2, Search, Trash2, X } from "lucide-react";
 import { openRagSourcePicker } from "../stores/ragSourcePickerStore";
 import { useDocGraphStore } from "../stores/docGraphStore";
 import { friendlyErrorFromUnknown } from "../app/friendlyError";
+import ConnectorsPanel from "./ConnectorsPanel";
 import "./DocGraphModals.css";
 
 export default function DocGraphIndexModal() {
@@ -136,6 +137,8 @@ export default function DocGraphIndexModal() {
         </div>
 
         {error && <div className="dg-error">{error}</div>}
+
+        <ConnectorsPanel />
       </div>
     </div>
   );

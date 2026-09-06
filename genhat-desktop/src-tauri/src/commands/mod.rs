@@ -22,3 +22,4 @@ pub mod artifact_images;
 pub mod attachments;
 pub mod fileindexer_install;
 pub mod gmail;
+pub mod connectors;

@@ -47,4 +47,10 @@ describe("looksLikeEmailRequest", () => {
     assert.equal(looksLikeEmailRequest("write a mail to finance"), true);
     assert.equal(looksLikeEmailRequest("What is the capital of France?"), false);
   });
+
+  it("detects read/summarize phrasing", () => {
+    assert.equal(looksLikeEmailRequest("summarize my latest email"), true);
+    assert.equal(looksLikeEmailRequest("fetch my recent inbox"), true);
+    assert.equal(looksLikeEmailRequest("read my last email"), true);
+  });
 });
