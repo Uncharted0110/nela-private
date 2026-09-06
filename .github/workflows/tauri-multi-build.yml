@@ -99,6 +99,9 @@ jobs:
       - name: Build Tauri App
         run: npx tauri build --bundles ${{ matrix.bundles }}
         working-directory: genhat-desktop
+        env:
+          # Public Desktop OAuth client (PKCE). Set repo secret when ops creates the client.
+          NELA_GOOGLE_CONNECTOR_CLIENT_ID: ${{ secrets.NELA_GOOGLE_CONNECTOR_CLIENT_ID }}
 
       - name: Stage installers (Windows)
         if: matrix.os == 'windows-latest'

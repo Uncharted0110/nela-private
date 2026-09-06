@@ -327,6 +327,50 @@ export const MCP_CLOUD_TOOLS: CloudToolDefinition[] = [
   MCP_HTML_TOOL,
 ];
 
+/** Desktop-hosted Gmail send — host always confirms before the API call. */
+export const GMAIL_SEND_TOOL: CloudToolDefinition = {
+  type: "function",
+  function: {
+    name: "gmail_send",
+    description:
+      "Compose an email to send from the user's connected Gmail account. " +
+      "The user MUST confirm the draft in the NELA app before anything is sent. " +
+      "Never claim the email was sent until the tool result has sent=true. " +
+      "Use only when the user asked you to email someone. Plain text only. " +
+      "Do not add a NELA logo or “sent using nela” line — NELA appends that footer.",
+    parameters: {
+      type: "object",
+      properties: {
+        to: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "To addresses. Put every recipient here — an array of emails, or one comma-separated string.",
+        },
+        cc: {
+          type: "array",
+          items: { type: "string" },
+          description: "Optional CC addresses",
+        },
+        bcc: {
+          type: "array",
+          items: { type: "string" },
+          description: "Optional BCC addresses",
+        },
+        subject: {
+          type: "string",
+          description: "Email subject line",
+        },
+        body: {
+          type: "string",
+          description: "Plain-text email body",
+        },
+      },
+      required: ["to", "subject", "body"],
+    },
+  },
+};
+
 export function buildCloudChatTools(options?: {
   webEnabled?: boolean;
   fileSearchEnabled?: boolean;
@@ -335,6 +379,8 @@ export function buildCloudChatTools(options?: {
   chartEnabled?: boolean;
   /** Sparse user clarification popup (default true for chat tool loops). */
   askFollowUpEnabled?: boolean;
+  /** Gmail compose/send when the user has connected Gmail. */
+  gmailEnabled?: boolean;
 }): CloudToolDefinition[] {
   const tools: CloudToolDefinition[] = [];
   if (options?.webEnabled) tools.push(WEB_SEARCH_TOOL, WEB_EXTRACT_TOOL);
@@ -342,6 +388,7 @@ export function buildCloudChatTools(options?: {
   if (options?.chartEnabled) tools.push(RENDER_CHART_TOOL);
   if (options?.mcpEnabled) tools.push(...MCP_CLOUD_TOOLS);
   if (options?.askFollowUpEnabled !== false) tools.push(ASK_FOLLOWUP_TOOL);
+  if (options?.gmailEnabled) tools.push(GMAIL_SEND_TOOL);
   return tools;
 }
 

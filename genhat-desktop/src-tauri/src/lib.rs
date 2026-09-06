@@ -31,6 +31,7 @@ pub mod asr;
 pub mod podcast;
 pub mod system;
 pub mod playground;
+pub mod connectors;
 
 // ── Revamp modules ────────────────────────────────────────────────────────────
 pub mod governor;

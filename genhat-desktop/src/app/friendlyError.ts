@@ -70,6 +70,14 @@ export function friendlyError(raw: string | undefined | null): string {
   }
 
   if (
+    lower.includes("nela_gmail_oauth_client_id") ||
+    lower.includes("nela_google_connector_client_id") ||
+    (lower.includes("gmail") && lower.includes(".env"))
+  ) {
+    return "Gmail isn't available in this copy of NELA. Update the app and try Connect again.";
+  }
+
+  if (
     lower.includes("cloud_busy") ||
     lower.includes("cloud is busy") ||
     lower.includes("openrouter_failed") ||

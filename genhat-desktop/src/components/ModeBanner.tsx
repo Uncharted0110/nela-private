@@ -1,5 +1,5 @@
 import React, { useEffect } from "react";
-import { ShieldCheck, Cloud } from "lucide-react";
+import { ShieldCheck, Cloud, SlidersHorizontal } from "lucide-react";
 import { COPY } from "../app/copy";
 import { useAuthStore } from "../stores/authStore";
 import { useCloudStore } from "../stores/cloudStore";
@@ -18,6 +18,7 @@ const ModeBanner: React.FC = () => {
   const profile = useAuthStore((s) => s.profile);
   const authHydrated = useAuthStore((s) => s.hydrated);
   const setProfileOpen = useUIStore((s) => s.setProfileOpen);
+  const setSettingsOpen = useUIStore((s) => s.setSettingsOpen);
   const setUseSpecificModelPicker = useModelStore((s) => s.setUseSpecificModelPicker);
 
   const isCloud = preferredMode !== "local";
@@ -66,6 +67,15 @@ const ModeBanner: React.FC = () => {
             {isCloud ? <Cloud size={10} strokeWidth={2.4} /> : <ShieldCheck size={10} strokeWidth={2.4} />}
           </span>
         </span>
+      </button>
+      <button
+        type="button"
+        className="mode-toggle__settings"
+        title="Settings"
+        aria-label="Open settings"
+        onClick={() => setSettingsOpen(true)}
+      >
+        <SlidersHorizontal size={14} strokeWidth={2} />
       </button>
     </div>
   );

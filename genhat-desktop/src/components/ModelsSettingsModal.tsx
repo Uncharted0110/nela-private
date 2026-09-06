@@ -20,6 +20,7 @@ import {
   writeIntelligenceMapping,
   type LocalIntelligenceTier,
 } from "../app/intelligenceModes";
+import ConnectionsSettings from "./ConnectionsSettings";
 import "./ModelsSettingsModal.css";
 
 interface ModelsSettingsModalProps {
@@ -671,6 +672,9 @@ const ModelsSettingsModal: React.FC<ModelsSettingsModalProps> = ({
                   ].join(" ")}
                 />
               </button>
+            </div>
+            <div className="py-1 border-t border-glass-border pt-3">
+              <ConnectionsSettings />
             </div>
             <div className="flex items-center justify-between gap-3 py-1">
               <div>

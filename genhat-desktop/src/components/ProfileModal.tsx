@@ -7,6 +7,7 @@ import {
   Loader2,
   Crown,
   Save,
+  Cloud,
 } from "lucide-react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { useAuthStore } from "../stores/authStore";
@@ -52,6 +53,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) => {
   const entitlement = useCloudStore((s) => s.entitlement);
   const performanceMode = useUIStore((s) => s.performanceMode);
   const setPerformanceMode = useUIStore((s) => s.setPerformanceMode);
+  const setCloudSettingsOpen = useUIStore((s) => s.setCloudSettingsOpen);
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -337,6 +339,17 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) => {
               {saveNotice && <p className="profile-success">{saveNotice}</p>}
 
               <div className="profile-actions">
+                <button
+                  type="button"
+                  className="profile-save-btn"
+                  onClick={() => {
+                    onClose();
+                    setCloudSettingsOpen(true);
+                  }}
+                >
+                  <Cloud size={16} />
+                  Cloud settings
+                </button>
                 <button
                   type="button"
                   className="profile-save-btn"

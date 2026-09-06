@@ -19,6 +19,10 @@ import { useCloudStore } from "../stores/cloudStore";
 import { useChatModeStore } from "../stores/chatModeStore";
 import { useArtifactStreamStore } from "../stores/artifactStreamStore";
 import ChatMessageItem, { GenerationTimer } from "./ChatMessageItem";
+import GmailSendConfirmCard from "./GmailSendConfirmCard";
+import GmailConnectCard from "./GmailConnectCard";
+import { useGmailSendConfirmStore } from "../stores/gmailSendConfirmStore";
+import { useGmailConnectPromptStore } from "../stores/gmailConnectPromptStore";
 import ReasoningDisclosure from "./ReasoningDisclosure";
 import { scrubChatArtifactProtocol } from "../app/streamArtifactParser";
 import "./ModeBanner.css";
@@ -148,6 +152,8 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
   const liveStreamHasBody = useArtifactStreamStore(
     (s) => s.active && Boolean(s.html || s.csv)
   );
+  const gmailConfirmPending = useGmailSendConfirmStore((s) => s.pending);
+  const gmailConnectPrompt = useGmailConnectPromptStore((s) => s.visible);
   const modeChatBorderClass =
     preferredMode !== "local" ? "mode-chat-border--cloud" : "mode-chat-border--private";
   const [inputObj, setInputObj] = useState("");
@@ -212,13 +218,13 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
   useEffect(() => {
     // Follow the live bubble while tokens stream. While only thinking/loading,
     // respect the user if they scrolled up to read history.
-    if (!streamingContent && !stickToBottomRef.current) return;
+    if (!streamingContent && !gmailConfirmPending && !gmailConnectPrompt && !stickToBottomRef.current) return;
     const el = messagesParentRef.current;
     if (!el) return;
     requestAnimationFrame(() => {
       el.scrollTop = el.scrollHeight;
     });
-  }, [messages.length, streamingContent, streamingThinking, isLoading, virtualTotalSize]);
+  }, [messages.length, streamingContent, streamingThinking, isLoading, virtualTotalSize, gmailConfirmPending, gmailConnectPrompt]);
 
   // Close composer menus while a response is generating.
   if (isLoading && (showAttachMenu || showToolsMenu)) {
@@ -914,6 +920,9 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
             );
           })}
         </div>
+
+        <GmailConnectCard />
+        <GmailSendConfirmCard />
 
         {isLoading &&
           !messages.some(

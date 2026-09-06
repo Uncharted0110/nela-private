@@ -40,6 +40,9 @@ import { useCloudStore } from "../../stores/cloudStore";
 import { streamChatByMode, willRouteToCloud } from "./cloudOrLocalStream";
 import type { SendHandlerContext } from "./types";
 import { runCloudAwareToolLoop } from "./cloudNativeToolLoop";
+import { looksLikeEmailRequest } from "./gmailConnectIntent";
+import { useGmailStore } from "../../stores/gmailStore";
+import { useGmailConnectPromptStore } from "../../stores/gmailConnectPromptStore";
 import { useChatModeStore } from "../../stores/chatModeStore";
 import { useArtifactStreamStore } from "../../stores/artifactStreamStore";
 import {
@@ -75,6 +78,18 @@ export async function handleSendTextChat(
     slashFileSearch,
     explicitAttachments,
   });
+
+  if (looksLikeEmailRequest(text)) {
+    void useGmailStore
+      .getState()
+      .refresh()
+      .then((status) => {
+        if (!status.connected) useGmailConnectPromptStore.getState().show();
+      })
+      .catch(() => {
+        useGmailConnectPromptStore.getState().show();
+      });
+  }
 
   ctx.setGeneralGenerating(true);
   ctx.setGeneralElapsedTime(0);

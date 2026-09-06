@@ -213,6 +213,43 @@
   cursor: not-allowed;
 }
 
+.cloud-connection-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.cloud-connection-row {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cloud-connection-row.is-soon {
+  opacity: 0.72;
+}
+
+.cloud-gmail-identity {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--modal-panel-bg);
+}
+
+.cloud-gmail-identity strong {
+  display: block;
+  font-size: 0.92rem;
+}
+
+.cloud-gmail-identity span {
+  display: block;
+  margin-top: 2px;
+  font-size: 0.8rem;
+  color: var(--color-txt-muted);
+}
+
 .cloud-settings-error {
   margin: 0;
   color: #e85d5d;

@@ -87,6 +87,8 @@ jobs:
       - name: Build Tauri app
         working-directory: genhat-desktop
         run: npx tauri build
+        env:
+          NELA_GOOGLE_CONNECTOR_CLIENT_ID: ${{ secrets.NELA_GOOGLE_CONNECTOR_CLIENT_ID }}
 
       - name: List bundle outputs
         if: always()

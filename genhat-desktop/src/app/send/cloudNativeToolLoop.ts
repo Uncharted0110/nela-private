@@ -40,6 +40,8 @@ import { normalizeSpreadsheetPlan } from "../spreadsheetPlan";
 import { currentQuarter } from "../nelaSystemPrompt";
 import type { AskFollowUpArgs } from "./askFollowUp";
 import { beginAskFollowUpTurn } from "../../stores/followUpStore";
+import { looksLikeEmailRequest } from "./gmailConnectIntent";
+import { useGmailConnectPromptStore } from "../../stores/gmailConnectPromptStore";
 
 const MAX_TOOL_ROUNDS = MAX_WEB_SEARCH_TOOL_ROUNDS;
 const MAX_CHART_PREP_ROUNDS = 6;
@@ -531,6 +533,18 @@ async function executeToolCall(
     };
   }
 
+  if (name === "gmail_send") {
+    const { executeGmailSend } = await import("./gmailSend");
+    const result = await executeGmailSend(args, {
+      signal: opts.signal,
+      onStatus: opts.onToolStatus,
+    });
+    return {
+      content: JSON.stringify(result),
+      webSearchResult,
+    };
+  }
+
   return {
     content: `Unknown tool: ${name}`,
     webSearchResult,
@@ -658,12 +672,19 @@ export async function runCloudNativeToolLoop(
 
   const webEnabled = loopOpts.webEnabled !== false;
   const fileSearchEnabled = Boolean(loopOpts.fileSearchEnabled);
+  let gmailEnabled = false;
+  try {
+    gmailEnabled = Boolean((await Api.gmailStatus()).connected);
+  } catch {
+    gmailEnabled = false;
+  }
   const tools = buildCloudChatTools({
     webEnabled,
     fileSearchEnabled,
     mcpEnabled: loopOpts.includeMcpTools !== false,
     chartEnabled: Boolean(loopOpts.chartEnabled),
     askFollowUpEnabled: true,
+    gmailEnabled,
   });
 
   let messages = toCloudMessages(loopOpts.messages);
@@ -674,7 +695,8 @@ export async function runCloudNativeToolLoop(
   );
   const hasRenderChart = tools.some((t) => t.function.name === "render_chart");
   const hasAskFollowUp = tools.some((t) => t.function.name === "ask_followup");
-  if (hasWebSearch || hasFileSearch || hasRenderChart || hasAskFollowUp) {
+  const hasGmail = tools.some((t) => t.function.name === "gmail_send");
+  if (hasWebSearch || hasFileSearch || hasRenderChart || hasAskFollowUp || hasGmail) {
     const parts: string[] = [];
     if (hasWebSearch) {
       parts.push(
@@ -707,6 +729,30 @@ export async function runCloudNativeToolLoop(
         "You have ask_followup for a sparse popup when required facts are missing (numbers, files, ambiguous target). " +
           "Use at most once per turn; never for chit-chat; never invent missing data."
       );
+    }
+    if (hasGmail) {
+      parts.push(
+        "You can send email with gmail_send (to, subject, body; optional cc/bcc). " +
+          "Put every To address in `to` (array or comma-separated). Use cc/bcc when asked. " +
+          "The user will confirm the draft in the app before anything is sent. " +
+          "Never claim an email was sent until the tool result has sent=true. " +
+          "If they cancel, say it was not sent. " +
+          "Do not add a NELA logo or “sent using nela” line — NELA appends that footer."
+      );
+    } else {
+      const lastUser = [...messages]
+        .reverse()
+        .find((m) => m.role === "user");
+      const lastUserText = lastUser
+        ? flattenMessageContent(lastUser.content)
+        : "";
+      if (looksLikeEmailRequest(lastUserText)) {
+        useGmailConnectPromptStore.getState().show();
+        parts.push(
+          "Gmail is not connected. Tell the user to tap Connect Gmail on the card in chat. " +
+            "Never claim mail was sent."
+        );
+      }
     }
     const hint = parts.join(" ");
     const firstSystem = messages.findIndex((m) => m.role === "system");

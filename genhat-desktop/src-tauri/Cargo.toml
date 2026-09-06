@@ -107,6 +107,7 @@ tokio-cron-scheduler = "0.13"
 handlebars = "6"
 chrono = { version = "0.4", features = ["serde"] }
 tauri-plugin-opener = "2"
+keyring = "3"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

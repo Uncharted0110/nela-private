@@ -1,0 +1,138 @@
+.gmail-confirm {
+  max-width: 42rem;
+  margin: 0 auto 1.25rem;
+  padding: 1rem 1.1rem 0.9rem;
+  border-radius: 14px;
+  border: 1px solid var(--color-glass-border);
+  background: var(--modal-surface-solid);
+  color: var(--color-txt);
+  box-shadow: var(--modal-shadow);
+}
+
+.gmail-confirm__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.gmail-confirm__title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.gmail-confirm__title strong {
+  font-size: 0.95rem;
+  font-weight: 650;
+}
+
+.gmail-confirm__icon-btn {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.85rem;
+  height: 1.85rem;
+  border-radius: 8px;
+  border: 1px solid var(--color-glass-border);
+  background: var(--modal-icon-btn-bg, transparent);
+  color: var(--color-txt-secondary, var(--color-txt-muted));
+  cursor: pointer;
+}
+
+.gmail-confirm__hint {
+  margin: 0.45rem 0 0.85rem;
+  color: var(--color-txt-muted);
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+.gmail-confirm__error {
+  margin: 0 0 0.75rem;
+  color: #e85d5d;
+  font-size: 0.82rem;
+}
+
+.gmail-confirm__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin-bottom: 0.7rem;
+  font-size: 0.8rem;
+  color: var(--color-txt-muted);
+}
+
+.gmail-confirm__field input,
+.gmail-confirm__field textarea {
+  width: 100%;
+  border-radius: 10px;
+  border: 1px solid var(--color-glass-border);
+  background: var(--modal-panel-bg, transparent);
+  color: var(--color-txt);
+  padding: 0.5rem 0.65rem;
+  font: inherit;
+  font-size: 0.9rem;
+}
+
+.gmail-confirm__field textarea {
+  resize: vertical;
+  min-height: 8rem;
+  line-height: 1.45;
+}
+
+.gmail-confirm__nela-footer {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.4rem;
+  margin: 0.15rem 0 0.85rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--color-glass-border);
+}
+
+.gmail-confirm__nela-footer img {
+  width: 40px;
+  height: auto;
+  display: block;
+  border-radius: 6px;
+}
+
+.gmail-confirm__nela-footer em {
+  font-style: italic;
+  font-size: 0.78rem;
+  color: var(--color-txt-muted);
+}
+
+.gmail-confirm__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 0.35rem;
+}
+
+.gmail-confirm__cancel,
+.gmail-confirm__send {
+  border-radius: 10px;
+  padding: 0.45rem 0.9rem;
+  font-size: 0.88rem;
+  cursor: pointer;
+}
+
+.gmail-confirm__cancel {
+  border: 1px solid var(--color-glass-border);
+  background: transparent;
+  color: var(--color-txt);
+}
+
+.gmail-confirm__send {
+  border: 1px solid color-mix(in srgb, var(--color-neon, #3ee0a0) 50%, transparent);
+  background: color-mix(in srgb, var(--color-neon, #3ee0a0) 18%, transparent);
+  color: var(--color-txt);
+  font-weight: 600;
+}
+
+.gmail-confirm__send:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

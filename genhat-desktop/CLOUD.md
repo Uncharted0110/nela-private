@@ -86,7 +86,19 @@ Intelligence selector **Fast / Smart / Deep / Auto** maps to API `mode` on cloud
 
 - OpenRouter keys never leave the API. Desktop only holds JWT session tokens.
 - Local path keeps GBNF grammars; cloud path skips them.
-- Tool execution (web_search, MCP writers) always runs on the desktop.
+- Tool execution (web_search, MCP writers, Gmail send) always runs on the desktop.
+
+## Google connectors (NELA ops — not end users)
+
+End users only click **Connect Gmail** and Allow. They never see client IDs or `.env`.
+
+Before a wide release:
+
+1. On the NELA Google Cloud project (same org as website login), enable the Gmail API (Drive API later).
+2. Create a **Desktop** OAuth client — not the website login client (`GOOGLE_CLIENT_ID` on the API).
+3. Consent screen: app name NELA, support email, logo, homepage, privacy policy.
+4. Bake the public client ID into release builds: set GitHub secret `NELA_GOOGLE_CONNECTOR_CLIENT_ID` (compile-time). Local `.env` is a dev override only.
+5. Submit Google verification for `gmail.send` before shipping to non-test users. Until then, only GCP test users can connect without the “unverified app” warning.
 - Fast/Smart/Deep model IDs are **not** hardcoded forever: the API sweeper pulls
   `GET https://openrouter.ai/api/v1/models` on boot and every
   `OPENROUTER_SWEEP_INTERVAL_MS` (default 6h), classifies free vs paid chat

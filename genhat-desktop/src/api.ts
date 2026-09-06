@@ -30,6 +30,8 @@ import type {
   LlmMessage,
   UserProfile,
   AvatarSource,
+  GmailStatus,
+  GmailSendResult,
 } from "./types";
 import {
   llamaContextKey,
@@ -1401,6 +1403,34 @@ export const Api = {
   /** Copy a file to a new absolute path (artifact download). */
   async copyFileToPath(source: string, dest: string): Promise<void> {
     await invoke("copy_file_to_path", { source, dest });
+  },
+
+  async gmailStatus(): Promise<GmailStatus> {
+    return invoke<GmailStatus>("gmail_status");
+  },
+
+  async gmailOAuthStart(): Promise<GmailStatus> {
+    return invoke<GmailStatus>("gmail_oauth_start");
+  },
+
+  async gmailDisconnect(): Promise<GmailStatus> {
+    return invoke<GmailStatus>("gmail_disconnect");
+  },
+
+  async gmailSend(input: {
+    to: string[];
+    subject: string;
+    body: string;
+    cc?: string[];
+    bcc?: string[];
+  }): Promise<GmailSendResult> {
+    return invoke<GmailSendResult>("gmail_send", {
+      to: input.to,
+      subject: input.subject,
+      body: input.body,
+      cc: input.cc ?? null,
+      bcc: input.bcc ?? null,
+    });
   },
 };
 

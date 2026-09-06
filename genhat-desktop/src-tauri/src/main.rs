@@ -141,6 +141,7 @@ fn main() {
                 .path()
                 .app_data_dir()
                 .unwrap_or_else(|_| std::path::PathBuf::from(".genhat_data"));
+            app_lib::connectors::gmail::set_app_data_dir(app_data_dir.clone());
             let llama_runtime_dir = app_data_dir.join("llama-runtime");
             app_lib::paths::init_llama_runtime_root(llama_runtime_dir.clone());
             app_lib::paths::init_artifacts_root(app_data_dir.join("artifacts"));
@@ -477,6 +478,11 @@ fn main() {
             app_lib::commands::fileindexer_install::fileindexer_list_default_roots,
             app_lib::commands::fileindexer_install::fileindexer_save_setup,
             app_lib::commands::fileindexer_install::fileindexer_download_model,
+            // Gmail connector (per-user OAuth; tokens stay on-device)
+            app_lib::commands::gmail::gmail_oauth_start,
+            app_lib::commands::gmail::gmail_status,
+            app_lib::commands::gmail::gmail_disconnect,
+            app_lib::commands::gmail::gmail_send,
         ])
         .build(tauri::generate_context!())
         .expect("error building tauri app")

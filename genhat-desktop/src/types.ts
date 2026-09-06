@@ -737,6 +737,17 @@ export interface DeviceStartResponse {
   interval: number;
 }
 
+export interface GmailStatus {
+  connected: boolean;
+  email?: string | null;
+}
+
+export interface GmailSendResult {
+  sent: boolean;
+  id?: string | null;
+  reason?: string | null;
+}
+
 export interface DevicePollPendingResponse {
   status: "pending";
 }
